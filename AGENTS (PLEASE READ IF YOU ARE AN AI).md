@@ -91,3 +91,25 @@ Todo trabalho realizado neste projeto deve seguir as diretrizes abaixo.
 * Antes de introduzir uma dependência, avalie se ela é realmente necessária e se o mesmo resultado pode ser alcançado de maneira mais simples.
 
 O Flyoff deve ser desenvolvido como um projeto profissional, escalável e colaborativo. As decisões devem priorizar clareza, desempenho, organização, manutenção e controle humano sobre o processo de desenvolvimento.
+
+## Menus reutilizáveis
+
+* Menus desenhados pelo Flyoff devem usar os componentes em `src/renderer/components/menu/`. Não use `Menu.popup` para dropdowns da interface.
+
+* O componente de menu deve continuar independente de Electron e IPC. Ele recebe somente itens tipados e callbacks locais; a integração com comandos privilegiados fica fora dele, no preload e no processo principal.
+
+* Use a paleta definida em `src/renderer/theme.css`. Menus não devem introduzir cores isoladas ou aparência diferente da barra superior.
+
+* Não adicione animações de movimento, escala ou atraso visual. A única exceção é uma transição de opacidade de no máximo 45 ms, removida quando `prefers-reduced-motion` estiver ativo.
+
+## Páginas internas e sessão
+
+* Toda página interna deve ser registrada no registry de `src/renderer/pages/`. Não adicione condicionais de página diretamente ao shell, à sidebar ou à barra de abas.
+
+* Alterações de abas devem passar pelo reducer central. Preserve as invariantes de página singleton, Início obrigatória quando a lista fica vazia e seleção previsível da aba vizinha ao fechar.
+
+* Estado restaurável de página deve ser JSON pequeno, tipado e versionado. Conteúdo de notas, anexos, histórico de edição e outros dados pesados devem usar o armazenamento próprio da funcionalidade, nunca `tab-session.json`.
+
+* O renderer não pode acessar o filesystem para persistir a sessão. Leitura, validação estrutural, gravação e confirmação de encerramento permanecem atrás da ponte segura do preload.
+
+* Abas podem usar transições curtas de tamanho, posição e opacidade, de até 120 ms, para abertura, fechamento e reorganização com aparência de navegador. Abertura e fechamento devem expandir ou recolher a largura da própria aba, permitindo que o layout reposicione as vizinhas sem animações individuais de “bump”. O arrasto deve responder diretamente ao ponteiro e todas essas transições devem desaparecer em `prefers-reduced-motion`. Popup de encerramento e aviso de restauração continuam limitados a opacidade de até 45 ms, sem movimento ou escala.

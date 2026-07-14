@@ -1,0 +1,118 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Quality checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Check types
+        run: npm run typecheck
+
+      - name: Run unit tests
+        run: npm test
+
+  package:
+    name: Package (${{ matrix.name }})
+    needs: quality
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows x64
+            os: windows-2025
+            arch: x64
+          - name: Ubuntu x64
+            os: ubuntu-24.04
+            arch: x64
+          - name: macOS arm64
+            os: macos-15
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+          cache: npm
+
+      - name: Verify runner architecture
+        shell: bash
+        run: |
+          node -e "if (process.arch !== '${{ matrix.arch }}') { throw new Error('Expected ${{ matrix.arch }}, got ' + process.arch) }"
+
+      - name: Install Linux display dependency
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install --yes xvfb
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test the native core against Node.js
+        run: npm run test:native
+
+      - name: Package application
+        run: npm run package -- --arch=${{ matrix.arch }}
+
+      - name: Run Electron end-to-end tests
+        if: runner.os != 'Linux'
+        run: npm run test:e2e
+
+      - name: Run Electron end-to-end tests under Xvfb
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum npm run test:e2e
+
+      - name: Verify ASAR, native unpacking, and fuses
+        run: node tests/smoke/verify-package.mjs
+
+      - name: Smoke-test packaged application
+        if: runner.os != 'Linux'
+        run: node tests/smoke/packaged-smoke.mjs
+
+      - name: Smoke-test packaged application under Xvfb
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum node tests/smoke/packaged-smoke.mjs
+
+      - name: Upload packaged application
+        uses: actions/upload-artifact@v4
+        with:
+          name: flyoff-${{ runner.os }}-${{ matrix.arch }}
+          path: out/
+          if-no-files-found: error
+
+      - name: Upload Playwright diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-${{ runner.os }}-${{ matrix.arch }}
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore

@@ -1,0 +1,33 @@
+{
+  "name": "@flyoff/native-core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Native C++ core for Flyoff",
+  "main": "index.js",
+  "types": "index.d.ts",
+  "gypfile": true,
+  "files": [
+    "binding.gyp",
+    "build/Release/*.node",
+    "include",
+    "src",
+    "scripts",
+    "index.js",
+    "index.d.ts"
+  ],
+  "scripts": {
+    "build": "node scripts/run-node-gyp.cjs rebuild",
+    "clean": "node scripts/run-node-gyp.cjs clean",
+    "install": "node scripts/run-node-gyp.cjs rebuild",
+    "test": "node --test --test-isolation=none test/*.test.js"
+  },
+  "engines": {
+    "node": ">=24.18.0 <25"
+  },
+  "dependencies": {
+    "node-addon-api": "8.9.0"
+  },
+  "devDependencies": {
+    "node-gyp": "13.0.1"
+  }
+}

@@ -1,0 +1,18 @@
+:root {
+  color-scheme: dark;
+  --color-background: #131014;
+  --color-titlebar: #100f11;
+  --color-surface: #100f11;
+  --color-surface-hover: #18141b;
+  --color-surface-active: #272129;
+  --color-border: #221c22;
+  --color-text: #f4f0f6;
+  --color-text-muted: #ded7e2;
+  --color-text-disabled: #8f8794;
+  --color-accent: #b04fd4;
+  --color-accent-hover: #962cdc;
+  --color-accent-bright: #b862d9;
+  --color-danger: #b62326;
+  --color-danger-active: #c93d40;
+  --color-focus-ring: #b04fd4;
+}
