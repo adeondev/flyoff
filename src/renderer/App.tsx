@@ -547,8 +547,8 @@ export function App() {
         }
 
         dispatchUserAction({ type: 'close-project-workspace' });
-        await getApi().closeProject?.().catch(() => undefined);
         setActiveProject(null);
+        await getApi().closeProject?.().catch(() => undefined);
         return true;
       }),
     [
