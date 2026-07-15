@@ -6,6 +6,7 @@ import '@fontsource/ibm-plex-sans/600.css';
 import '@fontsource/ibm-plex-sans/700.css';
 
 import { App } from './App';
+import './components/layout/layout.css';
 import './components/menu/menu.css';
 import './theme.css';
 import './styles.css';

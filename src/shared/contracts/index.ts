@@ -7,4 +7,5 @@ export * from './platform';
 export * from './projects';
 export * from './spellcheck';
 export * from './tab-session';
+export * from './ui-state';
 export * from './window-controls';

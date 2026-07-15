@@ -6,6 +6,7 @@ import type {
   TabSessionRestoreDecision,
   TabSessionSnapshot,
 } from './tab-session';
+import type { WorkspaceLayoutState } from './ui-state';
 import type {
   WindowControlAction,
   WindowState,
@@ -64,6 +65,8 @@ export interface FlyoffApi {
     current: TabSessionSnapshot,
   ): Promise<void>;
   saveTabSession(session: TabSessionSnapshot): Promise<void>;
+  getUiState(): Promise<WorkspaceLayoutState>;
+  saveUiState(state: WorkspaceLayoutState): Promise<void>;
   onCloseRequested(listener: (request: CloseRequest) => void): () => void;
   respondToCloseRequest(response: CloseResponse): Promise<void>;
   onRendererMenuCommand(

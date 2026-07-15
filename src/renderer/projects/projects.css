@@ -202,10 +202,22 @@
   place-items: center;
   font-size: 16px;
   line-height: 1;
+  transform-origin: center;
+  transition: transform 120ms ease;
+}
+
+.project-tree__chevron--expanded {
+  transform: rotate(90deg);
 }
 
 .project-tree__chevron--empty {
   visibility: hidden;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .project-tree__chevron {
+    transition: none;
+  }
 }
 
 .project-tree__kind {

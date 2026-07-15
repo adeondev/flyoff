@@ -9,7 +9,7 @@ import {
 } from 'react';
 
 import type { ProjectTreeNode } from '../../shared/contracts';
-import { DropdownMenu, type MenuItem } from '../components/menu';
+import { ContextMenu, DropdownMenu, type MenuItem } from '../components/menu';
 import type { Translate } from '../pages/page-types';
 import { projectNodeDisplayName } from './project-node-name';
 import type { ProjectTreeController } from './project-tree-controller';
@@ -102,6 +102,25 @@ function nodeMenuItems(
   ];
 }
 
+function ProjectTreeChevron({
+  expanded,
+  kind,
+}: {
+  expanded?: boolean;
+  kind: ProjectTreeNode['kind'];
+}) {
+  return (
+    <span
+      aria-hidden="true"
+      className={`project-tree__chevron${
+        kind === 'folder' ? '' : ' project-tree__chevron--empty'
+      }${expanded ? ' project-tree__chevron--expanded' : ''}`}
+    >
+      {'›'}
+    </span>
+  );
+}
+
 interface InlineEditorProps {
   kind: ProjectTreeNode['kind'];
   initialValue?: string;
@@ -172,6 +191,11 @@ export function ProjectTree({
   const [focusedNodeId, setFocusedNodeId] = useState<string>();
   const [draggedNodeId, setDraggedNodeId] = useState<string>();
   const [dropTargetId, setDropTargetId] = useState<string | null>();
+  const [contextMenu, setContextMenu] = useState<{
+    node: ProjectTreeNode;
+    x: number;
+    y: number;
+  } | null>(null);
   const itemRefs = useRef(new Map<string, HTMLDivElement>());
   const menuRefs = useRef(new Map<string, HTMLButtonElement>());
 
@@ -374,6 +398,18 @@ export function ProjectTree({
                     dropOn(node.nodeId);
                   }
                 }}
+                onContextMenu={(event) => {
+                  if (renameEdit) {
+                    return;
+                  }
+                  event.preventDefault();
+                  setFocusedNodeId(node.nodeId);
+                  setContextMenu({
+                    node,
+                    x: event.clientX,
+                    y: event.clientY,
+                  });
+                }}
                 onFocus={() => setFocusedNodeId(node.nodeId)}
                 onKeyDown={(event) =>
                   handleNodeKeyDown(event, { node, depth, parentId })
@@ -391,16 +427,7 @@ export function ProjectTree({
               >
                 {renameEdit ? (
                   <div className="project-tree__node">
-                    <span
-                      aria-hidden="true"
-                      className={`project-tree__chevron${
-                        node.kind === 'folder'
-                          ? ''
-                          : ' project-tree__chevron--empty'
-                      }`}
-                    >
-                      {expanded ? '⌄' : '›'}
-                    </span>
+                    <ProjectTreeChevron expanded={expanded} kind={node.kind} />
                     <span
                       aria-hidden="true"
                       className={`project-tree__kind project-tree__kind--${node.kind}`}
@@ -428,14 +455,7 @@ export function ProjectTree({
                     tabIndex={-1}
                     type="button"
                   >
-                  <span
-                    aria-hidden="true"
-                    className={`project-tree__chevron${
-                      node.kind === 'folder' ? '' : ' project-tree__chevron--empty'
-                    }`}
-                  >
-                    {expanded ? '⌄' : '›'}
-                  </span>
+                  <ProjectTreeChevron expanded={expanded} kind={node.kind} />
                   <span
                     aria-hidden="true"
                     className={`project-tree__kind project-tree__kind--${node.kind}`}
@@ -546,6 +566,21 @@ export function ProjectTree({
       role="tree"
     >
       {renderBranch(null, 1)}
+      {contextMenu ? (
+        <ContextMenu
+          ariaLabel={`${translate('projects.moreActions')}: ${projectNodeDisplayName(
+            contextMenu.node,
+          )}`}
+          items={nodeMenuItems(contextMenu.node, translate)}
+          onAction={(action) => {
+            handleMenuAction(contextMenu.node, action);
+            setContextMenu(null);
+          }}
+          onClose={() => setContextMenu(null)}
+          x={contextMenu.x}
+          y={contextMenu.y}
+        />
+      ) : null}
     </div>
   );
 }

@@ -31,6 +31,11 @@ export interface TranslationCatalog {
     restore: string;
     close: string;
   };
+  layout: {
+    expandSidebar: string;
+    collapseSidebar: string;
+    resizeSidebar: string;
+  };
   home: {
     prompt: string;
     newProject: string;
@@ -167,6 +172,11 @@ export const ptBR = {
     restore: 'Restaurar',
     close: 'Fechar',
   },
+  layout: {
+    expandSidebar: 'Expandir barra lateral',
+    collapseSidebar: 'Recolher barra lateral',
+    resizeSidebar: 'Redimensionar barra lateral',
+  },
   home: {
     prompt: 'O que vai fazer hoje?',
     newProject: 'Novo Projeto',
@@ -297,6 +307,11 @@ export const enUS = {
     maximize: 'Maximize',
     restore: 'Restore',
     close: 'Close',
+  },
+  layout: {
+    expandSidebar: 'Expand sidebar',
+    collapseSidebar: 'Collapse sidebar',
+    resizeSidebar: 'Resize sidebar',
   },
   home: {
     prompt: 'What would you like to do today?',

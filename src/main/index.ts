@@ -23,6 +23,7 @@ import {
   registerMenuCommandHandler,
   registerProjectHandlers,
   registerTabSessionHandlers,
+  registerUiStateHandlers,
   registerWindowControlHandlers,
   type SelectProjectDirectory,
 } from './ipc';
@@ -44,6 +45,7 @@ import { TabSessionStore } from './session';
 import {
   createMainWindow,
   registerNavigationShortcuts,
+  UiStateStore,
   WindowStateStore,
 } from './window';
 
@@ -92,10 +94,12 @@ let removeBootstrapHandler: (() => void) | undefined;
 let removeMenuCommandHandler: (() => void) | undefined;
 let removeProjectHandlers: (() => void) | undefined;
 let removeTabSessionHandlers: (() => void) | undefined;
+let removeUiStateHandlers: (() => void) | undefined;
 let removeWindowControlHandlers: (() => void) | undefined;
 let translator: FlyoffTranslator | undefined;
 let projectService: ProjectService | undefined;
 let tabSessionStore: TabSessionStore | undefined;
+let uiStateStore: UiStateStore | undefined;
 let windowStateStore: WindowStateStore | undefined;
 let cleanupStarted = false;
 let shutdownExpected = false;
@@ -130,6 +134,8 @@ function cleanupApplication(): void {
   removeProjectHandlers = undefined;
   removeTabSessionHandlers?.();
   removeTabSessionHandlers = undefined;
+  removeUiStateHandlers?.();
+  removeUiStateHandlers = undefined;
   removeWindowControlHandlers?.();
   removeWindowControlHandlers = undefined;
   coreClient?.stop();
@@ -221,6 +227,7 @@ async function startApplication(): Promise<void> {
     ? undefined
     : new WindowStateStore(app.getPath('userData'));
   tabSessionStore = new TabSessionStore(app.getPath('userData'));
+  uiStateStore = new UiStateStore(app.getPath('userData'));
   projectService = new ProjectService({
     catalogStore: new ProjectCatalogStore(app.getPath('userData')),
     trashItem: createSystemTrashItem(),
@@ -310,6 +317,7 @@ async function startApplication(): Promise<void> {
     tabSessionStore,
     isAllowedUrl,
   );
+  removeUiStateHandlers = registerUiStateHandlers(uiStateStore, isAllowedUrl);
   removeWindowControlHandlers = registerWindowControlHandlers(isAllowedUrl);
 
   await openMainWindow(platform);

@@ -5,6 +5,7 @@ import {
   useReducer,
   useRef,
   useState,
+  type CSSProperties,
 } from 'react';
 
 import flyoffLogo from '../../public/images/flyoff/flyoff-logo.svg';
@@ -21,6 +22,8 @@ import {
   isRendererMenuCommand,
   ptBR,
   projectFailure,
+  SIDEBAR_WIDTH_MAX,
+  SIDEBAR_WIDTH_MIN,
   type ApplicationMenuEntryDefinition,
   type CloseRequest,
   type CloseResponse,
@@ -49,6 +52,7 @@ import {
   type MenuBarItem,
   type MenuItem,
 } from './components/menu';
+import { PanelResizer, useWorkspaceLayout } from './components/layout';
 import { GlobalSidebar } from './components/Sidebar';
 import { PageHost } from './components/tabs/PageHost';
 import { TabBar } from './components/tabs/TabBar';
@@ -139,18 +143,33 @@ function createMenuBarItems(translate: Translate): readonly MenuBarItem[] {
 interface TitlebarProps {
   menus: readonly MenuBarItem[];
   platform?: FlyoffPlatform;
+  sidebarCollapsed: boolean;
+  toggleSidebarLabel: string;
   windowControlLabels: WindowControlLabels;
   windowState: WindowState;
   onMenuAction: (id: string) => void;
+  onToggleSidebar: () => void;
   onWindowAction: (action: WindowControlAction) => void;
+}
+
+function SidebarToggleIcon() {
+  return (
+    <svg aria-hidden="true" viewBox="0 0 16 16">
+      <rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.75" />
+      <line x1="6.25" y1="2.75" x2="6.25" y2="13.25" />
+    </svg>
+  );
 }
 
 function Titlebar({
   menus,
   platform,
+  sidebarCollapsed,
+  toggleSidebarLabel,
   windowControlLabels,
   windowState,
   onMenuAction,
+  onToggleSidebar,
   onWindowAction,
 }: TitlebarProps) {
   const isMacOS = platform === 'darwin';
@@ -164,6 +183,16 @@ function Titlebar({
         <img src={flyoffLogo} alt="" aria-hidden="true" />
         <span>Flyoff</span>
       </div>
+      <button
+        aria-label={toggleSidebarLabel}
+        aria-pressed={sidebarCollapsed}
+        className="titlebar__sidebar-toggle"
+        onClick={onToggleSidebar}
+        title={toggleSidebarLabel}
+        type="button"
+      >
+        <SidebarToggleIcon />
+      </button>
       {!isMacOS && menus.length > 0 ? (
         <MenuBar
           ariaLabel="Flyoff"
@@ -304,6 +333,8 @@ export function App() {
   const userInteractedRef = useRef(false);
   const restoreRequestStartedRef = useRef(false);
   const workspaceTransitionRef = useRef<Promise<void>>(Promise.resolve());
+  const workspaceRef = useRef<HTMLDivElement>(null);
+  const layout = useWorkspaceLayout();
   const translate = translator.translate;
 
   const menus = useMemo(
@@ -1491,12 +1522,22 @@ export function App() {
       <Titlebar
         menus={menus}
         platform={platform}
+        sidebarCollapsed={layout.collapsed}
+        toggleSidebarLabel={translate(
+          layout.collapsed ? 'layout.expandSidebar' : 'layout.collapseSidebar',
+        )}
         windowControlLabels={windowControlLabels}
         windowState={windowState}
         onMenuAction={executeMenuCommand}
+        onToggleSidebar={layout.toggleCollapsed}
         onWindowAction={controlWindow}
       />
-      <div className="workspace">
+      <div
+        className="workspace"
+        data-collapsed={layout.collapsed || undefined}
+        ref={workspaceRef}
+        style={{ '--sidebar-width': `${layout.sidebarWidth}px` } as CSSProperties}
+      >
         <GlobalSidebar
           activePageId={activePageId}
           hidden={Boolean(
@@ -1591,6 +1632,18 @@ export function App() {
             translate={translate}
           />
         </div>
+        {layout.collapsed ? null : (
+          <PanelResizer
+            ariaLabel={translate('layout.resizeSidebar')}
+            cssVar="--sidebar-width"
+            max={SIDEBAR_WIDTH_MAX}
+            min={SIDEBAR_WIDTH_MIN}
+            onCommit={layout.setSidebarWidth}
+            onReset={layout.resetSidebarWidth}
+            target={workspaceRef}
+            value={layout.sidebarWidth}
+          />
+        )}
       </div>
       {restorePending ? (
         <div className="project-restore-blocker">

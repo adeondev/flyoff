@@ -21,7 +21,8 @@ type Direction = 'next' | 'previous';
 
 interface MenuTreeProps {
   anchor: HTMLElement;
-  ariaLabelledBy: string;
+  ariaLabel?: string;
+  ariaLabelledBy?: string;
   id: string;
   initialFocus: InitialFocus;
   items: readonly MenuItem[];
@@ -140,6 +141,7 @@ function useMenuPosition(
 
 function MenuSurface({
   anchor,
+  ariaLabel,
   ariaLabelledBy,
   id,
   initialFocus,
@@ -371,6 +373,7 @@ function MenuSurface({
 
   return (
     <div
+      aria-label={ariaLabel}
       aria-labelledby={ariaLabelledBy}
       className="flyoff-menu"
       data-positioned={positioned}
@@ -463,6 +466,7 @@ function MenuSurface({
 
 export function MenuTree({
   anchor,
+  ariaLabel,
   ariaLabelledBy,
   id,
   initialFocus,
@@ -504,6 +508,7 @@ export function MenuTree({
   return createPortal(
     <MenuSurface
       anchor={anchor}
+      ariaLabel={ariaLabel}
       ariaLabelledBy={ariaLabelledBy}
       id={id}
       initialFocus={initialFocus}

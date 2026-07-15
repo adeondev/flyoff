@@ -18,10 +18,15 @@ import {
   SAVE_TAB_SESSION_CHANNEL,
   isWindowControlAction,
   isWindowState,
+  isWorkspaceLayoutState,
+  normalizeWorkspaceLayoutState,
+  GET_UI_STATE_CHANNEL,
+  SAVE_UI_STATE_CHANNEL,
   WINDOW_CONTROL_CHANNEL,
   WINDOW_STATE_CHANGED_CHANNEL,
   WINDOW_STATE_CHANNEL,
   type FlyoffApi,
+  type WorkspaceLayoutState,
   type ApplicationMenuCommand,
   type CloseRequest,
   type CloseResponse,
@@ -157,6 +162,18 @@ const flyoffApi: FlyoffApi = Object.freeze({
     }
 
     await ipcRenderer.invoke(SAVE_TAB_SESSION_CHANNEL, session);
+  },
+  async getUiState() {
+    const state: unknown = await ipcRenderer.invoke(GET_UI_STATE_CHANNEL);
+
+    return normalizeWorkspaceLayoutState(state);
+  },
+  async saveUiState(state: WorkspaceLayoutState) {
+    if (!isWorkspaceLayoutState(state)) {
+      throw new TypeError('Invalid workspace layout state.');
+    }
+
+    await ipcRenderer.invoke(SAVE_UI_STATE_CHANNEL, state);
   },
   onCloseRequested(listener: (request: CloseRequest) => void) {
     const handleCloseRequest = (_event: unknown, request: unknown) => {
