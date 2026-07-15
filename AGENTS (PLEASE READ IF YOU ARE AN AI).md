@@ -113,3 +113,5 @@ O Flyoff deve ser desenvolvido como um projeto profissional, escalável e colabo
 * O renderer não pode acessar o filesystem para persistir a sessão. Leitura, validação estrutural, gravação e confirmação de encerramento permanecem atrás da ponte segura do preload.
 
 * Abas podem usar transições curtas de tamanho, posição e opacidade, de até 120 ms, para abertura, fechamento e reorganização com aparência de navegador. Abertura e fechamento devem expandir ou recolher a largura da própria aba, permitindo que o layout reposicione as vizinhas sem animações individuais de “bump”. O arrasto deve responder diretamente ao ponteiro e todas essas transições devem desaparecer em `prefers-reduced-motion`. Popup de encerramento e aviso de restauração continuam limitados a opacidade de até 45 ms, sem movimento ou escala.
+
+* Todo código deve ser planejado e implementado com compatibilidade obrigatória entre as três plataformas suportadas: Windows, macOS e Linux.*

@@ -237,7 +237,9 @@ h2 { max-width: none; font-size: var(--text-xl); font-weight: 600; }
 }
 
 .product-notes--simple:hover .heading-anchor,
-.product-notes--simple:focus-within .heading-anchor {
+.product-notes--simple:focus-within .heading-anchor,
+.offers-section:hover .heading-anchor,
+.offers-section:focus-within .heading-anchor {
   opacity: 1;
 }
 
@@ -259,6 +261,7 @@ h2 { max-width: none; font-size: var(--text-xl); font-weight: 600; }
   margin-inline: auto;
   padding-block: var(--space-2xl);
   border-block-start: var(--rule-hairline) solid var(--color-border);
+  scroll-margin-block-start: 5rem;
   text-align: left;
 }
 
@@ -276,7 +279,7 @@ h2 { max-width: none; font-size: var(--text-xl); font-weight: 600; }
 .offer-card {
   display: grid;
   min-height: 18rem;
-  grid-template-rows: 3rem 3.75rem 1fr;
+  grid-template-rows: 5.25rem 3.75rem 1fr;
   align-content: start;
   padding: var(--space-lg);
   border: var(--rule-hairline) solid var(--color-border);
@@ -284,9 +287,22 @@ h2 { max-width: none; font-size: var(--text-xl); font-weight: 600; }
   background: transparent;
 }
 
-.offer-card__icon { display: block; width: 1.5rem; height: 1.5rem; }
+.offer-card__icon { display: block; width: 4rem; height: 4rem; justify-self: center; object-fit: contain; }
+.offer-card__icon--light { filter: invert(1) brightness(1.6); opacity: 0.82; }
+.offer-card__icon--accent { filter: invert(47%) sepia(66%) saturate(1775%) hue-rotate(253deg) brightness(94%) contrast(92%); }
 .offer-card h3 { align-self: start; margin: 0; color: var(--color-text); font-size: var(--text-base); line-height: 1.25; }
 .offer-card p { align-self: start; margin: 0; color: var(--color-text-muted); font-size: var(--text-sm); line-height: 1.45; }
+
+.offers-link {
+  display: inline-flex;
+  margin-block-start: var(--space-lg);
+  color: var(--color-accent);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.offers-link:hover { color: oklch(50% 0.18 315.7); }
 
 .site-footer { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-xs); justify-items: center; align-items: center; padding-block: var(--space-lg); border-block-start: var(--rule-hairline) solid var(--color-border); color: var(--color-text-disabled); font-family: var(--font-code); font-size: var(--text-xs); text-align: center; }
 .site-footer img { width: 5rem; height: auto; }
