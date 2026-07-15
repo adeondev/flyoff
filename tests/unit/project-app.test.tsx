@@ -14,12 +14,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../../src/renderer/App';
 import {
   TAB_SESSION_VERSION,
+  WORKSPACE_SESSION_VERSION,
   type BootstrapState,
   type FlyoffApi,
   type MarkdownDocument,
   type ProjectSummary,
   type ProjectTreeNode,
-  type TabSessionSnapshot,
+  type WorkspaceSessionSnapshot,
 } from '../../src/shared/contracts';
 
 const projectId = 'cdb39a1a-0339-4c75-91ea-78fbbcb2f97a';
@@ -69,7 +70,7 @@ function failure(message = 'Unavailable') {
 
 function installProjectApi(
   overrides: Partial<FlyoffApi> = {},
-  restorable: TabSessionSnapshot | null = null,
+  restorable: WorkspaceSessionSnapshot | null = null,
 ): FlyoffApi {
   const api: FlyoffApi = {
     controlWindow: vi.fn(async () => ({ maximized: false })),
@@ -166,7 +167,7 @@ describe('project workspace integration', () => {
     expect(screen.queryByRole('button', { name: 'This Device' })).toBeNull();
   });
 
-  it('opens a Markdown node with its display title and returns Home to the global sidebar', async () => {
+  it('opens a Markdown node and closes the project back to the global sidebar', async () => {
     const api = installProjectApi();
     render(<App />);
 
@@ -195,7 +196,7 @@ describe('project workspace integration', () => {
       })) as HTMLTextAreaElement,
     ).toHaveProperty('value', '# Roadmap');
 
-    fireEvent.click(screen.getByRole('button', { name: 'Home' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close project' }));
 
     await waitFor(() => {
       expect(
@@ -203,11 +204,13 @@ describe('project workspace integration', () => {
       ).toBeTruthy();
       expect(screen.getByRole('button', { name: 'This Device' })).toBeTruthy();
     });
+    expect(api.closeProject).toHaveBeenCalledOnce();
     expect(
       screen.queryByRole('complementary', { name: 'Project contents' }),
     ).toBeNull();
-    expect(screen.getByRole('tab', { name: project.name })).toBeTruthy();
-    expect(screen.getByRole('tab', { name: 'Roadmap' })).toBeTruthy();
+    expect(screen.queryByRole('tab', { name: project.name })).toBeNull();
+    expect(screen.queryByRole('tab', { name: 'Roadmap' })).toBeNull();
+    expect(screen.getByRole('tab', { name: 'Home' })).toBeTruthy();
   });
 
   it('waits for a pending trash operation before confirming window close', async () => {
@@ -290,7 +293,7 @@ describe('project workspace integration', () => {
     const response = respondToCloseRequest.mock.calls[0]?.[0];
     expect(
       response?.decision === 'confirm'
-        ? response.session.tabs.some(
+        ? (response.session.project?.tabs ?? []).some(
             ({ target }) =>
               target.type === 'project-content' && target.nodeId === noteId,
           )
@@ -361,7 +364,7 @@ describe('project workspace integration', () => {
     });
   });
 
-  it('preserves lazy tree expansion while a global tab is active', async () => {
+  it('preserves lazy tree expansion across project tab switches', async () => {
     const folder: ProjectTreeNode = {
       nodeId: folderId,
       parentId: null,
@@ -380,14 +383,11 @@ describe('project workspace integration', () => {
       await screen.findByRole('button', { name: 'Open Project' }),
     );
     fireEvent.click(await screen.findByRole('button', { name: 'Notes' }));
-    await screen.findByRole('button', { name: 'Roadmap' });
-    const projectSidebar = screen.getByRole('complementary', {
-      name: 'Project contents',
-    });
-    fireEvent.click(within(projectSidebar).getByRole('button', { name: 'Home' }));
-    await screen.findByRole('complementary', { name: 'Navigation' });
+    fireEvent.click(await screen.findByRole('button', { name: 'Roadmap' }));
+    await screen.findByRole('textbox', { name: 'Markdown editor' });
 
     fireEvent.click(screen.getByRole('tab', { name: project.name }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Roadmap' }));
 
     expect(await screen.findByRole('button', { name: 'Roadmap' })).toBeTruthy();
     expect(
@@ -398,28 +398,37 @@ describe('project workspace integration', () => {
   });
 
   it('keeps only global tabs when the restored project is unavailable', async () => {
-    const previous: TabSessionSnapshot = {
-      version: TAB_SESSION_VERSION,
-      tabs: [
-        {
-          tabId: 'page:home',
-          target: { type: 'internal', pageId: 'home' },
-          scrollTop: 0,
-          pageState: { version: 1, data: {} },
-        },
-        {
-          tabId: `project:${projectId}:node:${noteId}`,
-          target: {
-            type: 'project-content',
-            projectId,
-            nodeId: noteId,
-            pageType: 'markdown',
+    const previous: WorkspaceSessionSnapshot = {
+      version: WORKSPACE_SESSION_VERSION,
+      home: {
+        version: TAB_SESSION_VERSION,
+        tabs: [
+          {
+            tabId: 'page:home',
+            target: { type: 'internal', pageId: 'home' },
+            scrollTop: 0,
+            pageState: { version: 1, data: {} },
           },
-          scrollTop: 12,
-          pageState: { version: 1, data: {} },
-        },
-      ],
-      activeTabId: `project:${projectId}:node:${noteId}`,
+        ],
+        activeTabId: 'page:home',
+      },
+      project: {
+        projectId,
+        tabs: [
+          {
+            tabId: `project:${projectId}:node:${noteId}`,
+            target: {
+              type: 'project-content',
+              projectId,
+              nodeId: noteId,
+              pageType: 'markdown',
+            },
+            scrollTop: 12,
+            pageState: { version: 1, data: {} },
+          },
+        ],
+        activeTabId: `project:${projectId}:node:${noteId}`,
+      },
     };
     const restoreProject = vi.fn(async () => failure('Missing project'));
     const api = installProjectApi({ restoreProject }, previous);
@@ -435,8 +444,11 @@ describe('project workspace integration', () => {
       expect(api.resolveRestorableTabSession).toHaveBeenCalledWith(
         'restore',
         expect.objectContaining({
-          activeTabId: 'page:home',
-          tabs: [expect.objectContaining({ tabId: 'page:home' })],
+          project: null,
+          home: expect.objectContaining({
+            activeTabId: 'page:home',
+            tabs: [expect.objectContaining({ tabId: 'page:home' })],
+          }),
         }),
       );
     });
@@ -449,23 +461,32 @@ describe('project workspace integration', () => {
   });
 
   it('consumes the restore prompt before awaiting a slow project restore', async () => {
-    const previous: TabSessionSnapshot = {
-      version: TAB_SESSION_VERSION,
-      tabs: [
-        {
-          tabId: 'page:home',
-          target: { type: 'internal', pageId: 'home' },
-          scrollTop: 0,
-          pageState: { version: 1, data: {} },
-        },
-        {
-          tabId: `project:${projectId}:overview`,
-          target: { type: 'project-overview', projectId },
-          scrollTop: 0,
-          pageState: { version: 1, data: {} },
-        },
-      ],
-      activeTabId: `project:${projectId}:overview`,
+    const previous: WorkspaceSessionSnapshot = {
+      version: WORKSPACE_SESSION_VERSION,
+      home: {
+        version: TAB_SESSION_VERSION,
+        tabs: [
+          {
+            tabId: 'page:home',
+            target: { type: 'internal', pageId: 'home' },
+            scrollTop: 0,
+            pageState: { version: 1, data: {} },
+          },
+        ],
+        activeTabId: 'page:home',
+      },
+      project: {
+        projectId,
+        tabs: [
+          {
+            tabId: `project:${projectId}:overview`,
+            target: { type: 'project-overview', projectId },
+            scrollTop: 0,
+            pageState: { version: 1, data: {} },
+          },
+        ],
+        activeTabId: `project:${projectId}:overview`,
+      },
     };
     let finishRestore:
       | ((result: { ok: true; value: ProjectSummary }) => void)
@@ -498,7 +519,9 @@ describe('project workspace integration', () => {
       expect(api.resolveRestorableTabSession).toHaveBeenCalledWith(
         'restore',
         expect.objectContaining({
-          activeTabId: `project:${projectId}:overview`,
+          project: expect.objectContaining({
+            activeTabId: `project:${projectId}:overview`,
+          }),
         }),
       );
     });
@@ -526,28 +549,37 @@ describe('project workspace integration', () => {
       name: 'Nested',
       kind: 'folder',
     };
-    const previous: TabSessionSnapshot = {
-      version: TAB_SESSION_VERSION,
-      tabs: [
-        {
-          tabId: 'page:home',
-          target: { type: 'internal', pageId: 'home' },
-          scrollTop: 0,
-          pageState: { version: 1, data: {} },
-        },
-        {
-          tabId: `project:${projectId}:node:${noteId}`,
-          target: {
-            type: 'project-content',
-            projectId,
-            nodeId: noteId,
-            pageType: 'markdown',
+    const previous: WorkspaceSessionSnapshot = {
+      version: WORKSPACE_SESSION_VERSION,
+      home: {
+        version: TAB_SESSION_VERSION,
+        tabs: [
+          {
+            tabId: 'page:home',
+            target: { type: 'internal', pageId: 'home' },
+            scrollTop: 0,
+            pageState: { version: 1, data: {} },
           },
-          scrollTop: 0,
-          pageState: { version: 1, data: {} },
-        },
-      ],
-      activeTabId: `project:${projectId}:node:${noteId}`,
+        ],
+        activeTabId: 'page:home',
+      },
+      project: {
+        projectId,
+        tabs: [
+          {
+            tabId: `project:${projectId}:node:${noteId}`,
+            target: {
+              type: 'project-content',
+              projectId,
+              nodeId: noteId,
+              pageType: 'markdown',
+            },
+            scrollTop: 0,
+            pageState: { version: 1, data: {} },
+          },
+        ],
+        activeTabId: `project:${projectId}:node:${noteId}`,
+      },
     };
     const closeProject = vi.fn(async () => ({ ok: true as const, value: null }));
     installProjectApi(
@@ -581,7 +613,7 @@ describe('project workspace integration', () => {
     render(<App />);
 
     fireEvent.click(await screen.findByRole('button', { name: 'Restore' }));
-    await screen.findByRole('button', { name: 'Roadmap' });
+    await screen.findByRole('textbox', { name: 'Markdown editor' });
     fireEvent.click(
       screen.getByRole('button', { name: 'More actions: Archive' }),
     );
@@ -593,10 +625,8 @@ describe('project workspace integration', () => {
 
     await waitFor(() => {
       expect(screen.queryByRole('tab', { name: 'Roadmap' })).toBeNull();
-      expect(closeProject).toHaveBeenCalledOnce();
     });
-    expect(
-      screen.getByRole('tab', { name: 'Home' }).getAttribute('aria-selected'),
-    ).toBe('true');
+    expect(closeProject).not.toHaveBeenCalled();
+    expect(screen.getByText('No tab open.')).toBeTruthy();
   });
 });

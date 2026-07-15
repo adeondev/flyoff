@@ -11,7 +11,7 @@ import {
   isCloseResponse,
   isRendererMenuCommand,
   isTabSessionRestoreDecision,
-  isTabSessionSnapshot,
+  isWorkspaceSessionSnapshot,
   MENU_COMMAND_CHANNEL,
   RENDERER_MENU_COMMAND_CHANNEL,
   RESOLVE_RESTORABLE_TAB_SESSION_CHANNEL,
@@ -32,7 +32,7 @@ import {
   type CloseResponse,
   type RendererMenuCommand,
   type TabSessionRestoreDecision,
-  type TabSessionSnapshot,
+  type WorkspaceSessionSnapshot,
   type WindowControlAction,
   type WindowState,
   PROJECT_IPC_CHANNELS,
@@ -132,7 +132,7 @@ const flyoffApi: FlyoffApi = Object.freeze({
       GET_RESTORABLE_TAB_SESSION_CHANNEL,
     );
 
-    if (session !== null && !isTabSessionSnapshot(session)) {
+    if (session !== null && !isWorkspaceSessionSnapshot(session)) {
       throw new Error('The main process returned an invalid tab session.');
     }
 
@@ -140,13 +140,13 @@ const flyoffApi: FlyoffApi = Object.freeze({
   },
   async resolveRestorableTabSession(
     decision: TabSessionRestoreDecision,
-    current: TabSessionSnapshot,
+    current: WorkspaceSessionSnapshot,
   ) {
     if (!isTabSessionRestoreDecision(decision)) {
       throw new TypeError('Invalid tab session restoration decision.');
     }
 
-    if (!isTabSessionSnapshot(current)) {
+    if (!isWorkspaceSessionSnapshot(current)) {
       throw new TypeError('Invalid tab session snapshot.');
     }
 
@@ -156,8 +156,8 @@ const flyoffApi: FlyoffApi = Object.freeze({
       current,
     );
   },
-  async saveTabSession(session: TabSessionSnapshot) {
-    if (!isTabSessionSnapshot(session)) {
+  async saveTabSession(session: WorkspaceSessionSnapshot) {
+    if (!isWorkspaceSessionSnapshot(session)) {
       throw new TypeError('Invalid tab session snapshot.');
     }
 

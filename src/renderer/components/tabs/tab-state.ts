@@ -29,7 +29,7 @@ export type TabAction =
     }
   | { type: 'restore-session'; session: TabSessionSnapshot };
 
-function createDescriptor(target: TabTarget): TabDescriptor {
+export function createDescriptor(target: TabTarget): TabDescriptor {
   const definition = getTabTargetPageDefinition(target);
 
   return {

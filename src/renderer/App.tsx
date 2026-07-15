@@ -15,7 +15,7 @@ import {
   APPLICATION_MENU_DEFINITIONS,
   INTERNAL_PAGE_IDS,
   RENDERER_MENU_COMMANDS,
-  hasRestorablePages,
+  hasRestorableWorkspaceSnapshot,
   isPortableProjectName,
   isProjectTarget,
   isApplicationMenuCommand,
@@ -38,7 +38,7 @@ import {
   type RendererMenuCommand,
   type TabDescriptor,
   type TabSessionRestoreDecision,
-  type TabSessionSnapshot,
+  type WorkspaceSessionSnapshot,
   type TranslationCatalog,
   type TranslationKey,
   type TrashProjectNodeOutcome,
@@ -57,12 +57,15 @@ import { GlobalSidebar } from './components/Sidebar';
 import { PageHost } from './components/tabs/PageHost';
 import { TabBar } from './components/tabs/TabBar';
 import {
-  createInitialTabState,
-  hasNonHomeTabs,
-  normalizeRendererTabSession,
-  tabReducer,
-  type TabAction,
-} from './components/tabs/tab-state';
+  adoptWorkspaceSnapshot,
+  createInitialWorkspaceState,
+  hasRestorableWorkspace,
+  selectActiveContext,
+  selectActiveTabs,
+  serializeWorkspace,
+  workspaceReducer,
+  type WorkspaceAction,
+} from './components/tabs/workspace-state';
 import {
   WindowControls,
   type WindowControlLabels,
@@ -83,6 +86,7 @@ import {
   CreateProjectDialog,
   MarkdownDocumentController,
   ProjectContentPage,
+  ProjectEmptyState,
   ProjectOverview,
   ProjectSidebar,
   getProjectPageTypeDefinition,
@@ -243,50 +247,6 @@ function createMarkdownController(): MarkdownDocumentController {
   });
 }
 
-function removeProjectTabs(
-  session: TabSessionSnapshot,
-): TabSessionSnapshot {
-  const tabs = session.tabs.filter(({ target }) => !isProjectTarget(target));
-
-  if (tabs.length === 0) {
-    return createInitialTabState();
-  }
-
-  return {
-    ...session,
-    tabs,
-    activeTabId: tabs.some(({ tabId }) => tabId === session.activeTabId)
-      ? session.activeTabId
-      : (tabs[0]?.tabId ?? 'page:home'),
-  };
-}
-
-function keepProject(
-  session: TabSessionSnapshot,
-  projectId: string,
-): TabSessionSnapshot {
-  const tabs = session.tabs.filter(
-    ({ target }) =>
-      !isProjectTarget(target) || target.projectId === projectId,
-  );
-
-  if (tabs.length === 0) {
-    return createInitialTabState();
-  }
-
-  return {
-    ...session,
-    tabs,
-    activeTabId: tabs.some(({ tabId }) => tabId === session.activeTabId)
-      ? session.activeTabId
-      : (tabs[0]?.tabId ?? 'page:home'),
-  };
-}
-
-function hasProjectTabs(session: TabSessionSnapshot): boolean {
-  return session.tabs.some(({ target }) => isProjectTarget(target));
-}
-
 export function App() {
   const [platform, setPlatform] = useState<FlyoffPlatform>();
   const [translator, setTranslator] = useState<{ translate: Translate }>({
@@ -295,10 +255,10 @@ export function App() {
   const [windowState, setWindowState] = useState<WindowState>({
     maximized: false,
   });
-  const [tabState, dispatchTabs] = useReducer(
-    tabReducer,
+  const [workspaceState, dispatchWorkspace] = useReducer(
+    workspaceReducer,
     undefined,
-    createInitialTabState,
+    createInitialWorkspaceState,
   );
   const [project, setProject] = useState<ProjectSummary | null>(null);
   const [projectNodes, setProjectNodes] = useState<
@@ -310,7 +270,7 @@ export function App() {
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [projectNotice, setProjectNotice] = useState<string>();
   const [restoreCandidate, setRestoreCandidate] =
-    useState<TabSessionSnapshot | null>(null);
+    useState<WorkspaceSessionSnapshot | null>(null);
   const [restorePending, setRestorePending] = useState(false);
   const [sessionReady, setSessionReady] = useState(
     () => !getApi().getRestorableTabSession,
@@ -319,14 +279,14 @@ export function App() {
   const [closeResponsePendingId, setCloseResponsePendingId] = useState<
     string | null
   >(null);
-  const tabStateRef = useRef(tabState);
+  const workspaceStateRef = useRef(workspaceState);
   const projectRef = useRef<ProjectSummary | null>(null);
   const projectNodesRef = useRef<ReadonlyMap<string, ProjectTreeNode>>(
     new Map(),
   );
   const documentControllerRef = useRef(documentController);
   const projectSidebarRef = useRef<ProjectSidebarHandle>(null);
-  const restoreCandidateRef = useRef<TabSessionSnapshot | null>(null);
+  const restoreCandidateRef = useRef<WorkspaceSessionSnapshot | null>(null);
   const restorePendingRef = useRef(false);
   const closeRequestRef = useRef<CloseRequest | null>(null);
   const closeResponsePendingIdRef = useRef<string | null>(null);
@@ -424,7 +384,7 @@ export function App() {
   const resolveRestoreCandidate = useCallback(
     (
       decision: TabSessionRestoreDecision,
-      current: TabSessionSnapshot,
+      current: WorkspaceSessionSnapshot,
     ): void => {
       const candidate = restoreCandidateRef.current;
 
@@ -437,8 +397,8 @@ export function App() {
       setRestoreCandidate(null);
 
       if (decision === 'restore') {
-        tabStateRef.current = resolved;
-        dispatchTabs({ type: 'restore-session', session: resolved });
+        workspaceStateRef.current = adoptWorkspaceSnapshot(resolved);
+        dispatchWorkspace({ type: 'restore-workspace', snapshot: resolved });
       }
 
       const api = getApi();
@@ -450,22 +410,22 @@ export function App() {
   );
 
   const dispatchUserAction = useCallback(
-    (action: TabAction): void => {
+    (action: WorkspaceAction): void => {
       if (closeRequestRef.current || restorePendingRef.current) {
         return;
       }
 
-      const current = tabStateRef.current;
-      const next = tabReducer(current, action);
+      const current = workspaceStateRef.current;
+      const next = workspaceReducer(current, action);
 
       if (next === current) {
         return;
       }
 
       userInteractedRef.current = true;
-      resolveRestoreCandidate('ignore', next);
-      tabStateRef.current = next;
-      dispatchTabs(action);
+      resolveRestoreCandidate('ignore', serializeWorkspace(next));
+      workspaceStateRef.current = next;
+      dispatchWorkspace(action);
     },
     [resolveRestoreCandidate],
   );
@@ -479,7 +439,7 @@ export function App() {
   }, []);
 
   const performGuardedTabAction = useCallback(
-    async (action: TabAction): Promise<boolean> => {
+    async (action: WorkspaceAction): Promise<boolean> => {
       if (closeRequestRef.current || restorePendingRef.current) {
         return false;
       }
@@ -492,52 +452,26 @@ export function App() {
         return false;
       }
 
-      const initial = tabStateRef.current;
-      const initialNext = tabReducer(initial, action);
+      const initial = workspaceStateRef.current;
 
-      if (initialNext === initial) {
+      if (workspaceReducer(initial, action) === initial) {
         return true;
       }
 
-      if (!projectRef.current) {
-        dispatchUserAction(action);
-        return true;
+      if (projectRef.current) {
+        if (!(await flushProjectDocuments())) {
+          return false;
+        }
+
+        if (closeRequestRef.current || restorePendingRef.current) {
+          return false;
+        }
       }
 
-      if (!(await flushProjectDocuments())) {
-        return false;
-      }
-
-      if (closeRequestRef.current || restorePendingRef.current) {
-        return false;
-      }
-
-      const current = tabStateRef.current;
-      const next = tabReducer(current, action);
-      if (next === current) {
-        return true;
-      }
-
-      const closesProjectContext =
-        hasProjectTabs(current) && !hasProjectTabs(next);
-      if (closesProjectContext) {
-        const homeState = tabReducer(next, {
-          type: 'open-page',
-          pageId: INTERNAL_PAGE_IDS.home,
-        });
-        dispatchUserAction({
-          type: 'restore-session',
-          session: homeState,
-        });
-        await getApi().closeProject?.().catch(() => undefined);
-        setActiveProject(null);
-      } else {
-        dispatchUserAction(action);
-      }
-
+      dispatchUserAction(action);
       return true;
     },
-    [dispatchUserAction, flushProjectDocuments, setActiveProject],
+    [dispatchUserAction, flushProjectDocuments],
   );
 
   const enqueueWorkspaceTransition = useCallback(
@@ -565,7 +499,7 @@ export function App() {
   }, []);
 
   const dispatchGuardedTabAction = useCallback(
-    (action: TabAction): Promise<boolean> =>
+    (action: WorkspaceAction): Promise<boolean> =>
       projectRef.current
         ? enqueueWorkspaceTransition(() => performGuardedTabAction(action))
         : performGuardedTabAction(action),
@@ -580,19 +514,42 @@ export function App() {
         }
 
         setActiveProject(summary);
-        const withoutPreviousProject = removeProjectTabs(tabStateRef.current);
-        const next = tabReducer(withoutPreviousProject, {
-          type: 'open-target',
-          target: {
-            type: 'project-overview',
-            projectId: summary.projectId,
-          },
+        dispatchUserAction({
+          type: 'open-project-workspace',
+          projectId: summary.projectId,
         });
-        dispatchUserAction({ type: 'restore-session', session: next });
         setProjectNotice(undefined);
         return true;
       }),
     [dispatchUserAction, enqueueWorkspaceTransition, setActiveProject],
+  );
+
+  const closeProjectWorkspace = useCallback(
+    (): Promise<boolean> =>
+      enqueueWorkspaceTransition(async () => {
+        if (closeRequestRef.current || restorePendingRef.current) {
+          return false;
+        }
+
+        if (!projectRef.current) {
+          return true;
+        }
+
+        if (!(await flushProjectDocuments())) {
+          return false;
+        }
+
+        dispatchUserAction({ type: 'close-project-workspace' });
+        await getApi().closeProject?.().catch(() => undefined);
+        setActiveProject(null);
+        return true;
+      }),
+    [
+      dispatchUserAction,
+      enqueueWorkspaceTransition,
+      flushProjectDocuments,
+      setActiveProject,
+    ],
   );
 
   const readMarkdownDocument = useCallback(
@@ -620,11 +577,11 @@ export function App() {
   );
 
   const completeConsumedRestore = useCallback(
-    (resolved: TabSessionSnapshot): void => {
+    (resolved: WorkspaceSessionSnapshot): void => {
       restorePendingRef.current = false;
       setRestorePending(false);
-      tabStateRef.current = resolved;
-      dispatchTabs({ type: 'restore-session', session: resolved });
+      workspaceStateRef.current = adoptWorkspaceSnapshot(resolved);
+      dispatchWorkspace({ type: 'restore-workspace', snapshot: resolved });
       void getApi()
         .resolveRestorableTabSession?.('restore', resolved)
         .catch(() => undefined);
@@ -633,7 +590,7 @@ export function App() {
   );
 
   const openCreateProjectDialog = useCallback((): void => {
-    resolveRestoreCandidate('ignore', tabStateRef.current);
+    resolveRestoreCandidate('ignore', serializeWorkspace(workspaceStateRef.current));
     setCreateProjectOpen(true);
   }, [resolveRestoreCandidate]);
 
@@ -674,7 +631,7 @@ export function App() {
   );
 
   const openProject = useCallback(async (): Promise<void> => {
-    resolveRestoreCandidate('ignore', tabStateRef.current);
+    resolveRestoreCandidate('ignore', serializeWorkspace(workspaceStateRef.current));
     if (!(await flushProjectDocuments())) {
       return;
     }
@@ -829,41 +786,24 @@ export function App() {
       projectNodesRef.current = remainingNodes;
       setProjectNodes(remainingNodes);
 
-      const current = tabStateRef.current;
-      let next = current;
-      for (const tab of current.tabs) {
-        if (
+      const tabsToClose = (
+        workspaceStateRef.current.project?.tabs ?? []
+      ).filter(
+        (tab) =>
           tab.target.type === 'project-content' &&
-          removedIds.has(tab.target.nodeId)
-        ) {
-          next = tabReducer(next, {
-            type: 'close-tab',
-            tabId: tab.tabId,
-          });
-        }
-      }
+          removedIds.has(tab.target.nodeId),
+      );
 
-      if (next === current) {
-        return;
-      }
-
-      const closesProjectContext =
-        hasProjectTabs(current) && !hasProjectTabs(next);
-      const session = closesProjectContext
-        ? tabReducer(next, {
-            type: 'open-page',
-            pageId: INTERNAL_PAGE_IDS.home,
-          })
-        : next;
-      tabStateRef.current = session;
-      dispatchTabs({ type: 'restore-session', session });
-
-      if (closesProjectContext) {
-        await getApi().closeProject?.().catch(() => undefined);
-        setActiveProject(null);
+      for (const tab of tabsToClose) {
+        const action = { type: 'close-tab', tabId: tab.tabId } as const;
+        workspaceStateRef.current = workspaceReducer(
+          workspaceStateRef.current,
+          action,
+        );
+        dispatchWorkspace(action);
       }
     },
-    [setActiveProject],
+    [],
   );
 
   const trashProjectNode = useCallback(
@@ -916,10 +856,11 @@ export function App() {
   );
 
   const closeActiveTab = useCallback((): void => {
-    void dispatchGuardedTabAction({
-      type: 'close-tab',
-      tabId: tabStateRef.current.activeTabId,
-    });
+    const activeTabId = selectActiveTabs(workspaceStateRef.current).activeTabId;
+
+    if (activeTabId) {
+      void dispatchGuardedTabAction({ type: 'close-tab', tabId: activeTabId });
+    }
   }, [dispatchGuardedTabAction]);
 
   const controlWindow = useCallback(
@@ -1036,7 +977,7 @@ export function App() {
       submitCloseResponse({
         requestId: request.requestId,
         decision: 'confirm',
-        session: tabStateRef.current,
+        session: serializeWorkspace(workspaceStateRef.current),
       });
     });
   }, [flushProjectDocuments, submitCloseResponse, waitForWorkspaceTransitions]);
@@ -1052,11 +993,9 @@ export function App() {
     restorePendingRef.current = true;
     setRestorePending(true);
 
-    const projectId = candidate.tabs.find(({ target }) =>
-      isProjectTarget(target),
-    )?.target;
+    const projectSnapshot = candidate.project;
 
-    if (!projectId || !isProjectTarget(projectId)) {
+    if (!projectSnapshot) {
       completeConsumedRestore(candidate);
       return;
     }
@@ -1064,33 +1003,32 @@ export function App() {
     const restore = getApi().restoreProject;
     if (!restore) {
       setProjectNotice(translate('projects.projectUnavailable'));
-      completeConsumedRestore(removeProjectTabs(candidate));
+      completeConsumedRestore({ ...candidate, project: null });
       return;
     }
 
     let result: Awaited<ReturnType<FlyoffApi['restoreProject']>>;
     try {
-      result = await restore({ projectId: projectId.projectId });
+      result = await restore({ projectId: projectSnapshot.projectId });
     } catch {
       setProjectNotice(translate('projects.projectUnavailable'));
-      completeConsumedRestore(removeProjectTabs(candidate));
+      completeConsumedRestore({ ...candidate, project: null });
       return;
     }
 
     if (!result.ok) {
       setProjectNotice(translate('projects.projectUnavailable'));
-      completeConsumedRestore(removeProjectTabs(candidate));
+      completeConsumedRestore({ ...candidate, project: null });
       return;
     }
 
-    const restored = keepProject(candidate, result.value.projectId);
     setActiveProject(result.value);
 
     const getNode = getApi().getProjectNode;
     if (getNode) {
       const pendingNodeIds = [
         ...new Set(
-          restored.tabs.flatMap(({ target }) =>
+          projectSnapshot.tabs.flatMap(({ target }) =>
             target.type === 'project-content' ? [target.nodeId] : [],
           ),
         ),
@@ -1124,7 +1062,7 @@ export function App() {
       cacheProjectNodes(restoredNodes);
     }
 
-    completeConsumedRestore(restored);
+    completeConsumedRestore(candidate);
   }, [
     cacheProjectNodes,
     completeConsumedRestore,
@@ -1192,13 +1130,7 @@ export function App() {
       .then((candidate) => {
         setSessionReady(true);
 
-        if (!candidate || !hasRestorablePages(candidate)) {
-          return;
-        }
-
-        const normalized = normalizeRendererTabSession(candidate);
-
-        if (!hasNonHomeTabs(normalized)) {
+        if (!candidate || !hasRestorableWorkspaceSnapshot(candidate)) {
           return;
         }
 
@@ -1206,14 +1138,14 @@ export function App() {
           void api
             .resolveRestorableTabSession?.(
               'ignore',
-              tabStateRef.current,
+              serializeWorkspace(workspaceStateRef.current),
             )
             .catch(() => undefined);
           return;
         }
 
-        restoreCandidateRef.current = normalized;
-        setRestoreCandidate(normalized);
+        restoreCandidateRef.current = candidate;
+        setRestoreCandidate(candidate);
       })
       .catch(() => {
         setSessionReady(true);
@@ -1226,7 +1158,7 @@ export function App() {
     }
 
     const timeout = window.setTimeout(() => {
-      resolveRestoreCandidate('ignore', tabStateRef.current);
+      resolveRestoreCandidate('ignore', serializeWorkspace(workspaceStateRef.current));
     }, 8_000);
 
     return () => window.clearTimeout(timeout);
@@ -1248,11 +1180,13 @@ export function App() {
     }
 
     const timeout = window.setTimeout(() => {
-      void api.saveTabSession?.(tabState).catch(() => undefined);
+      void api
+        .saveTabSession?.(serializeWorkspace(workspaceState))
+        .catch(() => undefined);
     }, 200);
 
     return () => window.clearTimeout(timeout);
-  }, [restorePending, sessionReady, tabState]);
+  }, [restorePending, sessionReady, workspaceState]);
 
   useEffect(() => {
     const api = getApi();
@@ -1265,7 +1199,7 @@ export function App() {
         return;
       }
 
-      resolveRestoreCandidate('ignore', tabStateRef.current);
+      resolveRestoreCandidate('ignore', serializeWorkspace(workspaceStateRef.current));
 
       const previous = closeRequestRef.current;
       if (previous && previous.requestId !== request.requestId) {
@@ -1282,11 +1216,11 @@ export function App() {
 
       closeRequestRef.current = request;
 
-      if (!hasNonHomeTabs(tabStateRef.current)) {
+      if (!hasRestorableWorkspace(workspaceStateRef.current)) {
         submitCloseResponse({
           requestId: request.requestId,
           decision: 'confirm',
-          session: tabStateRef.current,
+          session: serializeWorkspace(workspaceStateRef.current),
         });
         return;
       }
@@ -1322,7 +1256,7 @@ export function App() {
 
       if (event.ctrlKey && event.key === 'Tab') {
         event.preventDefault();
-        const state = tabStateRef.current;
+        const state = selectActiveTabs(workspaceStateRef.current);
         const activeIndex = state.tabs.findIndex(
           ({ tabId }) => tabId === state.activeTabId,
         );
@@ -1341,7 +1275,7 @@ export function App() {
 
       if (primary && !event.altKey && /^[1-9]$/.test(event.key)) {
         event.preventDefault();
-        const state = tabStateRef.current;
+        const state = selectActiveTabs(workspaceStateRef.current);
         const requestedIndex = Number(event.key) - 1;
         const index =
           requestedIndex === 8
@@ -1486,15 +1420,19 @@ export function App() {
     ],
   );
 
+  const workspaceContext = selectActiveContext(workspaceState);
+  const activeTabs = selectActiveTabs(workspaceState);
   const activeTab =
-    tabState.tabs.find(({ tabId }) => tabId === tabState.activeTabId) ??
-    tabState.tabs[0];
+    activeTabs.tabs.find(({ tabId }) => tabId === activeTabs.activeTabId) ??
+    activeTabs.tabs[0];
   const activePageId: InternalPageId =
     activeTab?.target.type === 'internal'
       ? activeTab.target.pageId
       : INTERNAL_PAGE_IDS.home;
   const activeProjectTarget =
     activeTab?.target.type !== 'internal' ? activeTab?.target : undefined;
+  const isEmptyProjectWorkspace =
+    workspaceContext === 'project' && activeTabs.tabs.length === 0;
   const activeProjectNodePath = useMemo(() => {
     if (activeProjectTarget?.type !== 'project-content') {
       return [];
@@ -1540,10 +1478,7 @@ export function App() {
       >
         <GlobalSidebar
           activePageId={activePageId}
-          hidden={Boolean(
-            activeProjectTarget &&
-              project?.projectId === activeProjectTarget.projectId,
-          )}
+          hidden={workspaceContext === 'project'}
           onOpenPage={(pageId) =>
             void dispatchGuardedTabAction({ type: 'open-page', pageId })
           }
@@ -1557,22 +1492,14 @@ export function App() {
                 : undefined
             }
             activeNodePath={activeProjectNodePath}
-            hidden={
-              !activeProjectTarget ||
-              project.projectId !== activeProjectTarget.projectId
-            }
+            hidden={workspaceContext !== 'project'}
             loadChildren={listProjectChildren}
             onBeforeNodeChange={() => flushProjectDocuments()}
             onCreateNode={createProjectNode}
             onError={setProjectNotice}
             onMoveNode={moveProjectNode}
             onNodeChanged={(node) => cacheProjectNodes([node])}
-            onOpenHome={() =>
-              void dispatchGuardedTabAction({
-                type: 'open-page',
-                pageId: INTERNAL_PAGE_IDS.home,
-              })
-            }
+            onCloseProject={() => void closeProjectWorkspace()}
             onOpenNode={openProjectNode}
             onOpenOverview={() =>
               void dispatchGuardedTabAction({
@@ -1595,7 +1522,7 @@ export function App() {
         ) : null}
         <div className="page-workspace">
           <TabBar
-            activeTabId={tabState.activeTabId}
+            activeTabId={activeTabs.activeTabId}
             closeLabel={translate('pages.closeTab')}
             getPresentation={getTabPresentation}
             navigationLabel={translate('pages.bar')}
@@ -1608,10 +1535,18 @@ export function App() {
             onSelect={(tabId) =>
               void dispatchGuardedTabAction({ type: 'select-tab', tabId })
             }
-            tabs={tabState.tabs}
+            tabs={activeTabs.tabs}
           />
           <PageHost
-            activeTabId={tabState.activeTabId}
+            activeTabId={activeTabs.activeTabId}
+            emptyState={
+              isEmptyProjectWorkspace ? (
+                <ProjectEmptyState
+                  onCloseProject={() => void closeProjectWorkspace()}
+                  translate={translate}
+                />
+              ) : null
+            }
             getPresentation={getTabPresentation}
             onPageStateChange={(tabId, pageState) =>
               dispatchUserAction({
@@ -1628,7 +1563,7 @@ export function App() {
               })
             }
             renderPage={renderPage}
-            tabs={tabState.tabs}
+            tabs={activeTabs.tabs}
             translate={translate}
           />
         </div>
@@ -1655,7 +1590,7 @@ export function App() {
       {restoreCandidate ? (
         <SessionRestoreToast
           onIgnore={() =>
-            resolveRestoreCandidate('ignore', tabStateRef.current)
+            resolveRestoreCandidate('ignore', serializeWorkspace(workspaceStateRef.current))
           }
           onRestore={() =>
             void restorePreviousSession()

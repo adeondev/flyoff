@@ -14,7 +14,7 @@ import type { TabPresentation } from '../../pages/page-types';
 import { MaskedIcon } from '../MaskedIcon';
 
 interface TabBarProps {
-  activeTabId: string;
+  activeTabId: string | null;
   tabs: readonly TabDescriptor[];
   closeLabel: string;
   getPresentation: (tab: TabDescriptor) => TabPresentation;
@@ -91,7 +91,9 @@ export function TabBar({
   }, [tabs]);
 
   useEffect(() => {
-    const activeTab = tabRefs.current.get(activeTabId);
+    const activeTab = activeTabId
+      ? tabRefs.current.get(activeTabId)
+      : undefined;
 
     if (typeof activeTab?.scrollIntoView === 'function') {
       activeTab.scrollIntoView({

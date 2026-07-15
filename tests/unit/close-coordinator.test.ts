@@ -11,8 +11,9 @@ import {
   CLOSE_REQUESTED_CHANNEL,
   CLOSE_RESPONSE_CHANNEL,
   TAB_SESSION_VERSION,
+  WORKSPACE_SESSION_VERSION,
   type CloseRequest,
-  type TabSessionSnapshot,
+  type WorkspaceSessionSnapshot,
 } from '../../src/shared/contracts';
 
 type Listener = (...arguments_: unknown[]) => void;
@@ -48,23 +49,27 @@ vi.mock('electron', () => ({
   },
 }));
 
-const session: TabSessionSnapshot = {
-  version: TAB_SESSION_VERSION,
-  tabs: [
-    {
-      tabId: 'page:home',
-      target: { type: 'internal', pageId: 'home' },
-      scrollTop: 0,
-      pageState: { version: 1, data: {} },
-    },
-    {
-      tabId: 'page:settings',
-      target: { type: 'internal', pageId: 'settings' },
-      scrollTop: 0,
-      pageState: { version: 1, data: {} },
-    },
-  ],
-  activeTabId: 'page:settings',
+const session: WorkspaceSessionSnapshot = {
+  version: WORKSPACE_SESSION_VERSION,
+  home: {
+    version: TAB_SESSION_VERSION,
+    tabs: [
+      {
+        tabId: 'page:home',
+        target: { type: 'internal', pageId: 'home' },
+        scrollTop: 0,
+        pageState: { version: 1, data: {} },
+      },
+      {
+        tabId: 'page:settings',
+        target: { type: 'internal', pageId: 'settings' },
+        scrollTop: 0,
+        pageState: { version: 1, data: {} },
+      },
+    ],
+    activeTabId: 'page:settings',
+  },
+  project: null,
 };
 
 function createEmitter() {

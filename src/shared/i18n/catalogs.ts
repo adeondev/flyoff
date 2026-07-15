@@ -52,6 +52,8 @@ export interface TranslationCatalog {
   projects: {
     navigation: string;
     overview: string;
+    closeProject: string;
+    emptyWorkspace: string;
     refresh: string;
     add: string;
     moreActions: string;
@@ -193,6 +195,8 @@ export const ptBR = {
   projects: {
     navigation: 'Conteúdo do projeto',
     overview: 'Visão geral',
+    closeProject: 'Fechar projeto',
+    emptyWorkspace: 'Nenhuma aba aberta.',
     refresh: 'Atualizar',
     add: 'Adicionar',
     moreActions: 'Mais ações',
@@ -329,6 +333,8 @@ export const enUS = {
   projects: {
     navigation: 'Project contents',
     overview: 'Overview',
+    closeProject: 'Close project',
+    emptyWorkspace: 'No tab open.',
     refresh: 'Refresh',
     add: 'Add',
     moreActions: 'More actions',

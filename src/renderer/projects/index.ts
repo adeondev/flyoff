@@ -2,6 +2,7 @@ export * from './CreateProjectDialog';
 export * from './MarkdownEditor';
 export * from './markdown-document-controller';
 export * from './MoveProjectNodeDialog';
+export * from './ProjectEmptyState';
 export * from './project-node-name';
 export * from './project-page-type-registry';
 export * from './ProjectOverview';

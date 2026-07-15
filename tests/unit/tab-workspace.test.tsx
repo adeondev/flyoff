@@ -13,11 +13,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../../src/renderer/App';
 import {
   TAB_SESSION_VERSION,
+  WORKSPACE_SESSION_VERSION,
   type BootstrapState,
   type CloseRequest,
   type FlyoffApi,
   type RendererMenuCommand,
-  type TabSessionSnapshot,
+  type WorkspaceSessionSnapshot,
 } from '../../src/shared/contracts';
 
 const bootstrap: BootstrapState = {
@@ -34,20 +35,24 @@ const bootstrap: BootstrapState = {
 function createSession(
   pages: readonly ('home' | 'help' | 'settings')[],
   activeTabId = `page:${pages[0] ?? 'home'}`,
-): TabSessionSnapshot {
+): WorkspaceSessionSnapshot {
   return {
-    version: TAB_SESSION_VERSION,
-    tabs: pages.map((pageId) => ({
-      tabId: `page:${pageId}`,
-      target: { type: 'internal', pageId },
-      scrollTop: 0,
-      pageState: { version: 1, data: {} },
-    })),
-    activeTabId,
+    version: WORKSPACE_SESSION_VERSION,
+    home: {
+      version: TAB_SESSION_VERSION,
+      tabs: pages.map((pageId) => ({
+        tabId: `page:${pageId}`,
+        target: { type: 'internal', pageId },
+        scrollTop: 0,
+        pageState: { version: 1, data: {} },
+      })),
+      activeTabId,
+    },
+    project: null,
   };
 }
 
-function installApi(restorable: TabSessionSnapshot | null = null) {
+function installApi(restorable: WorkspaceSessionSnapshot | null = null) {
   let closeListener: ((request: CloseRequest) => void) | undefined;
   let menuListener: ((command: RendererMenuCommand) => void) | undefined;
   const api: FlyoffApi = {
@@ -204,7 +209,9 @@ describe('tab workspace', () => {
         expect.objectContaining({
           requestId: 'close:2',
           decision: 'confirm',
-          session: expect.objectContaining({ activeTabId: 'page:settings' }),
+          session: expect.objectContaining({
+            home: expect.objectContaining({ activeTabId: 'page:settings' }),
+          }),
         }),
       ),
     );
@@ -283,7 +290,9 @@ describe('tab workspace', () => {
     expect(screen.queryByText('Restore tabs from your last session?')).toBeNull();
     expect(bridge.api.resolveRestorableTabSession).toHaveBeenCalledWith(
       'ignore',
-      expect.objectContaining({ activeTabId: 'page:home' }),
+      expect.objectContaining({
+        home: expect.objectContaining({ activeTabId: 'page:home' }),
+      }),
     );
   });
 });

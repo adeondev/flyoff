@@ -63,7 +63,7 @@ export interface ProjectSidebarProps {
     request: TrashProjectNodeRequest,
   ) => Promise<ProjectResult<TrashProjectNodeOutcome>>;
   onOpenOverview: () => void;
-  onOpenHome?: () => void;
+  onCloseProject?: () => void;
   onOpenNode: (node: ProjectTreeNode) => void;
   onBeforeNodeChange?: (node: ProjectTreeNode) => Promise<boolean>;
   onCreateRequestHandled?: (id: number | string) => void;
@@ -115,7 +115,7 @@ export const ProjectSidebar = forwardRef<
   onMoveNode,
   onNodeChanged,
   onNodeTrashed,
-  onOpenHome,
+  onCloseProject,
   onOpenNode,
   onOpenOverview,
   onRenameNode,
@@ -337,11 +337,11 @@ export const ProjectSidebar = forwardRef<
         </button>
         <div className="project-sidebar__tools">
           <button
-            aria-label={translate('pages.home')}
+            aria-label={translate('projects.closeProject')}
             className="project-sidebar__tool"
-            disabled={!onOpenHome || pending}
-            onClick={onOpenHome}
-            title={translate('pages.home')}
+            disabled={!onCloseProject || pending}
+            onClick={onCloseProject}
+            title={translate('projects.closeProject')}
             type="button"
           >
             <span aria-hidden="true">←</span>

@@ -1,6 +1,6 @@
 import {
-  isTabSessionSnapshot,
-  type TabSessionSnapshot,
+  isWorkspaceSessionSnapshot,
+  type WorkspaceSessionSnapshot,
 } from './tab-session';
 
 export const CLOSE_REQUESTED_CHANNEL = 'flyoff:window:close-requested' as const;
@@ -21,7 +21,7 @@ export type CloseResponse =
   | {
       requestId: string;
       decision: 'confirm';
-      session: TabSessionSnapshot;
+      session: WorkspaceSessionSnapshot;
     };
 
 export function isCloseRequest(value: unknown): value is CloseRequest {
@@ -57,5 +57,6 @@ export function isCloseResponse(value: unknown): value is CloseResponse {
 
   return response.decision === 'cancel'
     ? response.session === undefined
-    : response.decision === 'confirm' && isTabSessionSnapshot(response.session);
+    : response.decision === 'confirm' &&
+        isWorkspaceSessionSnapshot(response.session);
 }

@@ -18,13 +18,14 @@ import type {
 } from '../../pages/page-types';
 
 interface PageHostProps {
-  activeTabId: string;
+  activeTabId: string | null;
   tabs: readonly TabDescriptor[];
   translate: Translate;
   getPresentation: (tab: TabDescriptor) => TabPresentation;
   renderPage: PageRenderer;
   onPageStateChange: (tabId: string, state: PageSessionState) => void;
   onScrollChange: (tabId: string, scrollTop: number) => void;
+  emptyState?: ReactNode;
 }
 
 interface ErrorBoundaryProps {
@@ -143,12 +144,17 @@ export function PageHost({
   renderPage,
   onPageStateChange,
   onScrollChange,
+  emptyState,
 }: PageHostProps) {
   const retainedTabs = tabs.filter(
     (descriptor) =>
       descriptor.tabId === activeTabId ||
       getPageRetention(descriptor.target) === 'keep-alive',
   );
+
+  if (retainedTabs.length === 0 && emptyState) {
+    return <div className="page-host">{emptyState}</div>;
+  }
 
   return (
     <div className="page-host">

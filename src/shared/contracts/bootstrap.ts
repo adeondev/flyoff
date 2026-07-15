@@ -4,7 +4,7 @@ import type { RendererMenuCommand } from './menu';
 import type { CloseRequest, CloseResponse } from './close';
 import type {
   TabSessionRestoreDecision,
-  TabSessionSnapshot,
+  WorkspaceSessionSnapshot,
 } from './tab-session';
 import type { WorkspaceLayoutState } from './ui-state';
 import type {
@@ -59,12 +59,12 @@ export interface FlyoffApi {
     listener: (state: WindowState) => void,
   ): () => void;
   executeMenuCommand(command: ApplicationMenuCommand): Promise<void>;
-  getRestorableTabSession(): Promise<TabSessionSnapshot | null>;
+  getRestorableTabSession(): Promise<WorkspaceSessionSnapshot | null>;
   resolveRestorableTabSession(
     decision: TabSessionRestoreDecision,
-    current: TabSessionSnapshot,
+    current: WorkspaceSessionSnapshot,
   ): Promise<void>;
-  saveTabSession(session: TabSessionSnapshot): Promise<void>;
+  saveTabSession(session: WorkspaceSessionSnapshot): Promise<void>;
   getUiState(): Promise<WorkspaceLayoutState>;
   saveUiState(state: WorkspaceLayoutState): Promise<void>;
   onCloseRequested(listener: (request: CloseRequest) => void): () => void;

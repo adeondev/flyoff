@@ -9,7 +9,8 @@ import {
   RESOLVE_RESTORABLE_TAB_SESSION_CHANNEL,
   SAVE_TAB_SESSION_CHANNEL,
   TAB_SESSION_VERSION,
-  type TabSessionSnapshot,
+  WORKSPACE_SESSION_VERSION,
+  type WorkspaceSessionSnapshot,
 } from '../../src/shared/contracts';
 
 const electronMocks = vi.hoisted(() => ({
@@ -24,17 +25,21 @@ vi.mock('electron', () => ({
   },
 }));
 
-const session: TabSessionSnapshot = {
-  version: TAB_SESSION_VERSION,
-  tabs: [
-    {
-      tabId: 'page:home',
-      target: { type: 'internal', pageId: 'home' },
-      scrollTop: 0,
-      pageState: { version: 1, data: {} },
-    },
-  ],
-  activeTabId: 'page:home',
+const session: WorkspaceSessionSnapshot = {
+  version: WORKSPACE_SESSION_VERSION,
+  home: {
+    version: TAB_SESSION_VERSION,
+    tabs: [
+      {
+        tabId: 'page:home',
+        target: { type: 'internal', pageId: 'home' },
+        scrollTop: 0,
+        pageState: { version: 1, data: {} },
+      },
+    ],
+    activeTabId: 'page:home',
+  },
+  project: null,
 };
 
 function createEvent(url = 'flyoff://app/index.html') {
