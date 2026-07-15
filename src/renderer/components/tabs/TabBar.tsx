@@ -7,17 +7,18 @@ import {
 } from 'react';
 
 import {
-  INTERNAL_PAGE_IDS,
+  isHomeTarget,
   type TabDescriptor,
 } from '../../../shared/contracts';
-import { getPageDefinition } from '../../pages/page-registry';
-import type { Translate } from '../../pages/page-types';
+import type { TabPresentation } from '../../pages/page-types';
 import { MaskedIcon } from '../MaskedIcon';
 
 interface TabBarProps {
   activeTabId: string;
   tabs: readonly TabDescriptor[];
-  translate: Translate;
+  closeLabel: string;
+  getPresentation: (tab: TabDescriptor) => TabPresentation;
+  navigationLabel: string;
   onClose: (tabId: string) => void;
   onMove: (tabId: string, toIndex: number) => void;
   onSelect: (tabId: string) => void;
@@ -60,7 +61,9 @@ function focusTab(
 export function TabBar({
   activeTabId,
   tabs,
-  translate,
+  closeLabel,
+  getPresentation,
+  navigationLabel,
   onClose,
   onMove,
   onSelect,
@@ -166,10 +169,7 @@ export function TabBar({
       return;
     } else if (
       event.key === 'Delete' &&
-      !(
-        tabs.length === 1 &&
-        tab.pageId === INTERNAL_PAGE_IDS.home
-      )
+      !(tabs.length === 1 && isHomeTarget(tab.target))
     ) {
       event.preventDefault();
       closeAndFocusNeighbor(tab, index);
@@ -279,7 +279,7 @@ export function TabBar({
   return (
     <div className="pages-bar">
       <div
-        aria-label={translate('pages.navigation')}
+        aria-label={navigationLabel}
         className={`pages-bar__tabs${draggingTabId ? ' pages-bar__tabs--dragging' : ''}`}
         onDragLeave={(event) => {
           if (event.target !== event.currentTarget) {
@@ -299,12 +299,12 @@ export function TabBar({
         role="tablist"
       >
         {tabs.map((tab, index) => {
-          const definition = getPageDefinition(tab.pageId);
-          const label = translate(definition.titleKey);
+          const presentation = getPresentation(tab);
+          const label = presentation.title;
           const active = tab.tabId === activeTabId;
           const closable = !(
             tabs.length === 1 &&
-            tab.pageId === INTERNAL_PAGE_IDS.home
+            isHomeTarget(tab.target)
           );
           const dropClass =
             dropTarget?.tabId === tab.tabId
@@ -366,13 +366,13 @@ export function TabBar({
               >
                 <MaskedIcon
                   className="page-tab__icon"
-                  icon={definition.icon}
+                  icon={presentation.icon}
                 />
                 <span className="page-tab__label">{label}</span>
               </button>
               <button
                 aria-hidden={!closable}
-                aria-label={`${translate('pages.closeTab')}: ${label}`}
+                aria-label={`${closeLabel}: ${label}`}
                 className={`page-tab__close${closable ? '' : ' page-tab__close--hidden'}`}
                 disabled={!closable}
                 onClick={(event) => {

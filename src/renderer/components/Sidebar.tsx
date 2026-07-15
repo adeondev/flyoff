@@ -6,21 +6,24 @@ import {
 import type { Translate } from '../pages/page-types';
 import { MaskedIcon } from './MaskedIcon';
 
-interface SidebarProps {
+export interface GlobalSidebarProps {
   activePageId: InternalPageId;
+  hidden?: boolean;
   translate: Translate;
   onOpenPage: (pageId: InternalPageId) => void;
 }
 
-export function Sidebar({
+export function GlobalSidebar({
   activePageId,
+  hidden = false,
   translate,
   onOpenPage,
-}: SidebarProps) {
+}: GlobalSidebarProps) {
   return (
     <aside
       className="home__sidebar"
       aria-label={translate('pages.navigation')}
+      hidden={hidden}
     >
       <nav className="home__navigation" aria-label="Flyoff">
         {PAGE_NAVIGATION_ORDER.map((pageId) => {
@@ -41,4 +44,8 @@ export function Sidebar({
       </nav>
     </aside>
   );
+}
+
+export function Sidebar(props: GlobalSidebarProps) {
+  return <GlobalSidebar {...props} />;
 }

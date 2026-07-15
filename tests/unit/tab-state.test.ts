@@ -8,6 +8,9 @@ import {
 } from '../../src/renderer/components/tabs/tab-state';
 import { INTERNAL_PAGE_IDS } from '../../src/shared/contracts';
 
+const PROJECT_ID = '11111111-1111-4111-8111-111111111111';
+const NODE_ID = '22222222-2222-4222-8222-222222222222';
+
 describe('renderer tab state', () => {
   it('opens singleton pages once and selects the existing tab', () => {
     const initial = createInitialTabState();
@@ -30,6 +33,45 @@ describe('renderer tab state', () => {
     ]);
     expect(reopened.activeTabId).toBe('page:settings');
     expect(hasNonHomeTabs(reopened)).toBe(true);
+  });
+
+  it('opens project targets once by their stable identity', () => {
+    const initial = createInitialTabState();
+    const overview = tabReducer(initial, {
+      type: 'open-target',
+      target: { type: 'project-overview', projectId: PROJECT_ID },
+    });
+    const content = tabReducer(overview, {
+      type: 'open-target',
+      target: {
+        type: 'project-content',
+        projectId: PROJECT_ID,
+        nodeId: NODE_ID,
+        pageType: 'markdown',
+      },
+    });
+    const selectedOverview = tabReducer(content, {
+      type: 'open-target',
+      target: { type: 'project-overview', projectId: PROJECT_ID },
+    });
+    const reopenedContent = tabReducer(selectedOverview, {
+      type: 'open-target',
+      target: {
+        type: 'project-content',
+        projectId: PROJECT_ID,
+        nodeId: NODE_ID,
+        pageType: 'markdown',
+      },
+    });
+
+    expect(reopenedContent.tabs.map(({ tabId }) => tabId)).toEqual([
+      'page:home',
+      `project:${PROJECT_ID}:overview`,
+      `project:${PROJECT_ID}:node:${NODE_ID}`,
+    ]);
+    expect(reopenedContent.activeTabId).toBe(
+      `project:${PROJECT_ID}:node:${NODE_ID}`,
+    );
   });
 
   it('protects a lone Home and recreates it after the final page closes', () => {
@@ -140,7 +182,8 @@ describe('renderer tab state', () => {
     const restored = normalizeRendererTabSession({
       ...initial,
       tabs: initial.tabs.map((tab) =>
-        tab.pageId === INTERNAL_PAGE_IDS.settings
+        tab.target.type === 'internal' &&
+        tab.target.pageId === INTERNAL_PAGE_IDS.settings
           ? { ...tab, pageState: { version: 1, data: null } }
           : tab,
       ),
@@ -149,7 +192,9 @@ describe('renderer tab state', () => {
     expect(restored.tabs).toHaveLength(2);
     expect(
       restored.tabs.find(
-        ({ pageId }) => pageId === INTERNAL_PAGE_IDS.settings,
+        ({ target }) =>
+          target.type === 'internal' &&
+          target.pageId === INTERNAL_PAGE_IDS.settings,
       )?.pageState,
     ).toEqual({ version: 1, data: {} });
   });

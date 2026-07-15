@@ -10,6 +10,24 @@ import type {
   WindowControlAction,
   WindowState,
 } from './window-controls';
+import type {
+  CreateProjectNodeRequest,
+  CreateProjectRequest,
+  GetProjectNodeRequest,
+  ListProjectChildrenRequest,
+  MarkdownDocument,
+  MoveProjectNodeRequest,
+  ProjectLocationSelection,
+  ProjectResult,
+  ProjectSummary,
+  ProjectTreeNode,
+  ReadMarkdownDocumentRequest,
+  RenameProjectNodeRequest,
+  RestoreProjectRequest,
+  SaveMarkdownDocumentRequest,
+  TrashProjectNodeRequest,
+  TrashProjectNodeOutcome,
+} from './projects';
 import {
   isNativeCoreHealth,
   type NativeCoreHealth,
@@ -51,6 +69,41 @@ export interface FlyoffApi {
   onRendererMenuCommand(
     listener: (command: RendererMenuCommand) => void,
   ): () => void;
+  selectProjectCreateLocation(): Promise<
+    ProjectResult<ProjectLocationSelection>
+  >;
+  createProject(
+    request: CreateProjectRequest,
+  ): Promise<ProjectResult<ProjectSummary>>;
+  openProject(): Promise<ProjectResult<ProjectSummary>>;
+  restoreProject(
+    request: RestoreProjectRequest,
+  ): Promise<ProjectResult<ProjectSummary>>;
+  closeProject(): Promise<ProjectResult<null>>;
+  listProjectChildren(
+    request: ListProjectChildrenRequest,
+  ): Promise<ProjectResult<readonly ProjectTreeNode[]>>;
+  getProjectNode(
+    request: GetProjectNodeRequest,
+  ): Promise<ProjectResult<ProjectTreeNode>>;
+  createProjectNode(
+    request: CreateProjectNodeRequest,
+  ): Promise<ProjectResult<ProjectTreeNode>>;
+  renameProjectNode(
+    request: RenameProjectNodeRequest,
+  ): Promise<ProjectResult<ProjectTreeNode>>;
+  moveProjectNode(
+    request: MoveProjectNodeRequest,
+  ): Promise<ProjectResult<ProjectTreeNode>>;
+  trashProjectNode(
+    request: TrashProjectNodeRequest,
+  ): Promise<ProjectResult<TrashProjectNodeOutcome>>;
+  readMarkdownDocument(
+    request: ReadMarkdownDocumentRequest,
+  ): Promise<ProjectResult<MarkdownDocument>>;
+  saveMarkdownDocument(
+    request: SaveMarkdownDocumentRequest,
+  ): Promise<ProjectResult<MarkdownDocument>>;
 }
 
 export function isBootstrapState(value: unknown): value is BootstrapState {

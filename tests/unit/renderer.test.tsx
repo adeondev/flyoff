@@ -63,7 +63,7 @@ describe('initial renderer', () => {
     expect(
       await screen.findByRole('button', { name: 'New Project' }),
     ).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Import Project' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Open Project' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Templates' })).toBeTruthy();
     expect(screen.getByText('Or drag files here')).toBeTruthy();
     expect(

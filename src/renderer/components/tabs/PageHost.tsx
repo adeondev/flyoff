@@ -10,13 +10,19 @@ import type {
   PageSessionState,
   TabDescriptor,
 } from '../../../shared/contracts';
-import { getPageDefinition } from '../../pages/page-registry';
-import type { Translate } from '../../pages/page-types';
+import { getPageRetention } from '../../pages/page-registry';
+import type {
+  PageRenderer,
+  TabPresentation,
+  Translate,
+} from '../../pages/page-types';
 
 interface PageHostProps {
   activeTabId: string;
   tabs: readonly TabDescriptor[];
   translate: Translate;
+  getPresentation: (tab: TabDescriptor) => TabPresentation;
+  renderPage: PageRenderer;
   onPageStateChange: (tabId: string, state: PageSessionState) => void;
   onScrollChange: (tabId: string, scrollTop: number) => void;
 }
@@ -48,21 +54,40 @@ class PageErrorBoundary extends Component<
 interface PagePanelProps {
   active: boolean;
   descriptor: TabDescriptor;
+  presentation: TabPresentation;
   translate: Translate;
+  renderPage: PageRenderer;
   onPageStateChange: (tabId: string, state: PageSessionState) => void;
   onScrollChange: (tabId: string, scrollTop: number) => void;
+}
+
+function renderPanelPage(
+  descriptor: TabDescriptor,
+  presentation: TabPresentation,
+  translate: Translate,
+  renderPage: PageRenderer,
+  onStateChange: (state: PageSessionState) => void,
+  onScrollChange: (scrollTop: number) => void,
+): ReactNode {
+  return renderPage({
+    descriptor,
+    onStateChange,
+    title: presentation.title,
+    translate,
+    onScrollChange,
+  });
 }
 
 function PagePanel({
   active,
   descriptor,
+  presentation,
   translate,
+  renderPage,
   onPageStateChange,
   onScrollChange,
 }: PagePanelProps) {
   const panelRef = useRef<HTMLElement>(null);
-  const definition = getPageDefinition(descriptor.pageId);
-  const PageComponent = definition.component;
 
   useEffect(() => {
     const panel = panelRef.current;
@@ -73,6 +98,9 @@ function PagePanel({
   }, [descriptor.scrollTop]);
 
   function handleScroll(event: UIEvent<HTMLElement>): void {
+    if (event.target !== event.currentTarget) {
+      return;
+    }
     onScrollChange(descriptor.tabId, event.currentTarget.scrollTop);
   }
 
@@ -94,30 +122,46 @@ function PagePanel({
           </div>
         }
       >
-        <PageComponent
-          descriptor={descriptor}
-          onStateChange={(state) =>
-            onPageStateChange(descriptor.tabId, state)
-          }
-          title={translate(definition.titleKey)}
-          translate={translate}
-        />
+        {renderPanelPage(
+          descriptor,
+          presentation,
+          translate,
+          renderPage,
+          (state) => onPageStateChange(descriptor.tabId, state),
+          (scrollTop) => onScrollChange(descriptor.tabId, scrollTop),
+        )}
       </PageErrorBoundary>
     </section>
   );
 }
 
-export function PageHost(props: PageHostProps) {
+export function PageHost({
+  activeTabId,
+  tabs,
+  translate,
+  getPresentation,
+  renderPage,
+  onPageStateChange,
+  onScrollChange,
+}: PageHostProps) {
+  const retainedTabs = tabs.filter(
+    (descriptor) =>
+      descriptor.tabId === activeTabId ||
+      getPageRetention(descriptor.target) === 'keep-alive',
+  );
+
   return (
     <div className="page-host">
-      {props.tabs.map((descriptor) => (
+      {retainedTabs.map((descriptor) => (
         <PagePanel
-          active={descriptor.tabId === props.activeTabId}
+          active={descriptor.tabId === activeTabId}
           descriptor={descriptor}
           key={descriptor.tabId}
-          onPageStateChange={props.onPageStateChange}
-          onScrollChange={props.onScrollChange}
-          translate={props.translate}
+          onPageStateChange={onPageStateChange}
+          onScrollChange={onScrollChange}
+          presentation={getPresentation(descriptor)}
+          renderPage={renderPage}
+          translate={translate}
         />
       ))}
     </div>

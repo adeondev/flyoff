@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 
 import type { CloseIntent } from '../../../shared/contracts';
 import type { Translate } from '../../pages/page-types';
+import { acquireModalRootLock, restoreModalFocus } from './modal-root-lock';
 
 interface CloseConfirmationDialogProps {
   intent: CloseIntent;
@@ -32,31 +33,14 @@ export function CloseConfirmationDialog({
 
   useEffect(() => {
     const previousFocus = document.activeElement;
-    const appRoot = document.getElementById('root');
-    const previousAriaHidden = appRoot?.getAttribute('aria-hidden');
-    const previousInert = appRoot?.inert ?? false;
-
-    if (appRoot) {
-      appRoot.inert = true;
-      appRoot.setAttribute('aria-hidden', 'true');
-    }
+    const dialogElement = dialogRef.current;
+    const releaseRootLock = acquireModalRootLock();
 
     cancelRef.current?.focus();
 
     return () => {
-      if (appRoot) {
-        appRoot.inert = previousInert;
-
-        if (previousAriaHidden === null) {
-          appRoot.removeAttribute('aria-hidden');
-        } else if (previousAriaHidden !== undefined) {
-          appRoot.setAttribute('aria-hidden', previousAriaHidden);
-        }
-      }
-
-      if (previousFocus instanceof HTMLElement) {
-        previousFocus.focus();
-      }
+      releaseRootLock();
+      restoreModalFocus(previousFocus, dialogElement);
     };
   }, []);
 

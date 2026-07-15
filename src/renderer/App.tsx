@@ -8,25 +8,37 @@ import {
 } from 'react';
 
 import flyoffLogo from '../../public/images/flyoff/flyoff-logo.svg';
+import markdownPageIcon from '../../public/images/icons/homepage/import-project.svg';
+import projectOverviewIcon from '../../public/images/icons/homepage/new-project.svg';
 import {
   APPLICATION_MENU_DEFINITIONS,
   INTERNAL_PAGE_IDS,
   RENDERER_MENU_COMMANDS,
   hasRestorablePages,
+  isPortableProjectName,
+  isProjectTarget,
   isApplicationMenuCommand,
   isRendererMenuCommand,
   ptBR,
+  projectFailure,
   type ApplicationMenuEntryDefinition,
   type CloseRequest,
   type CloseResponse,
   type FlyoffApi,
   type FlyoffPlatform,
   type InternalPageId,
+  type MarkdownDocument,
+  type ProjectLocationSelection,
+  type ProjectResult,
+  type ProjectSummary,
+  type ProjectTreeNode,
   type RendererMenuCommand,
+  type TabDescriptor,
   type TabSessionRestoreDecision,
   type TabSessionSnapshot,
   type TranslationCatalog,
   type TranslationKey,
+  type TrashProjectNodeOutcome,
   type WindowControlAction,
   type WindowState,
 } from '../shared';
@@ -37,7 +49,7 @@ import {
   type MenuBarItem,
   type MenuItem,
 } from './components/menu';
-import { Sidebar } from './components/Sidebar';
+import { GlobalSidebar } from './components/Sidebar';
 import { PageHost } from './components/tabs/PageHost';
 import { TabBar } from './components/tabs/TabBar';
 import {
@@ -52,7 +64,27 @@ import {
   type WindowControlLabels,
 } from './components/WindowControls';
 import { initializeRendererI18n } from './i18n';
-import type { Translate } from './pages/page-types';
+import { HomePage } from './pages/HomePage';
+import {
+  getPageDefinition,
+  renderRegisteredInternalPage,
+} from './pages/page-registry';
+import type {
+  InternalPageProps,
+  PageRenderProps,
+  TabPresentation,
+  Translate,
+} from './pages/page-types';
+import {
+  CreateProjectDialog,
+  MarkdownDocumentController,
+  ProjectContentPage,
+  ProjectOverview,
+  ProjectSidebar,
+  getProjectPageTypeDefinition,
+  type ProjectSidebarHandle,
+  projectNodeDisplayName,
+} from './projects';
 
 function translateCatalog(
   catalog: TranslationCatalog,
@@ -154,6 +186,78 @@ function getApi(): Partial<FlyoffApi> {
   return window.flyoff as Partial<FlyoffApi>;
 }
 
+function unavailableProjectResult<T>(message: string): ProjectResult<T> {
+  return {
+    ok: false,
+    error: { code: 'invalid-operation', message },
+  };
+}
+
+function createMarkdownController(): MarkdownDocumentController {
+  return new MarkdownDocumentController({
+    reload: (request) => {
+      const operation = getApi().readMarkdownDocument;
+      return operation
+        ? operation(request)
+        : Promise.resolve(
+            unavailableProjectResult('The project bridge is unavailable.'),
+          );
+    },
+    save: (request) => {
+      const operation = getApi().saveMarkdownDocument;
+      return operation
+        ? operation(request)
+        : Promise.resolve(
+            unavailableProjectResult('The project bridge is unavailable.'),
+          );
+    },
+  });
+}
+
+function removeProjectTabs(
+  session: TabSessionSnapshot,
+): TabSessionSnapshot {
+  const tabs = session.tabs.filter(({ target }) => !isProjectTarget(target));
+
+  if (tabs.length === 0) {
+    return createInitialTabState();
+  }
+
+  return {
+    ...session,
+    tabs,
+    activeTabId: tabs.some(({ tabId }) => tabId === session.activeTabId)
+      ? session.activeTabId
+      : (tabs[0]?.tabId ?? 'page:home'),
+  };
+}
+
+function keepProject(
+  session: TabSessionSnapshot,
+  projectId: string,
+): TabSessionSnapshot {
+  const tabs = session.tabs.filter(
+    ({ target }) =>
+      !isProjectTarget(target) || target.projectId === projectId,
+  );
+
+  if (tabs.length === 0) {
+    return createInitialTabState();
+  }
+
+  return {
+    ...session,
+    tabs,
+    activeTabId: tabs.some(({ tabId }) => tabId === session.activeTabId)
+      ? session.activeTabId
+      : (tabs[0]?.tabId ?? 'page:home'),
+  };
+}
+
+function hasProjectTabs(session: TabSessionSnapshot): boolean {
+  return session.tabs.some(({ target }) => isProjectTarget(target));
+}
+
 export function App() {
   const [platform, setPlatform] = useState<FlyoffPlatform>();
   const [translator, setTranslator] = useState<{ translate: Translate }>({
@@ -167,8 +271,18 @@ export function App() {
     undefined,
     createInitialTabState,
   );
+  const [project, setProject] = useState<ProjectSummary | null>(null);
+  const [projectNodes, setProjectNodes] = useState<
+    ReadonlyMap<string, ProjectTreeNode>
+  >(() => new Map());
+  const [documentController, setDocumentController] = useState(
+    createMarkdownController,
+  );
+  const [createProjectOpen, setCreateProjectOpen] = useState(false);
+  const [projectNotice, setProjectNotice] = useState<string>();
   const [restoreCandidate, setRestoreCandidate] =
     useState<TabSessionSnapshot | null>(null);
+  const [restorePending, setRestorePending] = useState(false);
   const [sessionReady, setSessionReady] = useState(
     () => !getApi().getRestorableTabSession,
   );
@@ -177,11 +291,19 @@ export function App() {
     string | null
   >(null);
   const tabStateRef = useRef(tabState);
+  const projectRef = useRef<ProjectSummary | null>(null);
+  const projectNodesRef = useRef<ReadonlyMap<string, ProjectTreeNode>>(
+    new Map(),
+  );
+  const documentControllerRef = useRef(documentController);
+  const projectSidebarRef = useRef<ProjectSidebarHandle>(null);
   const restoreCandidateRef = useRef<TabSessionSnapshot | null>(null);
+  const restorePendingRef = useRef(false);
   const closeRequestRef = useRef<CloseRequest | null>(null);
   const closeResponsePendingIdRef = useRef<string | null>(null);
   const userInteractedRef = useRef(false);
   const restoreRequestStartedRef = useRef(false);
+  const workspaceTransitionRef = useRef<Promise<void>>(Promise.resolve());
   const translate = translator.translate;
 
   const menus = useMemo(
@@ -198,6 +320,76 @@ export function App() {
     [translate],
   );
 
+  const cacheProjectNodes = useCallback(
+    (nodes: readonly ProjectTreeNode[]): void => {
+      const next = new Map(projectNodesRef.current);
+      for (const node of nodes) {
+        next.set(node.nodeId, node);
+      }
+      projectNodesRef.current = next;
+      setProjectNodes(next);
+    },
+    [],
+  );
+
+  const replaceProjectBranch = useCallback(
+    (parentId: string | null, nodes: readonly ProjectTreeNode[]): void => {
+      const next = new Map(projectNodesRef.current);
+      const visibleNodeIds = new Set(nodes.map(({ nodeId }) => nodeId));
+      const removedNodeIds = new Set(
+        [...next.values()]
+          .filter(
+            (node) =>
+              node.parentId === parentId && !visibleNodeIds.has(node.nodeId),
+          )
+          .map(({ nodeId }) => nodeId),
+      );
+      let foundDescendant = true;
+
+      while (foundDescendant) {
+        foundDescendant = false;
+        for (const node of next.values()) {
+          if (
+            node.parentId &&
+            removedNodeIds.has(node.parentId) &&
+            !removedNodeIds.has(node.nodeId)
+          ) {
+            removedNodeIds.add(node.nodeId);
+            foundDescendant = true;
+          }
+        }
+      }
+
+      for (const nodeId of removedNodeIds) {
+        next.delete(nodeId);
+      }
+      for (const node of nodes) {
+        next.set(node.nodeId, node);
+      }
+      projectNodesRef.current = next;
+      setProjectNodes(next);
+    },
+    [],
+  );
+
+  const replaceDocumentController = useCallback((): void => {
+    documentControllerRef.current.dispose();
+    const next = createMarkdownController();
+    documentControllerRef.current = next;
+    setDocumentController(next);
+  }, []);
+
+  const setActiveProject = useCallback(
+    (summary: ProjectSummary | null): void => {
+      projectRef.current = summary;
+      setProject(summary);
+      projectNodesRef.current = new Map();
+      setProjectNodes(new Map());
+      replaceDocumentController();
+    },
+    [replaceDocumentController],
+  );
+
   const resolveRestoreCandidate = useCallback(
     (
       decision: TabSessionRestoreDecision,
@@ -209,7 +401,7 @@ export function App() {
         return;
       }
 
-      const resolved = decision === 'restore' ? candidate : current;
+      const resolved = current;
       restoreCandidateRef.current = null;
       setRestoreCandidate(null);
 
@@ -228,7 +420,7 @@ export function App() {
 
   const dispatchUserAction = useCallback(
     (action: TabAction): void => {
-      if (closeRequestRef.current) {
+      if (closeRequestRef.current || restorePendingRef.current) {
         return;
       }
 
@@ -247,12 +439,457 @@ export function App() {
     [resolveRestoreCandidate],
   );
 
+  const flushProjectDocuments = useCallback(async (): Promise<boolean> => {
+    try {
+      return await documentControllerRef.current.flushAll();
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const performGuardedTabAction = useCallback(
+    async (action: TabAction): Promise<boolean> => {
+      if (closeRequestRef.current || restorePendingRef.current) {
+        return false;
+      }
+
+      if (
+        action.type === 'open-target' &&
+        isProjectTarget(action.target) &&
+        projectRef.current?.projectId !== action.target.projectId
+      ) {
+        return false;
+      }
+
+      const initial = tabStateRef.current;
+      const initialNext = tabReducer(initial, action);
+
+      if (initialNext === initial) {
+        return true;
+      }
+
+      if (!projectRef.current) {
+        dispatchUserAction(action);
+        return true;
+      }
+
+      if (!(await flushProjectDocuments())) {
+        return false;
+      }
+
+      if (closeRequestRef.current || restorePendingRef.current) {
+        return false;
+      }
+
+      const current = tabStateRef.current;
+      const next = tabReducer(current, action);
+      if (next === current) {
+        return true;
+      }
+
+      const closesProjectContext =
+        hasProjectTabs(current) && !hasProjectTabs(next);
+      if (closesProjectContext) {
+        const homeState = tabReducer(next, {
+          type: 'open-page',
+          pageId: INTERNAL_PAGE_IDS.home,
+        });
+        dispatchUserAction({
+          type: 'restore-session',
+          session: homeState,
+        });
+        await getApi().closeProject?.().catch(() => undefined);
+        setActiveProject(null);
+      } else {
+        dispatchUserAction(action);
+      }
+
+      return true;
+    },
+    [dispatchUserAction, flushProjectDocuments, setActiveProject],
+  );
+
+  const enqueueWorkspaceTransition = useCallback(
+    <T,>(operation: () => Promise<T>): Promise<T> => {
+      const pending = workspaceTransitionRef.current.then(
+        operation,
+        operation,
+      );
+      workspaceTransitionRef.current = pending.then(
+        () => undefined,
+        () => undefined,
+      );
+      return pending;
+    },
+    [],
+  );
+
+  const waitForWorkspaceTransitions = useCallback(async (): Promise<void> => {
+    let pending: Promise<void>;
+
+    do {
+      pending = workspaceTransitionRef.current;
+      await pending;
+    } while (workspaceTransitionRef.current !== pending);
+  }, []);
+
+  const dispatchGuardedTabAction = useCallback(
+    (action: TabAction): Promise<boolean> =>
+      projectRef.current
+        ? enqueueWorkspaceTransition(() => performGuardedTabAction(action))
+        : performGuardedTabAction(action),
+    [enqueueWorkspaceTransition, performGuardedTabAction],
+  );
+
+  const activateProject = useCallback(
+    (summary: ProjectSummary): Promise<boolean> =>
+      enqueueWorkspaceTransition(async () => {
+        if (closeRequestRef.current || restorePendingRef.current) {
+          return false;
+        }
+
+        setActiveProject(summary);
+        const withoutPreviousProject = removeProjectTabs(tabStateRef.current);
+        const next = tabReducer(withoutPreviousProject, {
+          type: 'open-target',
+          target: {
+            type: 'project-overview',
+            projectId: summary.projectId,
+          },
+        });
+        dispatchUserAction({ type: 'restore-session', session: next });
+        setProjectNotice(undefined);
+        return true;
+      }),
+    [dispatchUserAction, enqueueWorkspaceTransition, setActiveProject],
+  );
+
+  const readMarkdownDocument = useCallback(
+    (nodeId: string) => {
+      const operation = getApi().readMarkdownDocument;
+      return operation
+        ? operation({ nodeId })
+        : Promise.resolve(
+            unavailableProjectResult<MarkdownDocument>(
+              'The project bridge is unavailable.',
+            ),
+          );
+    },
+    [],
+  );
+
+  const projectPageRuntime = useMemo(
+    () => ({
+      markdown: {
+        controller: documentController,
+        readDocument: readMarkdownDocument,
+      },
+    }),
+    [documentController, readMarkdownDocument],
+  );
+
+  const completeConsumedRestore = useCallback(
+    (resolved: TabSessionSnapshot): void => {
+      restorePendingRef.current = false;
+      setRestorePending(false);
+      tabStateRef.current = resolved;
+      dispatchTabs({ type: 'restore-session', session: resolved });
+      void getApi()
+        .resolveRestorableTabSession?.('restore', resolved)
+        .catch(() => undefined);
+    },
+    [],
+  );
+
+  const openCreateProjectDialog = useCallback((): void => {
+    resolveRestoreCandidate('ignore', tabStateRef.current);
+    setCreateProjectOpen(true);
+  }, [resolveRestoreCandidate]);
+
+  const createProject = useCallback(
+    async (request: Parameters<FlyoffApi['createProject']>[0]) => {
+      if (!isPortableProjectName(request.name)) {
+        return projectFailure(
+          'invalid-name',
+          translate('projects.invalidName'),
+        );
+      }
+
+      if (!(await flushProjectDocuments())) {
+        return unavailableProjectResult<ProjectSummary>(
+          translate('projects.saveFailed'),
+        );
+      }
+
+      const operation = getApi().createProject;
+      if (!operation) {
+        return unavailableProjectResult<ProjectSummary>(
+          translate('projects.operationFailed'),
+        );
+      }
+
+      const result = await operation(request);
+      if (result.ok) {
+        if (!(await activateProject(result.value))) {
+          await getApi().closeProject?.().catch(() => undefined);
+          return unavailableProjectResult<ProjectSummary>(
+            translate('projects.operationFailed'),
+          );
+        }
+      }
+      return result;
+    },
+    [activateProject, flushProjectDocuments, translate],
+  );
+
+  const openProject = useCallback(async (): Promise<void> => {
+    resolveRestoreCandidate('ignore', tabStateRef.current);
+    if (!(await flushProjectDocuments())) {
+      return;
+    }
+
+    const operation = getApi().openProject;
+    if (!operation) {
+      setProjectNotice(translate('projects.operationFailed'));
+      return;
+    }
+
+    try {
+      const result = await operation();
+      if (result.ok) {
+        if (!(await activateProject(result.value))) {
+          await getApi().closeProject?.().catch(() => undefined);
+          setProjectNotice(translate('projects.operationFailed'));
+        }
+      } else if (result.error.code !== 'cancelled') {
+        setProjectNotice(result.error.message);
+      }
+    } catch (error) {
+      setProjectNotice(String(error));
+    }
+  }, [activateProject, flushProjectDocuments, resolveRestoreCandidate, translate]);
+
+  const listProjectChildren = useCallback(
+    async (request: Parameters<FlyoffApi['listProjectChildren']>[0]) => {
+      const operation = getApi().listProjectChildren;
+      if (!operation) {
+        return unavailableProjectResult<readonly ProjectTreeNode[]>(
+          translate('projects.operationFailed'),
+        );
+      }
+      const result = await operation(request);
+      if (result.ok) {
+        replaceProjectBranch(request.parentId, result.value);
+      }
+      return result;
+    },
+    [replaceProjectBranch, translate],
+  );
+
+  const createProjectNode = useCallback(
+    (request: Parameters<FlyoffApi['createProjectNode']>[0]) =>
+      enqueueWorkspaceTransition(async () => {
+        if (!isPortableProjectName(request.name)) {
+          return projectFailure(
+            'invalid-name',
+            translate('projects.invalidName'),
+          );
+        }
+
+        if (!(await flushProjectDocuments())) {
+          return unavailableProjectResult<ProjectTreeNode>(
+            translate('projects.saveFailed'),
+          );
+        }
+
+        const operation = getApi().createProjectNode;
+        if (!operation) {
+          return unavailableProjectResult<ProjectTreeNode>(
+            translate('projects.operationFailed'),
+          );
+        }
+        const result = await operation(request);
+        if (result.ok) {
+          cacheProjectNodes([result.value]);
+        }
+        return result;
+      }),
+    [
+      cacheProjectNodes,
+      enqueueWorkspaceTransition,
+      flushProjectDocuments,
+      translate,
+    ],
+  );
+
+  const renameProjectNode = useCallback(
+    (request: Parameters<FlyoffApi['renameProjectNode']>[0]) =>
+      enqueueWorkspaceTransition(async () => {
+        if (!isPortableProjectName(request.name)) {
+          return projectFailure(
+            'invalid-name',
+            translate('projects.invalidName'),
+          );
+        }
+
+        if (!(await flushProjectDocuments())) {
+          return unavailableProjectResult<ProjectTreeNode>(
+            translate('projects.saveFailed'),
+          );
+        }
+
+        const operation = getApi().renameProjectNode;
+        if (!operation) {
+          return unavailableProjectResult<ProjectTreeNode>(
+            translate('projects.operationFailed'),
+          );
+        }
+        const result = await operation(request);
+        if (result.ok) {
+          cacheProjectNodes([result.value]);
+        }
+        return result;
+      }),
+    [
+      cacheProjectNodes,
+      enqueueWorkspaceTransition,
+      flushProjectDocuments,
+      translate,
+    ],
+  );
+
+  const moveProjectNode = useCallback(
+    (request: Parameters<FlyoffApi['moveProjectNode']>[0]) =>
+      enqueueWorkspaceTransition(async () => {
+        if (!(await flushProjectDocuments())) {
+          return unavailableProjectResult<ProjectTreeNode>(
+            translate('projects.saveFailed'),
+          );
+        }
+
+        const operation = getApi().moveProjectNode;
+        if (!operation) {
+          return unavailableProjectResult<ProjectTreeNode>(
+            translate('projects.operationFailed'),
+          );
+        }
+        const result = await operation(request);
+        if (result.ok) {
+          cacheProjectNodes([result.value]);
+        }
+        return result;
+      }),
+    [
+      cacheProjectNodes,
+      enqueueWorkspaceTransition,
+      flushProjectDocuments,
+      translate,
+    ],
+  );
+
+  const commitProjectNodeTrashed = useCallback(
+    async (nodeIds: readonly string[]): Promise<void> => {
+      const removedIds = new Set(nodeIds);
+
+      const remainingNodes = new Map(projectNodesRef.current);
+      for (const nodeId of removedIds) {
+        remainingNodes.delete(nodeId);
+      }
+      projectNodesRef.current = remainingNodes;
+      setProjectNodes(remainingNodes);
+
+      const current = tabStateRef.current;
+      let next = current;
+      for (const tab of current.tabs) {
+        if (
+          tab.target.type === 'project-content' &&
+          removedIds.has(tab.target.nodeId)
+        ) {
+          next = tabReducer(next, {
+            type: 'close-tab',
+            tabId: tab.tabId,
+          });
+        }
+      }
+
+      if (next === current) {
+        return;
+      }
+
+      const closesProjectContext =
+        hasProjectTabs(current) && !hasProjectTabs(next);
+      const session = closesProjectContext
+        ? tabReducer(next, {
+            type: 'open-page',
+            pageId: INTERNAL_PAGE_IDS.home,
+          })
+        : next;
+      tabStateRef.current = session;
+      dispatchTabs({ type: 'restore-session', session });
+
+      if (closesProjectContext) {
+        await getApi().closeProject?.().catch(() => undefined);
+        setActiveProject(null);
+      }
+    },
+    [setActiveProject],
+  );
+
+  const trashProjectNode = useCallback(
+    (request: Parameters<FlyoffApi['trashProjectNode']>[0]) =>
+      enqueueWorkspaceTransition(async () => {
+        if (!(await flushProjectDocuments())) {
+          return unavailableProjectResult<TrashProjectNodeOutcome>(
+            translate('projects.saveFailed'),
+          );
+        }
+
+        const operation = getApi().trashProjectNode;
+        if (!operation) {
+          return unavailableProjectResult<TrashProjectNodeOutcome>(
+            translate('projects.operationFailed'),
+          );
+        }
+
+        const result = await operation(request);
+        if (result.ok) {
+          await commitProjectNodeTrashed(result.value.nodeIds);
+        }
+        return result;
+      }),
+    [
+      commitProjectNodeTrashed,
+      enqueueWorkspaceTransition,
+      flushProjectDocuments,
+      translate,
+    ],
+  );
+
+  const openProjectNode = useCallback(
+    (node: ProjectTreeNode): void => {
+      if (node.kind !== 'page' || !projectRef.current) {
+        return;
+      }
+      cacheProjectNodes([node]);
+      void dispatchGuardedTabAction({
+        type: 'open-target',
+        target: {
+          type: 'project-content',
+          projectId: projectRef.current.projectId,
+          nodeId: node.nodeId,
+          pageType: node.pageType,
+        },
+      });
+    },
+    [cacheProjectNodes, dispatchGuardedTabAction],
+  );
+
   const closeActiveTab = useCallback((): void => {
-    dispatchUserAction({
+    void dispatchGuardedTabAction({
       type: 'close-tab',
       tabId: tabStateRef.current.activeTabId,
     });
-  }, [dispatchUserAction]);
+  }, [dispatchGuardedTabAction]);
 
   const controlWindow = useCallback(
     (action: WindowControlAction): void => {
@@ -346,13 +983,123 @@ export function App() {
       return;
     }
 
-    const session = tabStateRef.current;
-    submitCloseResponse({
-      requestId: request.requestId,
-      decision: 'confirm',
-      session,
+    void waitForWorkspaceTransitions().then(async () => {
+      if (closeRequestRef.current?.requestId !== request.requestId) {
+        return;
+      }
+
+      const saved = await flushProjectDocuments();
+
+      if (closeRequestRef.current?.requestId !== request.requestId) {
+        return;
+      }
+
+      if (!saved) {
+        submitCloseResponse({
+          requestId: request.requestId,
+          decision: 'cancel',
+        });
+        return;
+      }
+
+      submitCloseResponse({
+        requestId: request.requestId,
+        decision: 'confirm',
+        session: tabStateRef.current,
+      });
     });
-  }, [submitCloseResponse]);
+  }, [flushProjectDocuments, submitCloseResponse, waitForWorkspaceTransitions]);
+
+  const restorePreviousSession = useCallback(async (): Promise<void> => {
+    const candidate = restoreCandidateRef.current;
+    if (!candidate || restorePendingRef.current) {
+      return;
+    }
+
+    restoreCandidateRef.current = null;
+    setRestoreCandidate(null);
+    restorePendingRef.current = true;
+    setRestorePending(true);
+
+    const projectId = candidate.tabs.find(({ target }) =>
+      isProjectTarget(target),
+    )?.target;
+
+    if (!projectId || !isProjectTarget(projectId)) {
+      completeConsumedRestore(candidate);
+      return;
+    }
+
+    const restore = getApi().restoreProject;
+    if (!restore) {
+      setProjectNotice(translate('projects.projectUnavailable'));
+      completeConsumedRestore(removeProjectTabs(candidate));
+      return;
+    }
+
+    let result: Awaited<ReturnType<FlyoffApi['restoreProject']>>;
+    try {
+      result = await restore({ projectId: projectId.projectId });
+    } catch {
+      setProjectNotice(translate('projects.projectUnavailable'));
+      completeConsumedRestore(removeProjectTabs(candidate));
+      return;
+    }
+
+    if (!result.ok) {
+      setProjectNotice(translate('projects.projectUnavailable'));
+      completeConsumedRestore(removeProjectTabs(candidate));
+      return;
+    }
+
+    const restored = keepProject(candidate, result.value.projectId);
+    setActiveProject(result.value);
+
+    const getNode = getApi().getProjectNode;
+    if (getNode) {
+      const pendingNodeIds = [
+        ...new Set(
+          restored.tabs.flatMap(({ target }) =>
+            target.type === 'project-content' ? [target.nodeId] : [],
+          ),
+        ),
+      ];
+      const requestedNodeIds = new Set<string>();
+      const restoredNodes: ProjectTreeNode[] = [];
+
+      while (pendingNodeIds.length > 0) {
+        const batch = pendingNodeIds.splice(0).filter((nodeId) => {
+          if (requestedNodeIds.has(nodeId)) {
+            return false;
+          }
+          requestedNodeIds.add(nodeId);
+          return true;
+        });
+        const results = await Promise.all(
+          batch.map((nodeId) => getNode({ nodeId }).catch(() => undefined)),
+        );
+
+        for (const nodeResult of results) {
+          if (!nodeResult?.ok) {
+            continue;
+          }
+          restoredNodes.push(nodeResult.value);
+          if (nodeResult.value.parentId) {
+            pendingNodeIds.push(nodeResult.value.parentId);
+          }
+        }
+      }
+
+      cacheProjectNodes(restoredNodes);
+    }
+
+    completeConsumedRestore(restored);
+  }, [
+    cacheProjectNodes,
+    completeConsumedRestore,
+    setActiveProject,
+    translate,
+  ]);
 
   useEffect(() => {
     const removeStateListener = getApi().onWindowStateChanged?.((state) => {
@@ -455,7 +1202,11 @@ export function App() {
   }, [resolveRestoreCandidate, restoreCandidate]);
 
   useEffect(() => {
-    if (!sessionReady || restoreCandidateRef.current) {
+    if (
+      !sessionReady ||
+      restoreCandidateRef.current ||
+      restorePendingRef.current
+    ) {
       return;
     }
 
@@ -470,11 +1221,19 @@ export function App() {
     }, 200);
 
     return () => window.clearTimeout(timeout);
-  }, [sessionReady, tabState]);
+  }, [restorePending, sessionReady, tabState]);
 
   useEffect(() => {
     const api = getApi();
     const removeCloseListener = api.onCloseRequested?.((request) => {
+      if (restorePendingRef.current) {
+        void respondToClose({
+          requestId: request.requestId,
+          decision: 'cancel',
+        }).catch(() => undefined);
+        return;
+      }
+
       resolveRestoreCandidate('ignore', tabStateRef.current);
 
       const previous = closeRequestRef.current;
@@ -541,7 +1300,7 @@ export function App() {
           (activeIndex + offset + state.tabs.length) % state.tabs.length;
         const nextTab = state.tabs[nextIndex];
         if (nextTab) {
-          dispatchUserAction({
+          void dispatchGuardedTabAction({
             type: 'select-tab',
             tabId: nextTab.tabId,
           });
@@ -559,7 +1318,7 @@ export function App() {
             : requestedIndex;
         const requested = state.tabs[index];
         if (requested) {
-          dispatchUserAction({
+          void dispatchGuardedTabAction({
             type: 'select-tab',
             tabId: requested.tabId,
           });
@@ -569,13 +1328,163 @@ export function App() {
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [dispatchUserAction, platform]);
+  }, [dispatchGuardedTabAction, platform]);
+
+  useEffect(
+    () => () => {
+      documentControllerRef.current.dispose();
+    },
+    [],
+  );
+
+  const selectProjectCreateLocation = useCallback(() => {
+    const operation = getApi().selectProjectCreateLocation;
+    return operation
+      ? operation()
+      : Promise.resolve(
+          unavailableProjectResult<ProjectLocationSelection>(
+            translate('projects.operationFailed'),
+          ),
+        );
+  }, [translate]);
+
+  const requestRootCreation = useCallback(
+    (kind: ProjectTreeNode['kind']): void => {
+      if (kind === 'folder') {
+        void projectSidebarRef.current?.createFolder();
+      } else {
+        void projectSidebarRef.current?.createMarkdown();
+      }
+    },
+    [],
+  );
+
+  const getTabPresentation = useCallback(
+    (tab: TabDescriptor): TabPresentation => {
+      const target = tab.target;
+      if (target.type === 'internal') {
+        const definition = getPageDefinition(target.pageId);
+        return {
+          title: translate(definition.titleKey),
+          icon: definition.icon,
+        };
+      }
+
+      if (target.type === 'project-overview') {
+        return {
+          title:
+            project?.projectId === target.projectId
+              ? project.name
+              : translate('projects.projectUnavailable'),
+          icon: projectOverviewIcon,
+        };
+      }
+
+      const node = projectNodes.get(target.nodeId);
+      return {
+        title: node
+          ? projectNodeDisplayName(node)
+          : translate('projects.unavailable'),
+        icon:
+          getProjectPageTypeDefinition(target.pageType)?.icon ??
+          markdownPageIcon,
+      };
+    },
+    [project, projectNodes, translate],
+  );
+
+  const renderPage = useCallback(
+    (props: PageRenderProps) => {
+      const target = props.descriptor.target;
+
+      if (target.type === 'internal') {
+        if (target.pageId === INTERNAL_PAGE_IDS.home) {
+          return (
+            <HomePage
+              {...(props as InternalPageProps)}
+              onNewProject={openCreateProjectDialog}
+              onOpenProject={() => void openProject()}
+            />
+          );
+        }
+        return renderRegisteredInternalPage(props);
+      }
+
+      if (
+        !project ||
+        project.projectId !== target.projectId
+      ) {
+        return (
+          <main className="project-content-unavailable" role="alert">
+            <p>{translate('projects.projectUnavailable')}</p>
+          </main>
+        );
+      }
+
+      if (target.type === 'project-overview') {
+        return (
+          <ProjectOverview
+            onNewFolder={() => requestRootCreation('folder')}
+            onNewMarkdown={() => requestRootCreation('page')}
+            project={project}
+            translate={translate}
+          />
+        );
+      }
+
+      return (
+        <ProjectContentPage
+          node={projectNodes.get(target.nodeId)}
+          nodeId={target.nodeId}
+          pageType={target.pageType}
+          runtime={projectPageRuntime}
+          scrollTop={props.descriptor.scrollTop}
+          onScrollChange={props.onScrollChange}
+          translate={translate}
+        />
+      );
+    },
+    [
+      openCreateProjectDialog,
+      openProject,
+      project,
+      projectNodes,
+      projectPageRuntime,
+      requestRootCreation,
+      translate,
+    ],
+  );
 
   const activeTab =
     tabState.tabs.find(({ tabId }) => tabId === tabState.activeTabId) ??
     tabState.tabs[0];
   const activePageId: InternalPageId =
-    activeTab?.pageId ?? INTERNAL_PAGE_IDS.home;
+    activeTab?.target.type === 'internal'
+      ? activeTab.target.pageId
+      : INTERNAL_PAGE_IDS.home;
+  const activeProjectTarget =
+    activeTab?.target.type !== 'internal' ? activeTab?.target : undefined;
+  const activeProjectNodePath = useMemo(() => {
+    if (activeProjectTarget?.type !== 'project-content') {
+      return [];
+    }
+
+    const pathIds: string[] = [];
+    const visited = new Set<string>();
+    let current = projectNodes.get(activeProjectTarget.nodeId);
+
+    while (current?.parentId && !visited.has(current.parentId)) {
+      visited.add(current.parentId);
+      const parent = projectNodes.get(current.parentId);
+      if (!parent || parent.kind !== 'folder') {
+        break;
+      }
+      pathIds.unshift(parent.nodeId);
+      current = parent;
+    }
+
+    return pathIds;
+  }, [activeProjectTarget, projectNodes]);
 
   return (
     <div className="app-shell">
@@ -588,30 +1497,81 @@ export function App() {
         onWindowAction={controlWindow}
       />
       <div className="workspace">
-        <Sidebar
+        <GlobalSidebar
           activePageId={activePageId}
+          hidden={Boolean(
+            activeProjectTarget &&
+              project?.projectId === activeProjectTarget.projectId,
+          )}
           onOpenPage={(pageId) =>
-            dispatchUserAction({ type: 'open-page', pageId })
+            void dispatchGuardedTabAction({ type: 'open-page', pageId })
           }
           translate={translate}
         />
+        {project ? (
+          <ProjectSidebar
+            activeNodeId={
+              activeProjectTarget?.type === 'project-content'
+                ? activeProjectTarget.nodeId
+                : undefined
+            }
+            activeNodePath={activeProjectNodePath}
+            hidden={
+              !activeProjectTarget ||
+              project.projectId !== activeProjectTarget.projectId
+            }
+            loadChildren={listProjectChildren}
+            onBeforeNodeChange={() => flushProjectDocuments()}
+            onCreateNode={createProjectNode}
+            onError={setProjectNotice}
+            onMoveNode={moveProjectNode}
+            onNodeChanged={(node) => cacheProjectNodes([node])}
+            onOpenHome={() =>
+              void dispatchGuardedTabAction({
+                type: 'open-page',
+                pageId: INTERNAL_PAGE_IDS.home,
+              })
+            }
+            onOpenNode={openProjectNode}
+            onOpenOverview={() =>
+              void dispatchGuardedTabAction({
+                type: 'open-target',
+                target: {
+                  type: 'project-overview',
+                  projectId: project.projectId,
+                },
+              })
+            }
+            onRenameNode={renameProjectNode}
+            onTrashNode={trashProjectNode}
+            overviewActive={
+              activeProjectTarget?.type === 'project-overview'
+            }
+            project={project}
+            ref={projectSidebarRef}
+            translate={translate}
+          />
+        ) : null}
         <div className="page-workspace">
           <TabBar
             activeTabId={tabState.activeTabId}
+            closeLabel={translate('pages.closeTab')}
+            getPresentation={getTabPresentation}
+            navigationLabel={translate('pages.bar')}
             onClose={(tabId) =>
-              dispatchUserAction({ type: 'close-tab', tabId })
+              void dispatchGuardedTabAction({ type: 'close-tab', tabId })
             }
             onMove={(tabId, toIndex) =>
               dispatchUserAction({ type: 'move-tab', tabId, toIndex })
             }
             onSelect={(tabId) =>
-              dispatchUserAction({ type: 'select-tab', tabId })
+              void dispatchGuardedTabAction({ type: 'select-tab', tabId })
             }
             tabs={tabState.tabs}
-            translate={translate}
           />
           <PageHost
             activeTabId={tabState.activeTabId}
+            getPresentation={getTabPresentation}
             onPageStateChange={(tabId, pageState) =>
               dispatchUserAction({
                 type: 'update-page-state',
@@ -626,21 +1586,49 @@ export function App() {
                 scrollTop,
               })
             }
+            renderPage={renderPage}
             tabs={tabState.tabs}
             translate={translate}
           />
         </div>
       </div>
+      {restorePending ? (
+        <div className="project-restore-blocker">
+          <div className="project-restore-status" role="status">
+            {translate('projects.loading')}
+          </div>
+        </div>
+      ) : null}
       {restoreCandidate ? (
         <SessionRestoreToast
           onIgnore={() =>
             resolveRestoreCandidate('ignore', tabStateRef.current)
           }
           onRestore={() =>
-            resolveRestoreCandidate('restore', tabStateRef.current)
+            void restorePreviousSession()
           }
           translate={translate}
         />
+      ) : null}
+      <CreateProjectDialog
+        onCancel={() => setCreateProjectOpen(false)}
+        onCreate={createProject}
+        onCreated={() => setCreateProjectOpen(false)}
+        onSelectLocation={selectProjectCreateLocation}
+        open={createProjectOpen}
+        translate={translate}
+      />
+      {projectNotice ? (
+        <div className="project-notice" role="alert">
+          <span>{projectNotice}</span>
+          <button
+            aria-label={translate('projects.cancel')}
+            onClick={() => setProjectNotice(undefined)}
+            type="button"
+          >
+            &times;
+          </button>
+        </div>
       ) : null}
       {closeRequest ? (
         <CloseConfirmationDialog

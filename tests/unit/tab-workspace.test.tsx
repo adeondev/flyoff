@@ -39,7 +39,7 @@ function createSession(
     version: TAB_SESSION_VERSION,
     tabs: pages.map((pageId) => ({
       tabId: `page:${pageId}`,
-      pageId,
+      target: { type: 'internal', pageId },
       scrollTop: 0,
       pageState: { version: 1, data: {} },
     })),

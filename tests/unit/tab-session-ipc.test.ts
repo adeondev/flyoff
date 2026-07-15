@@ -29,7 +29,7 @@ const session: TabSessionSnapshot = {
   tabs: [
     {
       tabId: 'page:home',
-      pageId: 'home',
+      target: { type: 'internal', pageId: 'home' },
       scrollTop: 0,
       pageState: { version: 1, data: {} },
     },

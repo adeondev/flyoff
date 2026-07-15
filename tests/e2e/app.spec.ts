@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -14,10 +14,13 @@ import { locatePackagedAsar } from './packaged-asar';
 import { terminateProcessTree } from './terminate-process';
 
 const repositoryRoot = path.resolve(__dirname, '../..');
+const e2eProjectName = 'Projeto E2E 🛠️';
 
 let electronApp: ElectronApplication;
 let electronProcess: ReturnType<ElectronApplication['process']>;
 let page: Page;
+let projectParentPath: string;
+let projectParentCanonicalPath: string;
 let userDataPath: string;
 
 async function settleWithin(
@@ -66,6 +69,10 @@ test.describe('Flyoff desktop shell', () => {
   test.beforeAll(async () => {
     const appPath = locatePackagedAsar(repositoryRoot);
     userDataPath = await mkdtemp(path.join(os.tmpdir(), 'flyoff-e2e-'));
+    projectParentPath = await mkdtemp(
+      path.join(os.tmpdir(), 'flyoff-e2e-projects-'),
+    );
+    projectParentCanonicalPath = await realpath(projectParentPath);
 
     electronApp = await electron.launch({
       args: [
@@ -77,6 +84,11 @@ test.describe('Flyoff desktop shell', () => {
       env: {
         ...process.env,
         FLYOFF_E2E: '1',
+        FLYOFF_E2E_PROJECT_CREATE_PARENT: projectParentCanonicalPath,
+        FLYOFF_E2E_PROJECT_OPEN_ROOT: path.join(
+          projectParentCanonicalPath,
+          e2eProjectName,
+        ),
         FLYOFF_E2E_USER_DATA: userDataPath,
       },
     });
@@ -94,6 +106,12 @@ test.describe('Flyoff desktop shell', () => {
       await stopElectronApplication(electronApp, electronProcess);
     } finally {
       await rm(userDataPath, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 100,
+      });
+      await rm(projectParentPath, {
         recursive: true,
         force: true,
         maxRetries: 5,
@@ -168,12 +186,16 @@ test.describe('Flyoff desktop shell', () => {
   test('keeps Node and Electron out of the renderer world', async () => {
     const exposure = await page.evaluate(() => {
       const pageGlobal = globalThis as typeof globalThis & {
+        Buffer?: unknown;
+        electron?: unknown;
+        ipcRenderer?: unknown;
+        module?: unknown;
         process?: unknown;
         require?: unknown;
       };
 
       return {
-        apiKeys: Object.keys(window.flyoff),
+        apiKeys: Object.keys(window.flyoff).sort(),
         getBootstrapStateType: typeof window.flyoff.getBootstrapState,
         getWindowStateType: typeof window.flyoff.getWindowState,
         controlWindowType: typeof window.flyoff.controlWindow,
@@ -189,6 +211,26 @@ test.describe('Flyoff desktop shell', () => {
           typeof window.flyoff.respondToCloseRequest,
         onRendererMenuCommandType:
           typeof window.flyoff.onRendererMenuCommand,
+        selectProjectCreateLocationType:
+          typeof window.flyoff.selectProjectCreateLocation,
+        createProjectType: typeof window.flyoff.createProject,
+        openProjectType: typeof window.flyoff.openProject,
+        restoreProjectType: typeof window.flyoff.restoreProject,
+        closeProjectType: typeof window.flyoff.closeProject,
+        listProjectChildrenType: typeof window.flyoff.listProjectChildren,
+        getProjectNodeType: typeof window.flyoff.getProjectNode,
+        createProjectNodeType: typeof window.flyoff.createProjectNode,
+        renameProjectNodeType: typeof window.flyoff.renameProjectNode,
+        moveProjectNodeType: typeof window.flyoff.moveProjectNode,
+        trashProjectNodeType: typeof window.flyoff.trashProjectNode,
+        readMarkdownDocumentType:
+          typeof window.flyoff.readMarkdownDocument,
+        saveMarkdownDocumentType:
+          typeof window.flyoff.saveMarkdownDocument,
+        bufferType: typeof pageGlobal.Buffer,
+        electronType: typeof pageGlobal.electron,
+        ipcRendererType: typeof pageGlobal.ipcRenderer,
+        moduleType: typeof pageGlobal.module,
         processType: typeof pageGlobal.process,
         requireType: typeof pageGlobal.require,
       };
@@ -207,7 +249,20 @@ test.describe('Flyoff desktop shell', () => {
         'onCloseRequested',
         'respondToCloseRequest',
         'onRendererMenuCommand',
-      ],
+        'selectProjectCreateLocation',
+        'createProject',
+        'openProject',
+        'restoreProject',
+        'closeProject',
+        'listProjectChildren',
+        'getProjectNode',
+        'createProjectNode',
+        'renameProjectNode',
+        'moveProjectNode',
+        'trashProjectNode',
+        'readMarkdownDocument',
+        'saveMarkdownDocument',
+      ].sort(),
       getBootstrapStateType: 'function',
       getWindowStateType: 'function',
       controlWindowType: 'function',
@@ -219,9 +274,139 @@ test.describe('Flyoff desktop shell', () => {
       onCloseRequestedType: 'function',
       respondToCloseRequestType: 'function',
       onRendererMenuCommandType: 'function',
+      selectProjectCreateLocationType: 'function',
+      createProjectType: 'function',
+      openProjectType: 'function',
+      restoreProjectType: 'function',
+      closeProjectType: 'function',
+      listProjectChildrenType: 'function',
+      getProjectNodeType: 'function',
+      createProjectNodeType: 'function',
+      renameProjectNodeType: 'function',
+      moveProjectNodeType: 'function',
+      trashProjectNodeType: 'function',
+      readMarkdownDocumentType: 'function',
+      saveMarkdownDocumentType: 'function',
+      bufferType: 'undefined',
+      electronType: 'undefined',
+      ipcRendererType: 'undefined',
+      moduleType: 'undefined',
       processType: 'undefined',
       requireType: 'undefined',
     });
+  });
+
+  test('creates a project and saves a Markdown note through the packaged bridge', async () => {
+    const labels = await page.evaluate(() =>
+      document.documentElement.lang === 'en-US'
+        ? {
+            chooseLocation: 'Choose location',
+            closePrefix: 'Close tab',
+            create: 'Create',
+            editor: 'Markdown editor',
+            home: 'Home',
+            name: 'Name',
+            newNote: 'New note',
+            newProject: 'New Project',
+            openProject: 'Open Project',
+            projectName: 'Project name',
+          }
+        : {
+            chooseLocation: 'Escolher local',
+            closePrefix: 'Fechar aba',
+            create: 'Criar',
+            editor: 'Editor Markdown',
+            home: 'Início',
+            name: 'Nome',
+            newNote: 'Nova nota',
+            newProject: 'Novo Projeto',
+            openProject: 'Abrir Projeto',
+            projectName: 'Nome do projeto',
+          },
+    );
+    const projectName = e2eProjectName;
+    const noteName = 'Visão geral';
+    const noteContent = '# Salvo pelo Flyoff\n\nOlá, mundo 🌎\n';
+
+    await page.getByRole('button', { name: labels.newProject }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog
+      .getByRole('textbox', { name: labels.projectName })
+      .fill(projectName);
+    await dialog
+      .getByRole('button', { name: labels.chooseLocation })
+      .click();
+    await expect(dialog.getByText(projectParentCanonicalPath)).toBeVisible();
+    await dialog.getByRole('button', { name: labels.create }).click();
+
+    await expect(page.getByRole('tab', { name: projectName })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    await page.getByRole('button', { name: labels.newNote }).click();
+    const inlineName = page.getByRole('textbox', { name: labels.name });
+    await inlineName.fill(noteName);
+    await inlineName.press('Enter');
+
+    const editor = page.getByRole('textbox', { name: labels.editor });
+    await editor.fill(noteContent);
+    await editor.press(process.platform === 'darwin' ? 'Meta+S' : 'Control+S');
+    const notePath = path.join(
+      projectParentCanonicalPath,
+      projectName,
+      `${noteName}.md`,
+    );
+    await expect
+      .poll(() => readFile(notePath, 'utf8').catch(() => ''))
+      .toBe(noteContent);
+
+    await page
+      .getByRole('button', {
+        name: `${labels.closePrefix}: ${noteName}`,
+      })
+      .click();
+    await expect(page.getByRole('tab', { name: noteName })).toHaveCount(0);
+    await page
+      .getByRole('button', {
+        name: `${labels.closePrefix}: ${projectName}`,
+      })
+      .click();
+    await expect(page.getByRole('tab', { name: projectName })).toHaveCount(0);
+    await expect(page.getByRole('tab', { name: labels.home })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    await expect
+      .poll(() =>
+        page.evaluate(async () =>
+          window.flyoff.listProjectChildren({ parentId: null }),
+        ),
+      )
+      .toMatchObject({
+        ok: false,
+        error: { code: 'invalid-operation' },
+      });
+
+    await page.getByRole('button', { name: labels.openProject }).click();
+    await expect(page.getByRole('tab', { name: projectName })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    await page
+      .getByRole('button', {
+        name: `${labels.closePrefix}: ${projectName}`,
+      })
+      .click();
+    await expect
+      .poll(() =>
+        page.evaluate(async () =>
+          window.flyoff.listProjectChildren({ parentId: null }),
+        ),
+      )
+      .toMatchObject({
+        ok: false,
+        error: { code: 'invalid-operation' },
+      });
   });
 
   test('uses Flyoff controls to maximize, restore and minimize', async () => {

@@ -53,13 +53,13 @@ const session: TabSessionSnapshot = {
   tabs: [
     {
       tabId: 'page:home',
-      pageId: 'home',
+      target: { type: 'internal', pageId: 'home' },
       scrollTop: 0,
       pageState: { version: 1, data: {} },
     },
     {
       tabId: 'page:settings',
-      pageId: 'settings',
+      target: { type: 'internal', pageId: 'settings' },
       scrollTop: 0,
       pageState: { version: 1, data: {} },
     },

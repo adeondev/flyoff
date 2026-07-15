@@ -2,6 +2,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  writeFileSync,
 } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -31,7 +32,7 @@ function createSnapshot(
     version: TAB_SESSION_VERSION,
     tabs: pageIds.map((pageId) => ({
       tabId: `page:${pageId}`,
-      pageId,
+      target: { type: 'internal', pageId },
       scrollTop: 0,
       pageState: { version: 1, data: {} },
     })),
@@ -46,6 +47,36 @@ afterEach(() => {
 });
 
 describe('TabSessionStore', () => {
+  it('loads a version 1 session as version 2', () => {
+    const directory = createTemporaryDirectory();
+    writeFileSync(
+      path.join(directory, 'tab-session.json'),
+      JSON.stringify({
+        version: 1,
+        tabs: [
+          {
+            tabId: 'page:home',
+            pageId: 'home',
+            scrollTop: 0,
+            pageState: { version: 1, data: {} },
+          },
+          {
+            tabId: 'page:settings',
+            pageId: 'settings',
+            scrollTop: 0,
+            pageState: { version: 1, data: {} },
+          },
+        ],
+        activeTabId: 'page:settings',
+      }),
+      'utf8',
+    );
+
+    expect(new TabSessionStore(directory).getRestorableSession()).toEqual(
+      createSnapshot(['home', 'settings'], 'page:settings'),
+    );
+  });
+
   it('persists the latest session and does not offer Home alone', () => {
     const directory = createTemporaryDirectory();
     const home = createSnapshot(['home']);

@@ -19,13 +19,17 @@ import type { FlyoffTranslator } from '../shared/i18n';
 import { initializeMainI18n } from './i18n';
 import {
   registerBootstrapHandler,
+  createSystemTrashItem,
   registerMenuCommandHandler,
+  registerProjectHandlers,
   registerTabSessionHandlers,
   registerWindowControlHandlers,
+  type SelectProjectDirectory,
 } from './ipc';
 import { CloseCoordinator } from './lifecycle';
 import { createApplicationMenuTemplate } from './menu';
 import { NativeCoreClient } from './native/NativeCoreClient';
+import { ProjectCatalogStore, ProjectService } from './projects';
 import {
   configureSessionSecurity,
   createRendererLocation,
@@ -62,15 +66,35 @@ if (e2eUserDataPath) {
   app.setPath('userData', e2eUserDataPath);
 }
 
+function createE2eProjectDirectorySelector():
+  | SelectProjectDirectory
+  | undefined {
+  if (process.env.FLYOFF_E2E !== '1') {
+    return undefined;
+  }
+
+  const createParent = process.env.FLYOFF_E2E_PROJECT_CREATE_PARENT;
+  const openProject = process.env.FLYOFF_E2E_PROJECT_OPEN_ROOT;
+
+  if (!createParent && !openProject) {
+    return undefined;
+  }
+
+  return async (purpose) =>
+    (purpose === 'create-parent' ? createParent : openProject) ?? null;
+}
+
 let bootstrapState: BootstrapState | undefined;
 let closeCoordinator: CloseCoordinator | undefined;
 let coreClient: NativeCoreClient | undefined;
 let mainWindow: BrowserWindow | undefined;
 let removeBootstrapHandler: (() => void) | undefined;
 let removeMenuCommandHandler: (() => void) | undefined;
+let removeProjectHandlers: (() => void) | undefined;
 let removeTabSessionHandlers: (() => void) | undefined;
 let removeWindowControlHandlers: (() => void) | undefined;
 let translator: FlyoffTranslator | undefined;
+let projectService: ProjectService | undefined;
 let tabSessionStore: TabSessionStore | undefined;
 let windowStateStore: WindowStateStore | undefined;
 let cleanupStarted = false;
@@ -102,6 +126,8 @@ function cleanupApplication(): void {
   removeBootstrapHandler = undefined;
   removeMenuCommandHandler?.();
   removeMenuCommandHandler = undefined;
+  removeProjectHandlers?.();
+  removeProjectHandlers = undefined;
   removeTabSessionHandlers?.();
   removeTabSessionHandlers = undefined;
   removeWindowControlHandlers?.();
@@ -165,6 +191,10 @@ async function openMainWindow(
         platform,
       );
       createdWindow.once('closed', removeNavigationShortcuts);
+      const senderKey = createdWindow.webContents.id;
+      createdWindow.webContents.once('destroyed', () => {
+        projectService?.disposeSender(senderKey);
+      });
     },
     windowStateStore,
   });
@@ -191,6 +221,10 @@ async function startApplication(): Promise<void> {
     ? undefined
     : new WindowStateStore(app.getPath('userData'));
   tabSessionStore = new TabSessionStore(app.getPath('userData'));
+  projectService = new ProjectService({
+    catalogStore: new ProjectCatalogStore(app.getPath('userData')),
+    trashItem: createSystemTrashItem(),
+  });
 
   const i18n = await initializeMainI18n();
   translator = i18n.t;
@@ -260,6 +294,18 @@ async function startApplication(): Promise<void> {
   );
   Menu.setApplicationMenu(applicationMenu);
   removeMenuCommandHandler = registerMenuCommandHandler(isAllowedUrl);
+  const projectDirectorySelector = createE2eProjectDirectorySelector();
+  removeProjectHandlers = registerProjectHandlers({
+    dialogLabels: {
+      createParent: i18n.t('projects.chooseLocation'),
+      openProject: i18n.t('home.openProject'),
+    },
+    isAllowedUrl,
+    projectService,
+    ...(projectDirectorySelector
+      ? { selectDirectory: projectDirectorySelector }
+      : {}),
+  });
   removeTabSessionHandlers = registerTabSessionHandlers(
     tabSessionStore,
     isAllowedUrl,

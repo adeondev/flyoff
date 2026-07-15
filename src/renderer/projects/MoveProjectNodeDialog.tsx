@@ -1,0 +1,204 @@
+import { useEffect, useReducer, useState, type FormEvent } from 'react';
+
+import type {
+  MoveProjectNodeRequest,
+  ProjectResult,
+  ProjectTreeNode,
+} from '../../shared/contracts';
+import type { Translate } from '../pages/page-types';
+import { ProjectDialog } from './ProjectDialog';
+import { projectNodeDisplayName } from './project-node-name';
+import type { ProjectTreeController } from './project-tree-controller';
+
+interface FolderBranchProps {
+  controller: ProjectTreeController;
+  excludedNodeId: string;
+  parentId: string | null;
+  selectedId: string | null | undefined;
+  translate: Translate;
+  onSelect: (nodeId: string) => void;
+}
+
+function FolderBranch({
+  controller,
+  excludedNodeId,
+  onSelect,
+  parentId,
+  selectedId,
+  translate,
+}: FolderBranchProps) {
+  const branch = controller.getBranch(parentId);
+  const folders = branch.nodes.filter(
+    (node) => node.kind === 'folder' && node.nodeId !== excludedNodeId,
+  );
+
+  return (
+    <div role={parentId ? 'group' : undefined}>
+      {folders.map((folder) => {
+        const expanded = controller.isExpanded(folder.nodeId);
+        return (
+          <div className="project-folder-picker__branch" key={folder.nodeId}>
+            <div
+              aria-selected={selectedId === folder.nodeId}
+              className="project-folder-picker__row"
+              role="treeitem"
+            >
+              <button
+                aria-expanded={expanded}
+                aria-label={`${expanded ? '−' : '+'} ${projectNodeDisplayName(folder)}`}
+                className="project-folder-picker__expand"
+                onClick={() => void controller.toggle(folder.nodeId)}
+                type="button"
+              >
+                <span aria-hidden="true">{expanded ? '⌄' : '›'}</span>
+              </button>
+              <button
+                className="project-folder-picker__select"
+                onClick={() => onSelect(folder.nodeId)}
+                type="button"
+              >
+                <span aria-hidden="true" className="project-tree__kind project-tree__kind--folder" />
+                {projectNodeDisplayName(folder)}
+              </button>
+            </div>
+            {expanded ? (
+              <FolderBranch
+                controller={controller}
+                excludedNodeId={excludedNodeId}
+                onSelect={onSelect}
+                parentId={folder.nodeId}
+                selectedId={selectedId}
+                translate={translate}
+              />
+            ) : null}
+          </div>
+        );
+      })}
+      {branch.status === 'loading' && folders.length === 0 ? (
+        <div className="project-folder-picker__message" role="status">
+          {translate('projects.loading')}
+        </div>
+      ) : null}
+      {branch.status === 'error' ? (
+        <button
+          className="project-folder-picker__message"
+          onClick={() => void controller.load(parentId, true)}
+          type="button"
+        >
+          {translate('projects.loadFailed')}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+export interface MoveProjectNodeDialogProps {
+  controller: ProjectTreeController;
+  node: ProjectTreeNode;
+  translate: Translate;
+  onCancel: () => void;
+  onMove: (
+    request: MoveProjectNodeRequest,
+  ) => Promise<ProjectResult<ProjectTreeNode>>;
+  onMoved: (node: ProjectTreeNode) => void;
+}
+
+export function MoveProjectNodeDialog({
+  controller,
+  node,
+  onCancel,
+  onMove,
+  onMoved,
+  translate,
+}: MoveProjectNodeDialogProps) {
+  const [, renderVersion] = useReducer((version: number) => version + 1, 0);
+  const [destination, setDestination] = useState<string | null | undefined>(
+    node.parentId,
+  );
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string>();
+
+  useEffect(() => controller.subscribe(renderVersion), [controller]);
+  useEffect(() => {
+    void controller.load(null);
+  }, [controller]);
+
+  async function submit(event: FormEvent<HTMLFormElement>): Promise<void> {
+    event.preventDefault();
+    if (destination === undefined || destination === node.parentId) {
+      return;
+    }
+
+    setPending(true);
+    setError(undefined);
+    try {
+      const result = await onMove({ nodeId: node.nodeId, parentId: destination });
+      if (result.ok) {
+        await controller.refreshParents([node.parentId, destination]);
+        onMoved(result.value);
+      } else {
+        setError(result.error.message);
+      }
+    } catch (operationError) {
+      setError(String(operationError));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  return (
+    <ProjectDialog
+      busy={pending}
+      description={translate('projects.selectDestination')}
+      onCancel={onCancel}
+      title={translate('projects.moveTitle')}
+    >
+      <form className="project-dialog__form" onSubmit={(event) => void submit(event)}>
+        <div
+          aria-label={translate('projects.selectDestination')}
+          className="project-folder-picker"
+          role="tree"
+        >
+          <button
+            aria-selected={destination === null}
+            className="project-folder-picker__root"
+            data-dialog-initial-focus
+            onClick={() => setDestination(null)}
+            role="treeitem"
+            type="button"
+          >
+            <span aria-hidden="true" className="project-tree__kind project-tree__kind--folder" />
+            {translate('projects.rootFolder')}
+          </button>
+          <FolderBranch
+            controller={controller}
+            excludedNodeId={node.nodeId}
+            onSelect={setDestination}
+            parentId={null}
+            selectedId={destination}
+            translate={translate}
+          />
+        </div>
+        {error ? (
+          <p className="project-dialog__error" role="alert">
+            {error}
+          </p>
+        ) : null}
+        <div className="project-dialog__actions">
+          <button disabled={pending} onClick={onCancel} type="button">
+            {translate('projects.cancel')}
+          </button>
+          <button
+            className="project-dialog__primary"
+            disabled={
+              pending || destination === undefined || destination === node.parentId
+            }
+            type="submit"
+          >
+            {pending ? translate('projects.moving') : translate('projects.move')}
+          </button>
+        </div>
+      </form>
+    </ProjectDialog>
+  );
+}

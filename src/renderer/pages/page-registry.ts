@@ -1,4 +1,4 @@
-import type { ComponentType } from 'react';
+import { createElement, type ComponentType, type ReactNode } from 'react';
 
 import configurationIcon from '../../../public/images/icons/homepage/configuration.svg';
 import helpIcon from '../../../public/images/icons/homepage/help.svg';
@@ -9,10 +9,16 @@ import {
   INTERNAL_PAGE_IDS,
   type InternalPageId,
   type PageSessionState,
+  type TabDescriptor,
+  type TabTarget,
 } from '../../shared/contracts';
 import type { TranslationKey } from '../../shared/i18n';
 import { HomePage } from './HomePage';
-import type { InternalPageProps } from './page-types';
+import type {
+  InternalPageProps,
+  PageRenderProps,
+  PageRetention,
+} from './page-types';
 import { PlaceholderPage } from './PlaceholderPage';
 
 export interface InternalPageDefinition {
@@ -20,12 +26,24 @@ export interface InternalPageDefinition {
   titleKey: TranslationKey;
   icon: string;
   singleton: boolean;
-  retention: 'keep-alive';
+  retention: PageRetention;
   stateVersion: number;
   component: ComponentType<InternalPageProps>;
   createInitialState: () => PageSessionState;
   migrateState: (state: PageSessionState) => PageSessionState;
 }
+
+export interface ProjectPageDefinition {
+  targetType: 'project-overview' | 'project-content';
+  retention: PageRetention;
+  stateVersion: number;
+  createInitialState: () => PageSessionState;
+  migrateState: (state: PageSessionState) => PageSessionState;
+}
+
+export type TabTargetPageDefinition =
+  | InternalPageDefinition
+  | ProjectPageDefinition;
 
 function createEmptyState(): PageSessionState {
   return { version: 1, data: {} };
@@ -107,8 +125,59 @@ export const PAGE_NAVIGATION_ORDER = [
   INTERNAL_PAGE_IDS.updateApp,
 ] as const satisfies readonly InternalPageId[];
 
+export const PROJECT_PAGE_REGISTRY = {
+  'project-overview': {
+    targetType: 'project-overview',
+    retention: 'keep-alive',
+    stateVersion: 1,
+    createInitialState: createEmptyState,
+    migrateState: migrateEmptyState,
+  },
+  'project-content': {
+    targetType: 'project-content',
+    retention: 'active-only',
+    stateVersion: 1,
+    createInitialState: createEmptyState,
+    migrateState: migrateEmptyState,
+  },
+} as const satisfies Record<
+  'project-overview' | 'project-content',
+  ProjectPageDefinition
+>;
+
 export function getPageDefinition(
   pageId: InternalPageId,
 ): InternalPageDefinition {
   return PAGE_REGISTRY[pageId];
+}
+
+export function getTabTargetPageDefinition(
+  target: TabTarget,
+): TabTargetPageDefinition {
+  return target.type === 'internal'
+    ? getPageDefinition(target.pageId)
+    : PROJECT_PAGE_REGISTRY[target.type];
+}
+
+export function getPageRetention(target: TabTarget): PageRetention {
+  return getTabTargetPageDefinition(target).retention;
+}
+
+export function renderRegisteredInternalPage(
+  props: PageRenderProps,
+): ReactNode {
+  if (props.descriptor.target.type !== 'internal') {
+    throw new TypeError('Expected an internal page target.');
+  }
+
+  const PageComponent = getPageDefinition(
+    props.descriptor.target.pageId,
+  ).component;
+
+  return createElement(PageComponent, {
+    ...props,
+    descriptor: props.descriptor as TabDescriptor & {
+      target: { type: 'internal'; pageId: InternalPageId };
+    },
+  });
 }

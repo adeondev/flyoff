@@ -35,6 +35,7 @@ export interface TranslationCatalog {
     prompt: string;
     newProject: string;
     importProject: string;
+    openProject: string;
     templates: string;
     dragFiles: string;
     navigationHome: string;
@@ -42,6 +43,55 @@ export interface TranslationCatalog {
     thisDevice: string;
     settings: string;
     update: string;
+  };
+  projects: {
+    navigation: string;
+    overview: string;
+    refresh: string;
+    add: string;
+    moreActions: string;
+    newNote: string;
+    newFolder: string;
+    rename: string;
+    move: string;
+    moveTo: string;
+    trash: string;
+    empty: string;
+    loading: string;
+    loadFailed: string;
+    operationFailed: string;
+    invalidName: string;
+    projectName: string;
+    location: string;
+    chooseLocation: string;
+    locationNotSelected: string;
+    createProject: string;
+    creatingProject: string;
+    cancel: string;
+    create: string;
+    save: string;
+    deleteTitle: string;
+    deleteFolderDescription: string;
+    deletePageDescription: string;
+    delete: string;
+    rootFolder: string;
+    selectDestination: string;
+    moveTitle: string;
+    moving: string;
+    name: string;
+    markdownExtension: string;
+    editorLabel: string;
+    saving: string;
+    saved: string;
+    unsaved: string;
+    saveFailed: string;
+    conflictTitle: string;
+    conflictDescription: string;
+    reloadFromDisk: string;
+    overwrite: string;
+    overviewDescription: string;
+    unavailable: string;
+    projectUnavailable: string;
   };
   pages: {
     bar: string;
@@ -121,6 +171,7 @@ export const ptBR = {
     prompt: 'O que vai fazer hoje?',
     newProject: 'Novo Projeto',
     importProject: 'Importar Projeto',
+    openProject: 'Abrir Projeto',
     templates: 'Modelos',
     dragFiles: 'Ou arraste arquivos aqui',
     navigationHome: 'Início',
@@ -128,6 +179,58 @@ export const ptBR = {
     thisDevice: 'Este Dispositivo',
     settings: 'Configurações',
     update: 'Atualizar',
+  },
+  projects: {
+    navigation: 'Conteúdo do projeto',
+    overview: 'Visão geral',
+    refresh: 'Atualizar',
+    add: 'Adicionar',
+    moreActions: 'Mais ações',
+    newNote: 'Nova nota',
+    newFolder: 'Nova pasta',
+    rename: 'Renomear',
+    move: 'Mover',
+    moveTo: 'Mover para…',
+    trash: 'Mover para a lixeira',
+    empty: 'Esta pasta está vazia.',
+    loading: 'Carregando…',
+    loadFailed: 'Não foi possível carregar esta pasta.',
+    operationFailed: 'Não foi possível concluir a operação.',
+    invalidName:
+      'Use de 1 a 100 caracteres e evite separadores, controles, ponto ou espaço no final e nomes reservados.',
+    projectName: 'Nome do projeto',
+    location: 'Local',
+    chooseLocation: 'Escolher local',
+    locationNotSelected: 'Escolha onde o projeto será criado.',
+    createProject: 'Criar projeto',
+    creatingProject: 'Criando projeto…',
+    cancel: 'Cancelar',
+    create: 'Criar',
+    save: 'Salvar',
+    deleteTitle: 'Mover para a lixeira?',
+    deleteFolderDescription:
+      'A pasta e todo o conteúdo dentro dela, incluindo arquivos ocultos pelo Flyoff, serão movidos para a lixeira.',
+    deletePageDescription: 'A nota será movida para a lixeira.',
+    delete: 'Mover para a lixeira',
+    rootFolder: 'Raiz do projeto',
+    selectDestination: 'Escolha a pasta de destino.',
+    moveTitle: 'Mover item',
+    moving: 'Movendo…',
+    name: 'Nome',
+    markdownExtension: 'Extensão Markdown',
+    editorLabel: 'Editor Markdown',
+    saving: 'Salvando…',
+    saved: 'Salvo',
+    unsaved: 'Alterações não salvas',
+    saveFailed: 'Não foi possível salvar a nota.',
+    conflictTitle: 'A nota foi alterada fora do Flyoff',
+    conflictDescription:
+      'Recarregue a versão do disco ou sobrescreva a alteração externa.',
+    reloadFromDisk: 'Recarregar do disco',
+    overwrite: 'Sobrescrever',
+    overviewDescription: 'Organize as pastas e notas deste projeto pela sidebar.',
+    unavailable: 'Este conteúdo não está mais disponível.',
+    projectUnavailable: 'O projeto da sessão anterior não pôde ser aberto.',
   },
   pages: {
     bar: 'Páginas',
@@ -199,6 +302,7 @@ export const enUS = {
     prompt: 'What would you like to do today?',
     newProject: 'New Project',
     importProject: 'Import Project',
+    openProject: 'Open Project',
     templates: 'Templates',
     dragFiles: 'Or drag files here',
     navigationHome: 'Home',
@@ -206,6 +310,58 @@ export const enUS = {
     thisDevice: 'This Device',
     settings: 'Settings',
     update: 'Update',
+  },
+  projects: {
+    navigation: 'Project contents',
+    overview: 'Overview',
+    refresh: 'Refresh',
+    add: 'Add',
+    moreActions: 'More actions',
+    newNote: 'New note',
+    newFolder: 'New folder',
+    rename: 'Rename',
+    move: 'Move',
+    moveTo: 'Move to…',
+    trash: 'Move to trash',
+    empty: 'This folder is empty.',
+    loading: 'Loading…',
+    loadFailed: 'This folder could not be loaded.',
+    operationFailed: 'The operation could not be completed.',
+    invalidName:
+      'Use 1 to 100 characters and avoid separators, controls, trailing dots or spaces, and reserved names.',
+    projectName: 'Project name',
+    location: 'Location',
+    chooseLocation: 'Choose location',
+    locationNotSelected: 'Choose where the project will be created.',
+    createProject: 'Create project',
+    creatingProject: 'Creating project…',
+    cancel: 'Cancel',
+    create: 'Create',
+    save: 'Save',
+    deleteTitle: 'Move to trash?',
+    deleteFolderDescription:
+      'The folder and everything inside it, including files hidden by Flyoff, will be moved to the trash.',
+    deletePageDescription: 'The note will be moved to the trash.',
+    delete: 'Move to trash',
+    rootFolder: 'Project root',
+    selectDestination: 'Choose the destination folder.',
+    moveTitle: 'Move item',
+    moving: 'Moving…',
+    name: 'Name',
+    markdownExtension: 'Markdown extension',
+    editorLabel: 'Markdown editor',
+    saving: 'Saving…',
+    saved: 'Saved',
+    unsaved: 'Unsaved changes',
+    saveFailed: 'The note could not be saved.',
+    conflictTitle: 'This note changed outside Flyoff',
+    conflictDescription:
+      'Reload the version on disk or overwrite the external change.',
+    reloadFromDisk: 'Reload from disk',
+    overwrite: 'Overwrite',
+    overviewDescription: 'Organize this project’s folders and notes from the sidebar.',
+    unavailable: 'This content is no longer available.',
+    projectUnavailable: 'The project from the previous session could not be opened.',
   },
   pages: {
     bar: 'Pages',

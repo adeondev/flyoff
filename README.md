@@ -1,10 +1,10 @@
 # Flyoff
 
-Flyoff é a fundação multiplataforma de um aplicativo privado e extensível de
-notas. Esta etapa entrega a casca do desktop, navegação interna por abas,
-restauração da sessão, menus Flyoff, localização, ponte segura e o núcleo C++
-isolado. Editor, notas, cofres, persistência de documentos e o gerenciador visual
-de dicionários ainda não fazem parte do projeto.
+Flyoff é um aplicativo desktop multiplataforma para organizar projetos. Cada
+projeto vive em uma pasta comum e pode reunir páginas de tipos diferentes; a
+base atual entrega pastas, notas Markdown, árvore lazy, edição com autosave e
+restauração da sessão. Tarefas, Kanban e novos tipos de página entram pelo mesmo
+modelo extensível, sem transformar o shell em um editor dependente de `.md`.
 
 ## Tecnologias e arquitetura
 
@@ -18,9 +18,9 @@ de dicionários ainda não fazem parte do projeto.
 
 ```text
 src/
-  main/       Electron, janela, menus, IPC, segurança e serviços
+  main/       Electron, janela, menus, IPC, segurança e repositórios de projeto
   preload/    única ponte tipada exposta ao renderer
-  renderer/   shell React, páginas, abas e tema
+  renderer/   shell React, páginas, abas, workspace de projetos e tema
   shared/     contratos e catálogos compartilhados
   utility/    processo isolado que carrega o addon
 packages/
@@ -30,8 +30,10 @@ tests/        testes unitários, Electron e smoke do pacote
 ```
 
 O renderer não possui acesso a Node.js, filesystem ou Electron. A ponte expõe
-somente contratos validados para o estado inicial, comandos de menu conhecidos,
-sessão de páginas, confirmação de encerramento e controles da janela.
+somente contratos validados para estado inicial, menus, sessão, encerramento,
+controles da janela e operações por IDs sobre o projeto ativo. Não há
+`readFile(path)` ou `writeFile(path)` genérico, e caminhos absolutos nunca são
+autoridade fornecida pelo renderer.
 
 A janela não utiliza moldura ou botões do sistema. Minimizar,
 maximizar/restaurar e fechar são controles do Flyoff em todas as plataformas e
@@ -43,6 +45,45 @@ O Flyoff salva a posição, o tamanho normal e os estados maximizado/minimizado
 em `window-state.json` no diretório de dados do usuário. Ao reabrir, os limites
 são ajustados para uma tela disponível antes de serem aplicados. A paleta do
 renderer fica centralizada em `src/renderer/theme.css`.
+
+## Projetos e armazenamento
+
+Um projeto aberto é uma pasta normal com metadados reservados em `.flyoff/`:
+
+```text
+Meu Projeto/
+  .flyoff/
+    project.json
+    content-index.json
+  Notas/
+    Planejamento.md
+  anexos-e-outras-pastas/
+```
+
+`project.json` identifica o formato e o projeto sem guardar caminho absoluto.
+`content-index.json` é um índice JSON versionado de identidades estáveis e
+metadados leves; conteúdo Markdown nunca é copiado para ele. Pastas e arquivos
+`.md` continuam sendo a fonte de conteúdo. O índice é reconciliado ao listar os
+filhos, preservando IDs em renomes e movimentos feitos pelo Flyoff. `.flyoff` e
+arquivos ainda não suportados ficam ocultos na árvore. O formato `.flo` está
+reservado para exportação/backup futuro, não para armazenamento vivo.
+
+O processo principal concentra `ProjectRepository`, contenção de caminhos,
+limites, revisões SHA-256 e operações estruturais serializadas.
+`ProjectService` mantém no máximo um projeto ativo por janela. O catálogo em
+`userData/project-catalog.json` guarda até 50 localizações recentes somente para
+restauração; páginas, anexos e notas nunca são gravados em `userData`.
+
+A criação usa um token aleatório de seleção, vinculado à janela, consumido uma
+vez e válido por cinco minutos. Abrir aceita somente pastas com manifesto Flyoff
+válido. A árvore carrega uma pasta por vez, oculta `.md` na apresentação e pode
+ser atualizada explicitamente; watcher contínuo não faz parte desta base.
+
+Notas são editadas como Markdown fonte. O controlador mantém buffers sujos,
+salva após 500 ms ou com `Ctrl/Cmd+S` e envia a revisão esperada. Se outra
+ferramenta alterar o arquivo, o autosave para e o usuário escolhe entre recarregar
+do disco ou sobrescrever. Fechar, trocar ou excluir aguarda o flush e é impedido
+quando existe erro ou conflito não resolvido.
 
 ## Menus reutilizáveis
 
@@ -81,22 +122,28 @@ sidebar. Ao mudar o formato restaurável, incremente `stateVersion` e faça a
 migração aceitar versões anteriores; se um estado não puder ser migrado, retorne
 apenas o padrão daquela página.
 
+Visão geral e conteúdo de projeto têm definições próprias de retenção. O
+registry em `src/renderer/projects/project-page-type-registry.tsx` associa
+`pageType` a um editor; para adicionar tarefas ou Kanban, implemente o codec e o
+componente e registre o novo tipo, sem condicional específico na sidebar, barra
+de abas ou host de páginas.
+
 O estado das abas é centralizado em um reducer independente da interface. Ele
-garante páginas singleton, ordem estável, seleção da aba vizinha ao fechar e a
-reabertura automática de Início quando não restar nenhuma aba. `pageId` identifica
-o tipo da página, `tabId` identifica a aba e `instanceKey` fica disponível para
-futuras páginas com várias instâncias, como notas ou projetos.
+garante instâncias únicas por alvo, ordem estável, seleção da aba vizinha ao
+fechar e a reabertura automática de Início quando não restar nenhuma aba.
+`TabTarget` distingue página interna, visão geral de projeto e conteúdo por
+`projectId` + `nodeId`; títulos e ícones são resolvidos dinamicamente antes da
+barra de abas.
 
 Visualmente, as abas seguem uma faixa de navegador: cada aba é uma peça separada,
 a ativa se conecta ao painel e abertura, fechamento e reorder usam somente
 transições curtas de até 120 ms. `prefers-reduced-motion` remove esses movimentos.
 
-Enquanto uma aba permanece aberta, seu painel continua montado e apenas os
-painéis inativos ficam ocultos. O arquivo `tab-session.json`, no diretório de
-dados do usuário, guarda ordem, aba ativa, scroll e o estado JSON declarado por
-cada página. Conteúdo de notas, anexos, histórico de edição e outros dados
-pesados não pertencem a esse arquivo; cada funcionalidade deverá persistir esses
-dados em seu próprio armazenamento.
+Páginas internas e a visão geral podem permanecer montadas; somente o editor de
+conteúdo ativo fica no DOM. O arquivo `tab-session.json` v2, no diretório de
+dados do usuário, guarda apenas alvos por ID, ordem, aba ativa, scroll e pequeno
+estado visual. Ele migra sessões v1 automaticamente. Nomes, caminhos, árvore,
+Markdown, anexos e histórico nunca pertencem ao snapshot.
 
 O processo principal é o único responsável por ler e gravar a sessão. O preload
 valida snapshots e respostas do popup antes de atravessar o IPC. Uma sessão com
@@ -198,6 +245,10 @@ Após `npm start`, confira:
   mesma cor da barra superior;
 - sidebar abrindo uma única aba por página, barra Páginas com ordem por drag and
   drop, indicador ativo e Início reaparecendo ao fechar a última aba;
+- criação e abertura de projeto por seletores nativos, Unicode em nomes, árvore
+  lazy, rename inline, mover por teclado/drag-and-drop e lixeira do sistema;
+- autosave, `Ctrl/Cmd+S`, conflito com editor externo, mídia removível e
+  restauração quando projeto ou página deixou de existir;
 - `Ctrl/Cmd+W`, `Ctrl+Tab`, `Ctrl+Shift+Tab` e `Ctrl/Cmd+1–9`, além dos atalhos
   nativos de editar, zoom, tela cheia, fechar janela e sair;
 - confirmação ao encerrar com páginas abertas e, após relançar com o mesmo
@@ -217,6 +268,7 @@ O app usa `contextIsolation`, sandbox, CSP, bloqueio de navegação/janelas e
 protocolo local `flyoff://` no pacote. O ASAR possui validação de integridade e
 os fuses de Run as Node, `NODE_OPTIONS` e inspector são desativados.
 
-Ainda estão fora do escopo: editor, persistência, notas, cofres, tela de idiomas,
-download real de dicionários, instaladores finais, assinatura, notarização,
-atualizador e binários macOS Intel/Windows ARM.
+Ainda estão fora do escopo: tarefas, Kanban, preview Markdown, watcher contínuo,
+importação de pasta comum, exportação `.flo`, UI de projetos recentes, tela de
+idiomas, download real de dicionários, instaladores finais, assinatura,
+notarização, atualizador e binários macOS Intel/Windows ARM.

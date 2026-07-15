@@ -30,7 +30,39 @@ import {
   type TabSessionSnapshot,
   type WindowControlAction,
   type WindowState,
+  PROJECT_IPC_CHANNELS,
+  isCreateProjectRequest,
+  isGetProjectNodeRequest,
+  isRestoreProjectRequest,
+  isListProjectChildrenRequest,
+  isCreateProjectNodeRequest,
+  isRenameProjectNodeRequest,
+  isMoveProjectNodeRequest,
+  isTrashProjectNodeRequest,
+  isTrashProjectNodeOutcome,
+  isReadMarkdownDocumentRequest,
+  isSaveMarkdownDocumentRequest,
+  isProjectResult,
+  isProjectLocationSelection,
+  isProjectSummary,
+  isProjectTreeNode,
+  isProjectTreeNodeList,
+  isMarkdownDocument,
+  type CreateProjectRequest,
+  type GetProjectNodeRequest,
+  type RestoreProjectRequest,
+  type ListProjectChildrenRequest,
+  type CreateProjectNodeRequest,
+  type RenameProjectNodeRequest,
+  type MoveProjectNodeRequest,
+  type TrashProjectNodeRequest,
+  type ReadMarkdownDocumentRequest,
+  type SaveMarkdownDocumentRequest,
 } from '../shared/contracts';
+
+function isNull(value: unknown): value is null {
+  return value === null;
+}
 
 const flyoffApi: FlyoffApi = Object.freeze({
   async getBootstrapState() {
@@ -163,6 +195,195 @@ const flyoffApi: FlyoffApi = Object.freeze({
         handleCommand,
       );
     };
+  },
+  async selectProjectCreateLocation() {
+    const result: unknown = await ipcRenderer.invoke(
+      PROJECT_IPC_CHANNELS.selectCreateLocation,
+    );
+
+    if (!isProjectResult(result, isProjectLocationSelection)) {
+      throw new Error('The main process returned an invalid location selection.');
+    }
+
+    return result;
+  },
+  async createProject(request: CreateProjectRequest) {
+    if (!isCreateProjectRequest(request)) {
+      throw new TypeError('Invalid project creation request.');
+    }
+
+    const result: unknown = await ipcRenderer.invoke(
+      PROJECT_IPC_CHANNELS.create,
+      request,
+    );
+
+    if (!isProjectResult(result, isProjectSummary)) {
+      throw new Error('The main process returned an invalid project.');
+    }
+
+    return result;
+  },
+  async openProject() {
+    const result: unknown = await ipcRenderer.invoke(PROJECT_IPC_CHANNELS.open);
+
+    if (!isProjectResult(result, isProjectSummary)) {
+      throw new Error('The main process returned an invalid project.');
+    }
+
+    return result;
+  },
+  async restoreProject(request: RestoreProjectRequest) {
+    if (!isRestoreProjectRequest(request)) {
+      throw new TypeError('Invalid project restoration request.');
+    }
+
+    const result: unknown = await ipcRenderer.invoke(
+      PROJECT_IPC_CHANNELS.restore,
+      request,
+    );
+
+    if (!isProjectResult(result, isProjectSummary)) {
+      throw new Error('The main process returned an invalid project.');
+    }
+
+    return result;
+  },
+  async closeProject() {
+    const result: unknown = await ipcRenderer.invoke(PROJECT_IPC_CHANNELS.close);
+
+    if (!isProjectResult(result, isNull)) {
+      throw new Error('The main process returned an invalid project close result.');
+    }
+
+    return result;
+  },
+  async listProjectChildren(request: ListProjectChildrenRequest) {
+    if (!isListProjectChildrenRequest(request)) {
+      throw new TypeError('Invalid project directory request.');
+    }
+
+    const result: unknown = await ipcRenderer.invoke(
+      PROJECT_IPC_CHANNELS.listChildren,
+      request,
+    );
+
+    if (!isProjectResult(result, isProjectTreeNodeList)) {
+      throw new Error('The main process returned an invalid project directory.');
+    }
+
+    return result;
+  },
+  async getProjectNode(request: GetProjectNodeRequest) {
+    if (!isGetProjectNodeRequest(request)) {
+      throw new TypeError('Invalid project node request.');
+    }
+
+    const result: unknown = await ipcRenderer.invoke(
+      PROJECT_IPC_CHANNELS.getNode,
+      request,
+    );
+
+    if (!isProjectResult(result, isProjectTreeNode)) {
+      throw new Error('The main process returned an invalid project node.');
+    }
+
+    return result;
+  },
+  async createProjectNode(request: CreateProjectNodeRequest) {
+    if (!isCreateProjectNodeRequest(request)) {
+      throw new TypeError('Invalid project node creation request.');
+    }
+
+    const result: unknown = await ipcRenderer.invoke(
+      PROJECT_IPC_CHANNELS.createNode,
+      request,
+    );
+
+    if (!isProjectResult(result, isProjectTreeNode)) {
+      throw new Error('The main process returned an invalid project node.');
+    }
+
+    return result;
+  },
+  async renameProjectNode(request: RenameProjectNodeRequest) {
+    if (!isRenameProjectNodeRequest(request)) {
+      throw new TypeError('Invalid project node rename request.');
+    }
+
+    const result: unknown = await ipcRenderer.invoke(
+      PROJECT_IPC_CHANNELS.renameNode,
+      request,
+    );
+
+    if (!isProjectResult(result, isProjectTreeNode)) {
+      throw new Error('The main process returned an invalid project node.');
+    }
+
+    return result;
+  },
+  async moveProjectNode(request: MoveProjectNodeRequest) {
+    if (!isMoveProjectNodeRequest(request)) {
+      throw new TypeError('Invalid project node move request.');
+    }
+
+    const result: unknown = await ipcRenderer.invoke(
+      PROJECT_IPC_CHANNELS.moveNode,
+      request,
+    );
+
+    if (!isProjectResult(result, isProjectTreeNode)) {
+      throw new Error('The main process returned an invalid project node.');
+    }
+
+    return result;
+  },
+  async trashProjectNode(request: TrashProjectNodeRequest) {
+    if (!isTrashProjectNodeRequest(request)) {
+      throw new TypeError('Invalid project node trash request.');
+    }
+
+    const result: unknown = await ipcRenderer.invoke(
+      PROJECT_IPC_CHANNELS.trashNode,
+      request,
+    );
+
+    if (!isProjectResult(result, isTrashProjectNodeOutcome)) {
+      throw new Error('The main process returned an invalid trash result.');
+    }
+
+    return result;
+  },
+  async readMarkdownDocument(request: ReadMarkdownDocumentRequest) {
+    if (!isReadMarkdownDocumentRequest(request)) {
+      throw new TypeError('Invalid Markdown document request.');
+    }
+
+    const result: unknown = await ipcRenderer.invoke(
+      PROJECT_IPC_CHANNELS.readMarkdown,
+      request,
+    );
+
+    if (!isProjectResult(result, isMarkdownDocument)) {
+      throw new Error('The main process returned an invalid Markdown document.');
+    }
+
+    return result;
+  },
+  async saveMarkdownDocument(request: SaveMarkdownDocumentRequest) {
+    if (!isSaveMarkdownDocumentRequest(request)) {
+      throw new TypeError('Invalid Markdown document save request.');
+    }
+
+    const result: unknown = await ipcRenderer.invoke(
+      PROJECT_IPC_CHANNELS.saveMarkdown,
+      request,
+    );
+
+    if (!isProjectResult(result, isMarkdownDocument)) {
+      throw new Error('The main process returned an invalid Markdown document.');
+    }
+
+    return result;
   },
 });
 

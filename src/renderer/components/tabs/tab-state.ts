@@ -1,24 +1,23 @@
 import {
   INTERNAL_PAGE_IDS,
   TAB_SESSION_VERSION,
+  createTabIdForTarget,
+  getTabTargetKey,
+  isHomeTarget,
   normalizeTabSessionSnapshot,
   type InternalPageId,
   type PageSessionState,
   type TabDescriptor,
   type TabSessionSnapshot,
+  type TabTarget,
 } from '../../../shared/contracts';
-import { getPageDefinition } from '../../pages/page-registry';
+import { getTabTargetPageDefinition } from '../../pages/page-registry';
 
 export type TabState = TabSessionSnapshot;
 
 export type TabAction =
   | { type: 'open-page'; pageId: InternalPageId }
-  | {
-      type: 'open-instance';
-      pageId: InternalPageId;
-      tabId: string;
-      instanceKey: string;
-    }
+  | { type: 'open-target'; target: TabTarget }
   | { type: 'select-tab'; tabId: string }
   | { type: 'close-tab'; tabId: string }
   | { type: 'move-tab'; tabId: string; toIndex: number }
@@ -30,27 +29,22 @@ export type TabAction =
     }
   | { type: 'restore-session'; session: TabSessionSnapshot };
 
-function createDescriptor(
-  pageId: InternalPageId,
-  tabId: string,
-  instanceKey?: string,
-): TabDescriptor {
-  const definition = getPageDefinition(pageId);
+function createDescriptor(target: TabTarget): TabDescriptor {
+  const definition = getTabTargetPageDefinition(target);
 
   return {
-    tabId,
-    pageId,
-    ...(instanceKey ? { instanceKey } : {}),
+    tabId: createTabIdForTarget(target),
+    target,
     scrollTop: 0,
     pageState: definition.createInitialState(),
   };
 }
 
 export function createInitialTabState(): TabState {
-  const home = createDescriptor(
-    INTERNAL_PAGE_IDS.home,
-    `page:${INTERNAL_PAGE_IDS.home}`,
-  );
+  const home = createDescriptor({
+    type: 'internal',
+    pageId: INTERNAL_PAGE_IDS.home,
+  });
 
   return {
     version: TAB_SESSION_VERSION,
@@ -68,28 +62,22 @@ export function normalizeRendererTabSession(
     return createInitialTabState();
   }
 
-  const singletonPages = new Set<InternalPageId>();
+  const targetKeys = new Set<string>();
   const tabs: TabDescriptor[] = [];
 
   for (const tab of normalized.tabs) {
-    const definition = getPageDefinition(tab.pageId);
+    const targetKey = getTabTargetKey(tab.target);
 
-    if (definition.singleton && singletonPages.has(tab.pageId)) {
+    if (targetKeys.has(targetKey)) {
       continue;
     }
 
-    if (definition.singleton) {
-      singletonPages.add(tab.pageId);
-    }
-
+    targetKeys.add(targetKey);
+    const definition = getTabTargetPageDefinition(tab.target);
     tabs.push({
       ...tab,
       pageState: definition.migrateState(tab.pageState),
     });
-  }
-
-  if (tabs.length === 0) {
-    return createInitialTabState();
   }
 
   const firstTab = tabs[0];
@@ -107,11 +95,11 @@ export function normalizeRendererTabSession(
   };
 }
 
-function openPage(
-  state: TabState,
-  pageId: InternalPageId,
-): TabState {
-  const existing = state.tabs.find((tab) => tab.pageId === pageId);
+function openTarget(state: TabState, target: TabTarget): TabState {
+  const targetKey = getTabTargetKey(target);
+  const existing = state.tabs.find(
+    (tab) => getTabTargetKey(tab.target) === targetKey,
+  );
 
   if (existing) {
     return existing.tabId === state.activeTabId
@@ -119,13 +107,7 @@ function openPage(
       : { ...state, activeTabId: existing.tabId };
   }
 
-  const definition = getPageDefinition(pageId);
-
-  if (!definition.singleton) {
-    return state;
-  }
-
-  const tab = createDescriptor(pageId, `page:${pageId}`);
+  const tab = createDescriptor(target);
 
   return {
     ...state,
@@ -145,7 +127,8 @@ function closeTab(state: TabState, tabId: string): TabState {
 
   if (
     state.tabs.length === 1 &&
-    closingTab?.pageId === INTERNAL_PAGE_IDS.home
+    closingTab &&
+    isHomeTarget(closingTab.target)
   ) {
     return state;
   }
@@ -233,29 +216,12 @@ function updateTab(
 export function tabReducer(state: TabState, action: TabAction): TabState {
   switch (action.type) {
     case 'open-page':
-      return openPage(state, action.pageId);
-    case 'open-instance': {
-      if (state.tabs.some(({ tabId }) => tabId === action.tabId)) {
-        return { ...state, activeTabId: action.tabId };
-      }
-
-      const definition = getPageDefinition(action.pageId);
-
-      if (definition.singleton) {
-        return openPage(state, action.pageId);
-      }
-
-      const tab = createDescriptor(
-        action.pageId,
-        action.tabId,
-        action.instanceKey,
-      );
-      return {
-        ...state,
-        tabs: [...state.tabs, tab],
-        activeTabId: tab.tabId,
-      };
-    }
+      return openTarget(state, {
+        type: 'internal',
+        pageId: action.pageId,
+      });
+    case 'open-target':
+      return openTarget(state, action.target);
     case 'select-tab':
       return state.tabs.some(({ tabId }) => tabId === action.tabId) &&
         action.tabId !== state.activeTabId
@@ -281,7 +247,7 @@ export function tabReducer(state: TabState, action: TabAction): TabState {
     case 'update-page-state':
       return updateTab(state, action.tabId, (tab) => ({
         ...tab,
-        pageState: getPageDefinition(tab.pageId).migrateState(
+        pageState: getTabTargetPageDefinition(tab.target).migrateState(
           action.pageState,
         ),
       }));
@@ -291,7 +257,5 @@ export function tabReducer(state: TabState, action: TabAction): TabState {
 }
 
 export function hasNonHomeTabs(state: TabState): boolean {
-  return state.tabs.some(
-    ({ pageId }) => pageId !== INTERNAL_PAGE_IDS.home,
-  );
+  return state.tabs.some(({ target }) => !isHomeTarget(target));
 }

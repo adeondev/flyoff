@@ -4,6 +4,7 @@ export * from './locales';
 export * from './menu';
 export * from './native-core';
 export * from './platform';
+export * from './projects';
 export * from './spellcheck';
 export * from './tab-session';
 export * from './window-controls';

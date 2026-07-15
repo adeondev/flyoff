@@ -1,3 +1,5 @@
+@import './projects/projects.css';
+
 :root {
   font-family:
     "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
@@ -564,6 +566,25 @@ img {
   cursor: default;
 }
 
+.home__sidebar[hidden] {
+  display: none;
+}
+
+.home__action-list button:disabled {
+  color: var(--color-text-disabled);
+}
+
+.home__action-list button:disabled:hover,
+.home__action-list button:disabled:active {
+  background: var(--color-surface-hover);
+}
+
+.home__action-list button:first-child:disabled,
+.home__action-list button:first-child:disabled:hover,
+.home__action-list button:first-child:disabled:active {
+  background: var(--color-surface-active);
+}
+
 .home__drop-zone {
   display: grid;
   width: 100%;
@@ -712,6 +733,7 @@ img {
   font-weight: 500;
 }
 
+
 @keyframes flyoff-opacity-in {
   from {
     opacity: 0;
@@ -747,11 +769,25 @@ img {
   .home__action-list {
     grid-template-columns: 1fr;
   }
+
+  .project-overview {
+    padding: 32px;
+  }
+
+  .project-overview__actions {
+    grid-template-columns: 1fr;
+  }
+
+  .markdown-editor__conflict {
+    align-items: stretch;
+    flex-direction: column;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .close-dialog__backdrop,
-  .session-restore {
+  .session-restore,
+  .project-dialog__backdrop {
     animation: none;
   }
 
