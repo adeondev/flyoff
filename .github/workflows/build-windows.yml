@@ -11,7 +11,7 @@ permissions:
 jobs:
   make:
     name: Make Windows x64
-    runs-on: windows-2025
+    runs-on: windows-2022
     timeout-minutes: 45
     steps:
       - name: Check out repository
