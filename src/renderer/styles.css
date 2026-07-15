@@ -216,8 +216,13 @@ img {
 .home__sidebar {
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
   background: var(--color-surface);
   border-right: 1px solid var(--color-border);
+}
+
+.workspace[data-collapsed] .home__sidebar {
+  border-right-color: transparent;
 }
 
 .home__navigation {
