@@ -96,6 +96,10 @@ export interface TranslationCatalog {
     name: string;
     markdownExtension: string;
     editorLabel: string;
+    readingView: string;
+    modeEdit: string;
+    modeReading: string;
+    modeSplit: string;
     saving: string;
     saved: string;
     unsaved: string;
@@ -249,6 +253,10 @@ export const ptBR = {
     name: 'Nome',
     markdownExtension: 'Extensão Markdown',
     editorLabel: 'Editor Markdown',
+    readingView: 'Leitura',
+    modeEdit: 'Edição',
+    modeReading: 'Leitura',
+    modeSplit: 'Dividido',
     saving: 'Salvando…',
     saved: 'Salvo',
     unsaved: 'Alterações não salvas',
@@ -395,6 +403,10 @@ export const enUS = {
     name: 'Name',
     markdownExtension: 'Markdown extension',
     editorLabel: 'Markdown editor',
+    readingView: 'Reading',
+    modeEdit: 'Edit',
+    modeReading: 'Reading',
+    modeSplit: 'Split',
     saving: 'Saving…',
     saved: 'Saved',
     unsaved: 'Unsaved changes',

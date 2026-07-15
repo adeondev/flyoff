@@ -9,10 +9,22 @@ import {
 
 import type { MarkdownDocument } from '../../shared/contracts';
 import type { Translate } from '../pages/page-types';
+import { MarkdownReadingView } from './MarkdownReadingView';
 import type {
   MarkdownDocumentController,
   MarkdownBufferSnapshot,
 } from './markdown-document-controller';
+
+type EditorMode = 'edit' | 'reading' | 'split';
+
+const EDITOR_MODES: readonly {
+  id: EditorMode;
+  labelKey: Parameters<Translate>[0];
+}[] = [
+  { id: 'edit', labelKey: 'projects.modeEdit' },
+  { id: 'reading', labelKey: 'projects.modeReading' },
+  { id: 'split', labelKey: 'projects.modeSplit' },
+];
 
 export interface MarkdownEditorHandle {
   flush: () => Promise<boolean>;
@@ -67,6 +79,7 @@ export const MarkdownEditor = forwardRef<
   forwardedRef,
 ) {
   const [snapshot, setSnapshot] = useState(() => controller.open(document));
+  const [mode, setMode] = useState<EditorMode>('edit');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const nodeId = document.nodeId;
 
@@ -121,12 +134,31 @@ export const MarkdownEditor = forwardRef<
     <main className="markdown-editor" aria-label={translate('projects.editorLabel')}>
       <header className="markdown-editor__header">
         {title ? <h1>{title}</h1> : <span />}
-        <span
-          aria-live="polite"
-          className={`markdown-editor__status markdown-editor__status--${snapshot.status}`}
-        >
-          {status}
-        </span>
+        <div className="markdown-editor__meta">
+          <div
+            aria-label={translate('projects.editorLabel')}
+            className="markdown-editor__modes"
+            role="group"
+          >
+            {EDITOR_MODES.map((option) => (
+              <button
+                aria-pressed={mode === option.id}
+                className="markdown-editor__mode"
+                key={option.id}
+                onClick={() => setMode(option.id)}
+                type="button"
+              >
+                {translate(option.labelKey)}
+              </button>
+            ))}
+          </div>
+          <span
+            aria-live="polite"
+            className={`markdown-editor__status markdown-editor__status--${snapshot.status}`}
+          >
+            {status}
+          </span>
+        </div>
       </header>
       {snapshot.status === 'conflict' ? (
         <section
@@ -163,17 +195,27 @@ export const MarkdownEditor = forwardRef<
           {translate('projects.saveFailed')}
         </p>
       ) : null}
-      <textarea
-        aria-label={translate('projects.editorLabel')}
-        autoFocus={autoFocus}
-        className="markdown-editor__input"
-        onChange={(event) => controller.update(nodeId, event.target.value)}
-        onKeyDown={handleKeyDown}
-        onScroll={(event) => onScrollChange?.(event.currentTarget.scrollTop)}
-        ref={textareaRef}
-        spellCheck={false}
-        value={snapshot.content}
-      />
+      <div className={`markdown-editor__body markdown-editor__body--${mode}`}>
+        {mode === 'reading' ? null : (
+          <textarea
+            aria-label={translate('projects.editorLabel')}
+            autoFocus={autoFocus}
+            className="markdown-editor__input"
+            onChange={(event) => controller.update(nodeId, event.target.value)}
+            onKeyDown={handleKeyDown}
+            onScroll={(event) => onScrollChange?.(event.currentTarget.scrollTop)}
+            ref={textareaRef}
+            spellCheck={false}
+            value={snapshot.content}
+          />
+        )}
+        {mode === 'edit' ? null : (
+          <MarkdownReadingView
+            ariaLabel={translate('projects.readingView')}
+            content={snapshot.content}
+          />
+        )}
+      </div>
     </main>
   );
 });
