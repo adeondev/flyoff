@@ -6,7 +6,7 @@ on:
     branches: ['build/windows-installer']
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   make:
@@ -32,9 +32,20 @@ jobs:
       - name: Make Windows distributables
         run: npm run make -- --platform=win32 --arch=x64
 
-      - name: Upload Windows distributables
-        uses: actions/upload-artifact@v4
-        with:
-          name: flyoff-windows-x64
-          path: out/make/**
-          if-no-files-found: error
+      - name: Publish distributables to a GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="windows-build"
+          mapfile -t files < <(find out/make -type f \( -name '*.exe' -o -name '*.zip' \))
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No distributables found under out/make" >&2
+            exit 1
+          fi
+          printf 'Publishing: %s\n' "${files[@]}"
+          gh release delete "$tag" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$tag" "${files[@]}" \
+            --title "Flyoff — Windows x64" \
+            --notes "Automated Windows x64 build: Squirrel installer (Setup.exe) and portable zip. Commit ${GITHUB_SHA}." \
+            --prerelease
