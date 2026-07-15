@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="description" content="Flyoff is a desktop app for organizing projects and Markdown notes in regular folders." />
+    <meta name="theme-color" content="#131014" />
+    <title>Flyoff - notes that stay yours</title>
+    <link rel="icon" href="public/images/flyoff/flyoff-logo.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="style.css" />
+    <script src="script.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#conteudo">Skip to content</a>
+
+    <nav class="site-rail" aria-label="Main navigation">
+      <a class="rail-brand" href="#inicio" aria-label="Flyoff, home">
+        <img src="public/images/flyoff/flyoff-logo.svg" alt="" />
+      </a>
+      <div class="rail-links">
+        <a class="rail-link rail-link--home" href="#produto" aria-label="Product" data-section-link="produto"></a>
+        <a class="rail-link rail-link--device" href="#what-is-flyoff" aria-label="How it works" data-section-link="what-is-flyoff"></a>
+        <a class="rail-link rail-link--code" href="#offers" aria-label="What Flyoff offers" data-section-link="offers"><span aria-hidden="true">&lt;/&gt;</span></a>
+      </div>
+      <a class="rail-github" href="https://github.com/adeondev/flyoff" target="_blank" rel="noreferrer" aria-label="Open the Flyoff repository on GitHub">↗</a>
+    </nav>
+
+    <header class="mobile-header">
+      <button class="menu-button" type="button" aria-expanded="false" aria-controls="menu-mobile" data-menu-toggle>Menu</button>
+    </header>
+
+    <div class="mobile-menu" id="menu-mobile" data-mobile-menu hidden>
+      <a href="#produto">Product</a>
+      <a href="#what-is-flyoff">How it works</a>
+      <a href="#offers">Offers</a>
+      <a href="https://github.com/adeondev/flyoff" target="_blank" rel="noreferrer">GitHub ↗</a>
+    </div>
+
+    <div class="site-page">
+      <header class="page-header" id="inicio">
+        <nav class="page-nav" aria-label="Page shortcuts">
+          <a href="#produto">Product</a>
+          <a href="#what-is-flyoff">How it works</a>
+          <a class="repository-link" href="https://github.com/adeondev/flyoff" target="_blank" rel="noreferrer">View on GitHub ↗</a>
+        </nav>
+      </header>
+
+      <main id="conteudo">
+        <section class="hero" id="produto" aria-label="Flyoff">
+          <div class="hero-lockup">
+            <img class="hero-logo" src="public/images/flyoff/flyoff-logo.svg" alt="" aria-hidden="true" />
+            <img class="hero-wordmark" src="public/images/flyoff/text_black_mode.svg" alt="Flyoff" />
+          </div>
+          <p class="hero-tagline">A note-taking app focused on speed and practicality.</p>
+          <div class="hero-actions" aria-label="Primary links">
+            <a class="button button--primary" href="https://github.com/adeondev/flyoff/releases" target="_blank" rel="noreferrer">Installation</a>
+            <a class="button button--secondary" href="https://github.com/adeondev/flyoff#readme" target="_blank" rel="noreferrer">Documentation</a>
+            <a class="button button--secondary" href="https://github.com/adeondev/flyoff" target="_blank" rel="noreferrer">Source Code</a>
+          </div>
+        </section>
+
+        <section class="product-notes product-notes--simple" id="what-is-flyoff" aria-labelledby="product-notes-title">
+          <div class="section-intro">
+            <h2 class="section-heading" id="product-notes-title">
+              <span>What is Flyoff?</span>
+              <a class="heading-anchor" href="#what-is-flyoff" aria-label="Link to What is Flyoff">#</a>
+            </h2>
+          </div>
+          <div class="about-copy">
+            <p>
+              This project is a new version of a note-taking app called
+              <a href="https://basalt-notes.space" target="_blank" rel="noreferrer">Basalt</a>,
+              built primarily to be a fast and flexible app for notes, checklists, and more.
+            </p>
+            <p>
+              Flyoff was created by people who needed a place to store notes, write books, and manage checklists, and it
+              has been shaped around the way we use it. We then decided to open the app to others and turn it into
+              something real.
+            </p>
+          </div>
+        </section>
+
+        <section class="offers-section" id="offers" aria-labelledby="offers-title">
+          <div class="section-intro">
+            <h2 class="section-heading" id="offers-title">What Flyoff offers?</h2>
+          </div>
+          <div class="offers-grid">
+            <article class="offer-card">
+              <span class="offer-card__icon" aria-hidden="true"></span>
+              <h3>Markdown Support</h3>
+              <p>Write in plain Markdown so your notes stay portable and easy to edit anywhere.</p>
+            </article>
+            <article class="offer-card">
+              <span class="offer-card__icon" aria-hidden="true"></span>
+              <h3>No Telemetry</h3>
+              <p>No analytics, no background tracking, and no product data being collected.</p>
+            </article>
+            <article class="offer-card">
+              <span class="offer-card__icon" aria-hidden="true"></span>
+              <h3>Machine Only</h3>
+              <p>Your notes live on your device first, in regular files and folders you control.</p>
+            </article>
+            <article class="offer-card">
+              <span class="offer-card__icon" aria-hidden="true"></span>
+              <h3>LAN Projects</h3>
+              <p>Use shared local-network folders when a project needs to be available across machines.</p>
+            </article>
+            <article class="offer-card">
+              <span class="offer-card__icon" aria-hidden="true"></span>
+              <h3>Open Source</h3>
+              <p>Follow the code, review changes, and help shape the app as it grows.</p>
+            </article>
+            <article class="offer-card">
+              <span class="offer-card__icon" aria-hidden="true"></span>
+              <h3>And a Lot more</h3>
+              <p>Built for daily notes, books, checklists, and the small workflows around them.</p>
+            </article>
+          </div>
+        </section>
+      </main>
+
+      <footer class="site-footer">
+        <img src="public/images/flyoff/text_black_mode.svg" alt="Flyoff" />
+        <p>0.1.0 · Electron · React · TypeScript</p>
+        <a href="https://github.com/adeondev/flyoff" target="_blank" rel="noreferrer">GitHub ↗</a>
+      </footer>
+    </div>
+  </body>
+</html>
