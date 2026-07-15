@@ -36,6 +36,14 @@ export interface TranslationCatalog {
     collapseSidebar: string;
     resizeSidebar: string;
   };
+  rail: {
+    navigation: string;
+    project: string;
+    graph: string;
+    media: string;
+    settings: string;
+    comingSoon: string;
+  };
   home: {
     prompt: string;
     newProject: string;
@@ -179,6 +187,14 @@ export const ptBR = {
     collapseSidebar: 'Recolher barra lateral',
     resizeSidebar: 'Redimensionar barra lateral',
   },
+  rail: {
+    navigation: 'Seções do projeto',
+    project: 'Projeto',
+    graph: 'Grafo',
+    media: 'Mídia',
+    settings: 'Configurações',
+    comingSoon: 'Em breve.',
+  },
   home: {
     prompt: 'O que vai fazer hoje?',
     newProject: 'Novo Projeto',
@@ -316,6 +332,14 @@ export const enUS = {
     expandSidebar: 'Expand sidebar',
     collapseSidebar: 'Collapse sidebar',
     resizeSidebar: 'Resize sidebar',
+  },
+  rail: {
+    navigation: 'Project sections',
+    project: 'Project',
+    graph: 'Graph',
+    media: 'Media',
+    settings: 'Settings',
+    comingSoon: 'Coming soon.',
   },
   home: {
     prompt: 'What would you like to do today?',

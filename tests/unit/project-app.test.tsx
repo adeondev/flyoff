@@ -629,4 +629,31 @@ describe('project workspace integration', () => {
     expect(closeProject).not.toHaveBeenCalled();
     expect(screen.getByText('No tab open.')).toBeTruthy();
   });
+
+  it('switches project rail views between the tree and placeholders', async () => {
+    installProjectApi();
+    render(<App />);
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Open Project' }),
+    );
+    await screen.findByRole('complementary', { name: 'Project contents' });
+
+    const rail = screen.getByRole('navigation', { name: 'Project sections' });
+    expect(within(rail).getAllByRole('button')).toHaveLength(4);
+
+    fireEvent.click(within(rail).getByRole('button', { name: 'Graph' }));
+    await waitFor(() => {
+      expect(screen.getByText('Coming soon.')).toBeTruthy();
+    });
+    expect(
+      screen.queryByRole('complementary', { name: 'Project contents' }),
+    ).toBeNull();
+
+    fireEvent.click(within(rail).getByRole('button', { name: 'Project' }));
+    expect(
+      await screen.findByRole('complementary', { name: 'Project contents' }),
+    ).toBeTruthy();
+    expect(screen.queryByText('Coming soon.')).toBeNull();
+  });
 });

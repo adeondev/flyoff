@@ -53,6 +53,13 @@ import {
   type MenuItem,
 } from './components/menu';
 import { PanelResizer, useWorkspaceLayout } from './components/layout';
+import {
+  IconRail,
+  PlaceholderPanel,
+  RAIL_VIEWS,
+  RAIL_VIEW_IDS,
+  resolveRailView,
+} from './components/rail';
 import { GlobalSidebar } from './components/Sidebar';
 import { PageHost } from './components/tabs/PageHost';
 import { TabBar } from './components/tabs/TabBar';
@@ -1473,17 +1480,26 @@ export function App() {
       <div
         className="workspace"
         data-collapsed={layout.collapsed || undefined}
+        data-context={workspaceContext}
         ref={workspaceRef}
         style={{ '--sidebar-width': `${layout.sidebarWidth}px` } as CSSProperties}
       >
-        <GlobalSidebar
-          activePageId={activePageId}
-          hidden={workspaceContext === 'project'}
-          onOpenPage={(pageId) =>
-            void dispatchGuardedTabAction({ type: 'open-page', pageId })
-          }
-          translate={translate}
-        />
+        {workspaceContext === 'home' ? (
+          <GlobalSidebar
+            activePageId={activePageId}
+            onOpenPage={(pageId) =>
+              void dispatchGuardedTabAction({ type: 'open-page', pageId })
+            }
+            translate={translate}
+          />
+        ) : (
+          <IconRail
+            activeViewId={layout.railViewId}
+            onSelect={layout.setRailViewId}
+            translate={translate}
+            views={RAIL_VIEWS}
+          />
+        )}
         {project ? (
           <ProjectSidebar
             activeNodeId={
@@ -1492,7 +1508,7 @@ export function App() {
                 : undefined
             }
             activeNodePath={activeProjectNodePath}
-            hidden={workspaceContext !== 'project'}
+            hidden={layout.railViewId !== RAIL_VIEW_IDS.project}
             loadChildren={listProjectChildren}
             onBeforeNodeChange={() => flushProjectDocuments()}
             onCreateNode={createProjectNode}
@@ -1518,6 +1534,13 @@ export function App() {
             project={project}
             ref={projectSidebarRef}
             translate={translate}
+          />
+        ) : null}
+        {workspaceContext === 'project' &&
+        layout.railViewId !== RAIL_VIEW_IDS.project ? (
+          <PlaceholderPanel
+            hint={translate('rail.comingSoon')}
+            title={translate(resolveRailView(layout.railViewId).labelKey)}
           />
         ) : null}
         <div className="page-workspace">

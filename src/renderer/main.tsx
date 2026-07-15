@@ -10,6 +10,7 @@ import './components/layout/layout.css';
 import './components/menu/menu.css';
 import './theme.css';
 import './styles.css';
+import './components/rail/rail.css';
 
 const root = document.getElementById('root');
 

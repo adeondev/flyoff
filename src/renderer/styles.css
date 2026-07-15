@@ -5,6 +5,7 @@
     "IBM Plex Sans", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
     "Segoe UI", sans-serif;
   --titlebar-height: 48px;
+  --rail-width: 44px;
 }
 
 * {
@@ -209,8 +210,17 @@ img {
   transition: grid-template-columns 120ms ease;
 }
 
-.workspace[data-collapsed] {
+.workspace[data-context='project'] {
+  grid-template-columns:
+    var(--rail-width) var(--sidebar-width, 248px) minmax(0, 1fr);
+}
+
+.workspace[data-collapsed]:not([data-context='project']) {
   grid-template-columns: 0 minmax(0, 1fr);
+}
+
+.workspace[data-context='project'][data-collapsed] {
+  grid-template-columns: var(--rail-width) 0 minmax(0, 1fr);
 }
 
 .home__sidebar {
