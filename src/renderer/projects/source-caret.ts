@@ -59,7 +59,13 @@ function serializeNode(node: Node): string {
   }
 
   const element = node as Element;
-  return element.tagName === 'BR' ? '\n' : serializeChildren(element);
+  if (element.hasAttribute('data-md-gutter')) {
+    return '';
+  }
+  if (element.tagName === 'BR') {
+    return element.hasAttribute('data-md-placeholder') ? '' : '\n';
+  }
+  return serializeChildren(element);
 }
 
 function isPlaceholderBlock(node: Node): boolean {

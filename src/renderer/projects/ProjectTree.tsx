@@ -19,6 +19,7 @@ export type ProjectTreeInlineEdit =
       mode: 'create';
       parentId: string | null;
       kind: ProjectTreeNode['kind'];
+      pageType?: string;
     }
   | { mode: 'rename'; node: ProjectTreeNode };
 
@@ -30,15 +31,25 @@ export interface ProjectTreeProps {
   operationPending?: boolean;
   onCancelEdit: () => void;
   onOpenNode: (node: ProjectTreeNode) => void;
-  onRequestCreate: (
+  onRequestAddInstance: (
     parentId: string | null,
-    kind: ProjectTreeNode['kind'],
+    position: { x: number; y: number },
+    restoreFocus?: HTMLElement | null,
   ) => void;
   onRequestMove: (node: ProjectTreeNode) => void;
   onRequestRename: (node: ProjectTreeNode) => void;
   onRequestTrash: (node: ProjectTreeNode) => void;
   onSubmitEdit: (name: string) => void;
-  onMoveNode: (node: ProjectTreeNode, parentId: string | null) => void;
+  onMoveNode: (
+    node: ProjectTreeNode,
+    parentId: string | null,
+    beforeNodeId?: string | null,
+  ) => void;
+}
+
+interface ProjectTreeDropTarget {
+  nodeId: string | null;
+  edge: 'before' | 'inside' | 'after';
 }
 
 interface VisibleNode {
@@ -70,14 +81,9 @@ function nodeMenuItems(
     ...(node.kind === 'folder'
       ? ([
           {
-            id: 'new-note',
+            id: 'add-instance',
             kind: 'action',
-            label: translate('projects.newNote'),
-          },
-          {
-            id: 'new-folder',
-            kind: 'action',
-            label: translate('projects.newFolder'),
+            label: translate('projects.addInstance'),
           },
           { id: 'create-separator', kind: 'separator' },
         ] satisfies MenuItem[])
@@ -179,7 +185,7 @@ export function ProjectTree({
   onCancelEdit,
   onMoveNode,
   onOpenNode,
-  onRequestCreate,
+  onRequestAddInstance,
   onRequestMove,
   onRequestRename,
   onRequestTrash,
@@ -190,7 +196,7 @@ export function ProjectTree({
   const [, renderVersion] = useReducer((version: number) => version + 1, 0);
   const [focusedNodeId, setFocusedNodeId] = useState<string>();
   const [draggedNodeId, setDraggedNodeId] = useState<string>();
-  const [dropTargetId, setDropTargetId] = useState<string | null>();
+  const [dropTarget, setDropTarget] = useState<ProjectTreeDropTarget>();
   const [contextMenu, setContextMenu] = useState<{
     node: ProjectTreeNode;
     x: number;
@@ -198,11 +204,21 @@ export function ProjectTree({
   } | null>(null);
   const itemRefs = useRef(new Map<string, HTMLDivElement>());
   const menuRefs = useRef(new Map<string, HTMLButtonElement>());
+  const expandTimerRef = useRef<number | undefined>(undefined);
+  const dropTargetRef = useRef<ProjectTreeDropTarget | undefined>(undefined);
 
   useEffect(() => controller.subscribe(renderVersion), [controller]);
   useEffect(() => {
     void controller.load(null);
   }, [controller]);
+  useEffect(
+    () => () => {
+      if (expandTimerRef.current !== undefined) {
+        window.clearTimeout(expandTimerRef.current);
+      }
+    },
+    [],
+  );
 
   const visibleNodes = collectVisibleNodes(controller);
   const visibleNodeIds = useMemo(
@@ -235,6 +251,26 @@ export function ProjectTree({
     const index = visibleNodes.findIndex(
       ({ node }) => node.nodeId === visible.node.nodeId,
     );
+
+    if (event.altKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
+      const siblings = controller.getBranch(visible.parentId).nodes;
+      const siblingIndex = siblings.findIndex(
+        ({ nodeId }) => nodeId === visible.node.nodeId,
+      );
+      const beforeNodeId =
+        event.key === 'ArrowUp'
+          ? siblings[siblingIndex - 1]?.nodeId
+          : siblings[siblingIndex + 2]?.nodeId ?? null;
+      if (
+        siblingIndex >= 0 &&
+        ((event.key === 'ArrowUp' && siblingIndex > 0) ||
+          (event.key === 'ArrowDown' && siblingIndex < siblings.length - 1))
+      ) {
+        event.preventDefault();
+        onMoveNode(visible.node, visible.parentId, beforeNodeId);
+      }
+      return;
+    }
 
     switch (event.key) {
       case 'ArrowDown':
@@ -310,14 +346,24 @@ export function ProjectTree({
     }
   }
 
-  function handleMenuAction(node: ProjectTreeNode, action: string): void {
+  function handleMenuAction(
+    node: ProjectTreeNode,
+    action: string,
+    position?: { x: number; y: number },
+  ): void {
     switch (action) {
-      case 'new-note':
-        onRequestCreate(node.nodeId, 'page');
+      case 'add-instance': {
+        const trigger = menuRefs.current.get(node.nodeId);
+        const bounds = trigger?.getBoundingClientRect();
+        onRequestAddInstance(
+          node.nodeId,
+          position ?? (bounds
+            ? { x: bounds.left, y: bounds.bottom + 4 }
+            : { x: 16, y: 16 }),
+          trigger,
+        );
         return;
-      case 'new-folder':
-        onRequestCreate(node.nodeId, 'folder');
-        return;
+      }
       case 'rename':
         onRequestRename(node);
         return;
@@ -334,18 +380,54 @@ export function ProjectTree({
 
   function finishDrag(event?: DragEvent<HTMLElement>): void {
     event?.preventDefault();
+    if (expandTimerRef.current !== undefined) {
+      window.clearTimeout(expandTimerRef.current);
+      expandTimerRef.current = undefined;
+    }
     setDraggedNodeId(undefined);
-    setDropTargetId(undefined);
+    dropTargetRef.current = undefined;
+    setDropTarget(undefined);
   }
 
-  function dropOn(parentId: string | null): void {
+  function dropOn(
+    parentId: string | null,
+    beforeNodeId?: string | null,
+  ): void {
     const dragged = draggedNodeId
       ? controller.findNode(draggedNodeId)
       : undefined;
-    if (dragged && dragged.nodeId !== parentId && dragged.parentId !== parentId) {
-      onMoveNode(dragged, parentId);
+    if (dragged && dragged.nodeId !== parentId) {
+      onMoveNode(dragged, parentId, beforeNodeId);
     }
     finishDrag();
+  }
+
+  function updateDropTarget(
+    next: ProjectTreeDropTarget,
+    folder?: ProjectTreeNode,
+  ): void {
+    if (
+      dropTargetRef.current?.nodeId === next.nodeId &&
+      dropTargetRef.current.edge === next.edge
+    ) {
+      return;
+    }
+    dropTargetRef.current = next;
+    setDropTarget(next);
+    if (expandTimerRef.current !== undefined) {
+      window.clearTimeout(expandTimerRef.current);
+      expandTimerRef.current = undefined;
+    }
+    if (
+      next.edge === 'inside' &&
+      folder?.kind === 'folder' &&
+      !controller.isExpanded(folder.nodeId)
+    ) {
+      expandTimerRef.current = window.setTimeout(() => {
+        expandTimerRef.current = undefined;
+        void controller.setExpanded(folder.nodeId, true);
+      }, 600);
+    }
   }
 
   function renderBranch(parentId: string | null, depth: number): React.ReactNode {
@@ -374,17 +456,31 @@ export function ProjectTree({
                 className={`project-tree__item${
                   activeNodeId === node.nodeId ? ' project-tree__item--active' : ''
                 }${
-                  dropTargetId === node.nodeId ? ' project-tree__item--drop' : ''
+                  dropTarget?.nodeId === node.nodeId
+                    ? ` project-tree__item--drop-${dropTarget.edge}`
+                    : ''
                 }`}
                 draggable={!renameEdit && !operationPending}
                 onDoubleClick={() => onRequestRename(node)}
                 onDragEnd={() => finishDrag()}
                 onDragOver={(event) => {
-                  if (node.kind === 'folder' && draggedNodeId !== node.nodeId) {
-                    event.preventDefault();
-                    event.dataTransfer.dropEffect = 'move';
-                    setDropTargetId(node.nodeId);
+                  if (!draggedNodeId || draggedNodeId === node.nodeId) {
+                    return;
                   }
+                  event.preventDefault();
+                  event.stopPropagation();
+                  event.dataTransfer.dropEffect = 'move';
+                  const bounds = event.currentTarget.getBoundingClientRect();
+                  const ratio = bounds.height > 0
+                    ? (event.clientY - bounds.top) / bounds.height
+                    : 0.5;
+                  const edge =
+                    node.kind === 'folder' && ratio >= 0.28 && ratio <= 0.72
+                      ? 'inside'
+                      : ratio < 0.5
+                        ? 'before'
+                        : 'after';
+                  updateDropTarget({ nodeId: node.nodeId, edge }, node);
                 }}
                 onDragStart={(event) => {
                   event.dataTransfer.effectAllowed = 'move';
@@ -392,11 +488,26 @@ export function ProjectTree({
                   setDraggedNodeId(node.nodeId);
                 }}
                 onDrop={(event) => {
-                  if (node.kind === 'folder') {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    dropOn(node.nodeId);
+                  if (!dropTarget || dropTarget.nodeId !== node.nodeId) {
+                    return;
                   }
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (dropTarget.edge === 'inside' && node.kind === 'folder') {
+                    dropOn(node.nodeId);
+                    return;
+                  }
+                  const siblings = controller
+                    .getBranch(parentId)
+                    .nodes.filter(({ nodeId }) => nodeId !== draggedNodeId);
+                  const siblingIndex = siblings.findIndex(
+                    ({ nodeId }) => nodeId === node.nodeId,
+                  );
+                  const beforeNodeId =
+                    dropTarget.edge === 'before'
+                      ? node.nodeId
+                      : siblings[siblingIndex + 1]?.nodeId ?? null;
+                  dropOn(parentId, beforeNodeId);
                 }}
                 onContextMenu={(event) => {
                   if (renameEdit) {
@@ -492,7 +603,24 @@ export function ProjectTree({
                 ) : null}
               </div>
               {node.kind === 'folder' && expanded ? (
-                <div role="group">
+                <div
+                  data-project-parent-id={node.nodeId}
+                  onDragOver={(event) => {
+                    if (event.target === event.currentTarget && draggedNodeId) {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      updateDropTarget({ nodeId: node.nodeId, edge: 'inside' }, node);
+                    }
+                  }}
+                  onDrop={(event) => {
+                    if (event.target === event.currentTarget && draggedNodeId) {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      dropOn(node.nodeId, null);
+                    }
+                  }}
+                  role="group"
+                >
                   {renderBranch(node.nodeId, depth + 1)}
                 </div>
               ) : null}
@@ -533,11 +661,6 @@ export function ProjectTree({
             {translate('projects.loadFailed')}
           </button>
         ) : null}
-        {branch.status === 'loaded' &&
-        branch.nodes.length === 0 &&
-        !createEdit ? (
-          <div className="project-tree__message">{translate('projects.empty')}</div>
-        ) : null}
       </>
     );
   }
@@ -545,24 +668,40 @@ export function ProjectTree({
   return (
     <div
       aria-label={translate('projects.navigation')}
-      className={`project-tree${dropTargetId === null ? ' project-tree--drop-root' : ''}`}
+      className={`project-tree${dropTarget?.nodeId === null ? ' project-tree--drop-root' : ''}`}
       onDragLeave={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
-          setDropTargetId(undefined);
+          setDropTarget(undefined);
+          dropTargetRef.current = undefined;
         }
       }}
       onDragOver={(event) => {
         if (event.target === event.currentTarget) {
           event.preventDefault();
-          setDropTargetId(null);
+          updateDropTarget({ nodeId: null, edge: 'inside' });
         }
       }}
       onDrop={(event) => {
         if (event.target === event.currentTarget) {
           event.preventDefault();
-          dropOn(null);
+          dropOn(null, null);
         }
       }}
+      onContextMenu={(event) => {
+        if ((event.target as Element).closest('.project-tree__item')) {
+          return;
+        }
+        event.preventDefault();
+        const branch = (event.target as Element).closest<HTMLElement>(
+          '[data-project-parent-id]',
+        );
+        onRequestAddInstance(
+          branch?.dataset.projectParentId || null,
+          { x: event.clientX, y: event.clientY },
+          event.currentTarget,
+        );
+      }}
+      data-project-parent-id=""
       role="tree"
     >
       {renderBranch(null, 1)}
@@ -573,7 +712,10 @@ export function ProjectTree({
           )}`}
           items={nodeMenuItems(contextMenu.node, translate)}
           onAction={(action) => {
-            handleMenuAction(contextMenu.node, action);
+            handleMenuAction(contextMenu.node, action, {
+              x: contextMenu.x,
+              y: contextMenu.y,
+            });
             setContextMenu(null);
           }}
           onClose={() => setContextMenu(null)}

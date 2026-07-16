@@ -48,6 +48,10 @@ describe('markdown source highlighter', () => {
   it('preserves every character of the source text', () => {
     const source = '# Hi **there**\n\n- [ ] task\n`a < b & c`';
     const text = highlightSource(source)
+      .replace(
+        /<span aria-hidden="true" class="md-line__gutter" contenteditable="false" data-md-gutter>[^<]*<\/span>/g,
+        '',
+      )
       .replace(/<[^>]+>/g, '')
       .replace(/&lt;/g, '<')
       .replace(/&gt;/g, '>')

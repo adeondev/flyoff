@@ -32,6 +32,11 @@ import {
 } from './project-paths';
 import { readBoundedFile, writeJsonAtomically } from './persistence';
 import { createProjectStorage, openProjectStorage } from './project-storage';
+import {
+  getProjectPageStorageAdapter,
+  projectPageDiskName,
+  requireProjectPageStorageAdapter,
+} from './project-storage-adapters';
 
 export type TrashItem = (absolutePath: string) => Promise<void>;
 
@@ -88,14 +93,28 @@ function diskNameFor(entry: ContentIndexEntry): string {
   return path.posix.basename(entry.locator);
 }
 
-function sortTreeNodes(left: ProjectTreeNode, right: ProjectTreeNode): number {
-  if (left.kind !== right.kind) {
-    return left.kind === 'folder' ? -1 : 1;
-  }
-
+function compareEntryNames(
+  left: Pick<ContentIndexEntry, 'name'>,
+  right: Pick<ContentIndexEntry, 'name'>,
+): number {
   return left.name.localeCompare(right.name, undefined, {
     numeric: true,
     sensitivity: 'base',
+  });
+}
+
+function sortEntries(entries: readonly ContentIndexEntry[]): ContentIndexEntry[] {
+  const manual = entries.some((entry) => entry.sortOrder !== undefined);
+  return [...entries].sort((left, right) => {
+    if (manual) {
+      const order =
+        (left.sortOrder ?? Number.MAX_SAFE_INTEGER) -
+        (right.sortOrder ?? Number.MAX_SAFE_INTEGER);
+      if (order !== 0) {
+        return order;
+      }
+    }
+    return compareEntryNames(left, right);
   });
 }
 
@@ -156,6 +175,8 @@ export class ProjectRepository {
 
     if (!storage.index) {
       await repository.rebuildIndex();
+    } else if (storage.indexNeedsMigration) {
+      await repository.persistIndex();
     }
 
     return repository;
@@ -191,9 +212,27 @@ export class ProjectRepository {
     let changed = false;
 
     for (const existing of existingChildren) {
+      if (
+        existing.kind === 'page' &&
+        !getProjectPageStorageAdapter(existing.pageType)
+      ) {
+        try {
+          await this.fileSystem.resolveExistingEntry(existing);
+          continue;
+        } catch (error) {
+          if (normalizeProjectError(error).code !== 'not-found') {
+            throw error;
+          }
+        }
+      }
       const matchingNode = discoveredByLocator.get(existing.locator);
 
-      if (!matchingNode || matchingNode.kind !== existing.kind) {
+      if (
+        !matchingNode ||
+        matchingNode.kind !== existing.kind ||
+        (existing.kind === 'page' &&
+          matchingNode.pageType !== existing.pageType)
+      ) {
         this.removeEntryAndDescendants(existing.nodeId);
         changed = true;
       }
@@ -202,11 +241,11 @@ export class ProjectRepository {
     const entriesByLocator = new Map(
       this.index.entries.map((entry) => [entry.locator, entry]),
     );
-    const children = discovered.map((node): ContentIndexEntry => {
+    for (const node of discovered) {
       const existing = entriesByLocator.get(node.locator);
 
       if (existing && existing.kind === node.kind) {
-        return existing;
+        continue;
       }
 
       changed = true;
@@ -220,7 +259,7 @@ export class ProjectRepository {
           kind: 'folder',
         };
         this.index.entries.push(entry);
-        return entry;
+        continue;
       }
 
       const entry: ContentIndexEntry = {
@@ -229,11 +268,14 @@ export class ProjectRepository {
         name: node.name,
         locator: node.locator,
         kind: 'page',
-        pageType: 'markdown',
+        pageType: node.pageType!,
       };
       this.index.entries.push(entry);
-      return entry;
-    });
+    }
+
+    if (this.normalizeBranchOrder(parentId)) {
+      changed = true;
+    }
 
     if (changed) {
       try {
@@ -244,7 +286,7 @@ export class ProjectRepository {
       }
     }
 
-    return children.map(toProjectTreeNode).sort(sortTreeNodes);
+    return this.childrenOf(parentId).map(toProjectTreeNode);
   }
 
   async createFolder(
@@ -258,7 +300,16 @@ export class ProjectRepository {
     parentId: string | null,
     name: string,
   ): Promise<ProjectTreeNode> {
-    return this.createNode(parentId, name, 'page');
+    return this.createPage(parentId, name, 'markdown');
+  }
+
+  async createPage(
+    parentId: string | null,
+    name: string,
+    pageType: string,
+  ): Promise<ProjectTreeNode> {
+    requireProjectPageStorageAdapter(pageType);
+    return this.createNode(parentId, name, 'page', pageType);
   }
 
   async renameNode(nodeId: string, name: string): Promise<ProjectTreeNode> {
@@ -273,7 +324,10 @@ export class ProjectRepository {
     const oldAbsolutePath = await this.fileSystem.resolveExistingEntry(entry);
     const parent = this.requireFolder(entry.parentId);
     const parentPath = await this.fileSystem.resolveParentDirectory(parent);
-    const nextDiskName = entry.kind === 'page' ? `${name}.md` : name;
+    const nextDiskName =
+      entry.kind === 'page'
+        ? projectPageDiskName(name, entry.pageType)
+        : name;
     await this.fileSystem.ensureNameAvailable(parentPath, nextDiskName, path.basename(oldAbsolutePath));
     const nextLocator = this.fileSystem.joinLocator(parent?.locator, nextDiskName);
     const nextAbsolutePath = path.join(parentPath, nextDiskName);
@@ -311,13 +365,32 @@ export class ProjectRepository {
   async moveNode(
     nodeId: string,
     parentId: string | null,
+    beforeNodeId?: string | null,
   ): Promise<ProjectTreeNode> {
     const entry = this.requireEntry(nodeId);
     const nextParent = this.requireFolder(parentId);
+    const explicitPlacement = beforeNodeId !== undefined;
+    const originalParentId = entry.parentId;
 
-    if (entry.parentId === parentId) {
+    if (entry.parentId === parentId && !explicitPlacement) {
       await this.fileSystem.resolveExistingEntry(entry);
       return toProjectTreeNode(entry);
+    }
+
+    if (beforeNodeId && beforeNodeId === nodeId) {
+      throw new ProjectOperationError(
+        'invalid-operation',
+        'Content cannot be positioned relative to itself.',
+      );
+    }
+    if (beforeNodeId) {
+      const reference = this.requireEntry(beforeNodeId);
+      if (reference.parentId !== parentId) {
+        throw new ProjectOperationError(
+          'invalid-operation',
+          'The requested order reference is not in the destination folder.',
+        );
+      }
     }
 
     if (
@@ -333,25 +406,37 @@ export class ProjectRepository {
     }
 
     const oldAbsolutePath = await this.fileSystem.resolveExistingEntry(entry);
-    const nextParentPath = await this.fileSystem.resolveParentDirectory(nextParent);
+    const parentChanged = entry.parentId !== parentId;
+    const nextParentPath = parentChanged
+      ? await this.fileSystem.resolveParentDirectory(nextParent)
+      : path.dirname(oldAbsolutePath);
     const diskName = diskNameFor(entry);
-    await this.fileSystem.ensureNameAvailable(nextParentPath, diskName);
+    if (parentChanged) {
+      await this.fileSystem.ensureNameAvailable(nextParentPath, diskName);
+    }
     const nextLocator = this.fileSystem.joinLocator(nextParent?.locator, diskName);
     const nextAbsolutePath = path.join(nextParentPath, diskName);
     const previousEntries = cloneEntries(this.index.entries);
     let renamed = false;
 
     try {
-      await this.fileSystem.moveWithoutOverwrite(
-        oldAbsolutePath,
-        nextAbsolutePath,
-        entry.kind,
-      );
-      renamed = true;
+      if (parentChanged) {
+        await this.fileSystem.moveWithoutOverwrite(
+          oldAbsolutePath,
+          nextAbsolutePath,
+          entry.kind,
+        );
+        renamed = true;
+      }
       this.replaceEntryAndDescendantLocators(entry.nodeId, {
         parentId,
         locator: nextLocator,
       });
+      this.setEntrySortOrder(nodeId, undefined);
+      if (originalParentId !== parentId) {
+        this.normalizeBranchOrder(originalParentId);
+      }
+      this.placeEntry(nodeId, parentId, beforeNodeId);
       await this.persistIndex();
       return await this.getNode(nodeId);
     } catch (error) {
@@ -378,9 +463,11 @@ export class ProjectRepository {
     }
 
     const entry = this.requireEntry(nodeId);
+    const parentId = entry.parentId;
     const absolutePath = await this.fileSystem.resolveExistingEntry(entry);
     const previousEntries = cloneEntries(this.index.entries);
     const removedNodeIds = this.removeEntryAndDescendants(nodeId);
+    this.normalizeBranchOrder(parentId);
 
     try {
       await this.persistIndex();
@@ -524,7 +611,7 @@ export class ProjectRepository {
                 name: node.name,
                 locator: node.locator,
                 kind: 'page',
-                pageType: 'markdown',
+                pageType: node.pageType!,
               };
 
         this.index.entries.push(entry);
@@ -543,11 +630,16 @@ export class ProjectRepository {
     parentId: string | null,
     name: string,
     kind: 'folder' | 'page',
+    pageType?: string,
   ): Promise<ProjectTreeNode> {
     assertPortableProjectName(name);
     const parent = this.requireFolder(parentId);
     const parentPath = await this.fileSystem.resolveParentDirectory(parent);
-    const diskName = kind === 'page' ? `${name}.md` : name;
+    const adapter =
+      kind === 'page'
+        ? requireProjectPageStorageAdapter(pageType ?? '')
+        : undefined;
+    const diskName = adapter ? projectPageDiskName(name, adapter.pageType) : name;
     await this.fileSystem.ensureNameAvailable(parentPath, diskName);
     const locator = this.fileSystem.joinLocator(parent?.locator, diskName);
     const absolutePath = path.join(parentPath, diskName);
@@ -566,7 +658,7 @@ export class ProjectRepository {
             name,
             locator,
             kind: 'page',
-            pageType: 'markdown',
+            pageType: adapter!.pageType,
           };
     let createdIdentity: ProjectFileIdentity | undefined;
 
@@ -574,11 +666,20 @@ export class ProjectRepository {
       if (kind === 'folder') {
         await mkdir(absolutePath);
       } else {
-        await writeFile(absolutePath, '', { encoding: 'utf8', flag: 'wx' });
+        await writeFile(absolutePath, adapter!.initialContent, {
+          encoding: 'utf8',
+          flag: 'wx',
+        });
       }
 
       createdIdentity = await this.fileSystem.captureIdentity(absolutePath);
+      const branchWasManual = this.rawChildren(parentId).some(
+        (candidate) => candidate.sortOrder !== undefined,
+      );
       this.index.entries.push(entry);
+      if (branchWasManual) {
+        this.placeEntry(entry.nodeId, parentId, null);
+      }
       await this.persistIndex();
       return toProjectTreeNode(entry);
     } catch (error) {
@@ -603,6 +704,7 @@ export class ProjectRepository {
   }
 
   private async persistIndex(): Promise<void> {
+    this.normalizeAllBranchOrders();
     await this.fileSystem.validateMetadataFileForWrite(PROJECT_INDEX_FILENAME);
     await writeJsonAtomically(
       this.indexFilePath,
@@ -697,6 +799,86 @@ export class ProjectRepository {
 
       return entry;
     });
+  }
+
+  private rawChildren(parentId: string | null): ContentIndexEntry[] {
+    return this.index.entries.filter((entry) => entry.parentId === parentId);
+  }
+
+  private childrenOf(parentId: string | null): ContentIndexEntry[] {
+    return sortEntries(this.rawChildren(parentId));
+  }
+
+  private setEntrySortOrder(
+    nodeId: string,
+    sortOrder: number | undefined,
+  ): void {
+    const entry = this.requireEntry(nodeId);
+    if (sortOrder === undefined) {
+      delete entry.sortOrder;
+      return;
+    }
+    entry.sortOrder = sortOrder;
+  }
+
+  private normalizeBranchOrder(parentId: string | null): boolean {
+    const siblings = this.rawChildren(parentId);
+    if (!siblings.some((entry) => entry.sortOrder !== undefined)) {
+      return false;
+    }
+
+    let changed = false;
+    for (const [sortOrder, entry] of sortEntries(siblings).entries()) {
+      if (entry.sortOrder !== sortOrder) {
+        entry.sortOrder = sortOrder;
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  private normalizeAllBranchOrders(): void {
+    const parentIds = new Set(
+      this.index.entries.map((entry) => entry.parentId),
+    );
+    for (const parentId of parentIds) {
+      this.normalizeBranchOrder(parentId);
+    }
+  }
+
+  private placeEntry(
+    nodeId: string,
+    parentId: string | null,
+    beforeNodeId?: string | null,
+  ): void {
+    const entry = this.requireEntry(nodeId);
+    const siblings = this.childrenOf(parentId).filter(
+      (candidate) => candidate.nodeId !== nodeId,
+    );
+    const branchIsManual = siblings.some(
+      (candidate) => candidate.sortOrder !== undefined,
+    );
+
+    if (beforeNodeId === undefined && !branchIsManual) {
+      delete entry.sortOrder;
+      return;
+    }
+
+    const insertionIndex =
+      beforeNodeId === undefined || beforeNodeId === null
+        ? siblings.length
+        : siblings.findIndex((candidate) => candidate.nodeId === beforeNodeId);
+    if (insertionIndex < 0) {
+      throw new ProjectOperationError(
+        'invalid-operation',
+        'The requested order reference is not in the destination folder.',
+      );
+    }
+
+    siblings.splice(insertionIndex, 0, entry);
+    for (const [sortOrder, sibling] of siblings.entries()) {
+      sibling.sortOrder = sortOrder;
+    }
   }
 
 }

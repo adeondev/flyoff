@@ -15,12 +15,24 @@ function createLine(
   index: number,
 ): HTMLSpanElement {
   const element = root.ownerDocument.createElement('span');
+  const gutter = root.ownerDocument.createElement('span');
   const content = root.ownerDocument.createElement('span');
   element.className = 'md-line';
   element.dataset.line = String(index + 1);
+  gutter.className = 'md-line__gutter';
+  gutter.dataset.mdGutter = '';
+  gutter.setAttribute('aria-hidden', 'true');
+  gutter.setAttribute('contenteditable', 'false');
+  gutter.textContent = String(index + 1);
   content.className = 'md-line__content';
-  content.innerHTML = line.html;
-  element.appendChild(content);
+  if (line.html) {
+    content.innerHTML = line.html;
+  } else {
+    const placeholder = root.ownerDocument.createElement('br');
+    placeholder.dataset.mdPlaceholder = '';
+    content.appendChild(placeholder);
+  }
+  element.append(gutter, content);
   return element;
 }
 
@@ -33,8 +45,9 @@ function hasCanonicalLines(
     Array.from(root.children).every(
       (line) =>
         line.classList.contains('md-line') &&
-        line.children.length === 1 &&
-        line.firstElementChild?.classList.contains('md-line__content'),
+        line.children.length === 2 &&
+        line.firstElementChild?.classList.contains('md-line__gutter') &&
+        line.lastElementChild?.classList.contains('md-line__content'),
     )
   );
 }
@@ -50,6 +63,10 @@ function replaceAll(
 
 export function reconcileSource(root: HTMLElement, source: string): void {
   const next = highlightSourceLines(source);
+  root.style.setProperty(
+    '--md-line-number-digits',
+    String(Math.max(3, String(next.length).length)),
+  );
   const current = renderStates.get(root)?.lines;
 
   if (!current || !hasCanonicalLines(root, current.length)) {
@@ -92,7 +109,12 @@ export function reconcileSource(root: HTMLElement, source: string): void {
   root.insertBefore(fragment, anchor);
 
   for (let index = prefix; index < root.children.length; index += 1) {
-    (root.children[index] as HTMLElement).dataset.line = String(index + 1);
+    const line = root.children[index] as HTMLElement;
+    line.dataset.line = String(index + 1);
+    const gutter = line.querySelector<HTMLElement>(':scope > .md-line__gutter');
+    if (gutter) {
+      gutter.textContent = String(index + 1);
+    }
   }
 
   renderStates.set(root, { lines: next });

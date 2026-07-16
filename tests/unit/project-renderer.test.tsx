@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -100,9 +101,11 @@ describe('project sidebar', () => {
     expect(screen.queryByText('Plan.md')).toBeNull();
     expect(loadChildren).toHaveBeenCalledWith({ parentId: folder.nodeId });
 
-    fireEvent.click(screen.getByRole('button', { name: 'projects.add' }));
     fireEvent.click(
-      await screen.findByRole('menuitem', { name: 'projects.newNote' }),
+      screen.getByRole('button', { name: 'projects.addInstance' }),
+    );
+    fireEvent.click(
+      await screen.findByRole('option', { name: /projects.instanceNote/ }),
     );
     const input = screen.getByRole('textbox', { name: 'projects.name' });
     fireEvent.change(input, { target: { value: 'Meeting' } });
@@ -220,6 +223,59 @@ describe('project sidebar', () => {
     expect(onOpenNode).not.toHaveBeenCalled();
   });
 
+  it('reuses the searchable instance picker from folders and empty space', async () => {
+    render(
+      <ProjectSidebar
+        loadChildren={vi.fn(async ({ parentId }) => ({
+          ok: true as const,
+          value: parentId === null ? [folder] : [],
+        }))}
+        onCreateNode={vi.fn()}
+        onMoveNode={vi.fn()}
+        onOpenNode={vi.fn()}
+        onOpenOverview={vi.fn()}
+        onRenameNode={vi.fn()}
+        onTrashNode={vi.fn()}
+        project={project}
+        translate={translate}
+      />,
+    );
+
+    await screen.findByRole('button', { name: 'Docs' });
+    fireEvent.click(
+      screen.getByRole('button', { name: 'projects.moreActions: Docs' }),
+    );
+    fireEvent.click(
+      await screen.findByRole('menuitem', { name: 'projects.addInstance' }),
+    );
+
+    const picker = await screen.findByRole('dialog', {
+      name: 'projects.addInstance',
+    });
+    expect(
+      (
+        within(picker).getByRole('option', {
+          name: /projects.instanceChecklist/,
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    const search = within(picker).getByRole('searchbox', {
+      name: 'projects.searchInstances',
+    });
+    fireEvent.change(search, { target: { value: 'nothing' } });
+    expect(within(picker).getByText('projects.noInstances')).toBeTruthy();
+    fireEvent.keyDown(picker, { key: 'Escape' });
+
+    const tree = screen.getByRole('tree', { name: 'projects.navigation' });
+    fireEvent.contextMenu(tree, { clientX: 80, clientY: 120 });
+    expect(
+      (
+        await screen.findByRole('dialog', { name: 'projects.addInstance' })
+      ).getAttribute('data-parent-id'),
+    ).toBe('root');
+    expect(screen.queryByText('projects.empty')).toBeNull();
+  });
+
   it('moves a node onto a folder with drag and drop', async () => {
     const moved = { ...note, parentId: folder.nodeId };
     const onMoveNode = vi.fn(async () => ({
@@ -266,6 +322,60 @@ describe('project sidebar', () => {
         parentId: folder.nodeId,
       });
     });
+  });
+
+  it('expands a hovered folder and reorders siblings with Alt+Arrow', async () => {
+    const loadChildren = vi.fn(async ({ parentId }) => ({
+      ok: true as const,
+      value: parentId === null ? [folder, note] : [],
+    }));
+    const onMoveNode = vi.fn(async () => ({
+      ok: true as const,
+      value: note,
+    }));
+    render(
+      <ProjectSidebar
+        loadChildren={loadChildren}
+        onCreateNode={vi.fn()}
+        onMoveNode={onMoveNode}
+        onOpenNode={vi.fn()}
+        onOpenOverview={vi.fn()}
+        onRenameNode={vi.fn()}
+        onTrashNode={vi.fn()}
+        project={project}
+        translate={translate}
+      />,
+    );
+
+    const noteItem = (await screen.findByRole('button', { name: 'Todo' })).closest(
+      '[role="treeitem"]',
+    )!;
+    const folderItem = screen
+      .getByRole('button', { name: 'Docs' })
+      .closest('[role="treeitem"]')!;
+    fireEvent.keyDown(noteItem, { altKey: true, key: 'ArrowUp' });
+    await waitFor(() => {
+      expect(onMoveNode).toHaveBeenCalledWith({
+        nodeId: note.nodeId,
+        parentId: null,
+        beforeNodeId: folder.nodeId,
+      });
+    });
+
+    vi.useFakeTimers();
+    const dataTransfer = {
+      dropEffect: 'none',
+      effectAllowed: 'none',
+      getData: vi.fn(() => note.nodeId),
+      setData: vi.fn(),
+    };
+    fireEvent.dragStart(noteItem, { dataTransfer });
+    fireEvent.dragOver(folderItem, { dataTransfer });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(600);
+    });
+    expect(loadChildren).toHaveBeenCalledWith({ parentId: folder.nodeId });
+    fireEvent.dragEnd(noteItem, { dataTransfer });
   });
 });
 
@@ -498,6 +608,57 @@ describe('Markdown editor', () => {
     expect(controller.getSnapshot(note.nodeId)?.content).toBe('==uau==');
     fireEvent.keyDown(editor, { key: 'z', ctrlKey: true, shiftKey: true });
     expect(controller.getSnapshot(note.nodeId)?.content).toBe('==uau==\n');
+  });
+
+  it('removes consecutive empty lines with Backspace without moving the gutter', () => {
+    const original: MarkdownDocument = {
+      nodeId: note.nodeId,
+      content: 'a',
+      revision: '1'.repeat(64),
+    };
+    const controller = new MarkdownDocumentController({
+      reload: vi.fn(),
+      save: vi.fn(),
+    });
+    render(
+      <MarkdownEditor
+        controller={controller}
+        document={original}
+        translate={translate}
+      />,
+    );
+    const editor = screen.getByRole('textbox', {
+      name: 'projects.editorLabel',
+    });
+    writeSelection(editor, 1);
+
+    const beforeInput = (inputType: string) =>
+      fireEvent(
+        editor,
+        new InputEvent('beforeinput', {
+          bubbles: true,
+          cancelable: true,
+          inputType,
+        }),
+      );
+    beforeInput('insertParagraph');
+    beforeInput('insertParagraph');
+
+    expect(controller.getSnapshot(note.nodeId)?.content).toBe('a\n\n');
+    expect(editor.querySelectorAll(':scope > .md-line')).toHaveLength(3);
+    expect(editor.querySelectorAll('[data-md-placeholder]')).toHaveLength(2);
+    expect(
+      [...editor.querySelectorAll('[data-md-gutter]')].map(
+        (element) => element.textContent,
+      ),
+    ).toEqual(['1', '2', '3']);
+
+    beforeInput('deleteContentBackward');
+    expect(controller.getSnapshot(note.nodeId)?.content).toBe('a\n');
+    beforeInput('deleteContentBackward');
+    expect(controller.getSnapshot(note.nodeId)?.content).toBe('a');
+    expect(editor.querySelectorAll(':scope > .md-line')).toHaveLength(1);
+    expect(editor.querySelector('[data-md-gutter]')?.textContent).toBe('1');
   });
 
   it('records IME composition once and keeps toolbar edits in history', async () => {

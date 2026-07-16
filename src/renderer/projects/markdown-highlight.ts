@@ -266,7 +266,7 @@ export function highlightSource(source: string): string {
   return highlightSourceLines(source)
     .map(
       ({ html }, index) =>
-        `<span class="md-line" data-line="${index + 1}"><span class="md-line__content">${html}</span></span>`,
+        `<span class="md-line" data-line="${index + 1}"><span aria-hidden="true" class="md-line__gutter" contenteditable="false" data-md-gutter>${index + 1}</span><span class="md-line__content">${html || '<br data-md-placeholder>'}</span></span>`,
     )
     .join('');
 }

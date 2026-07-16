@@ -16,12 +16,14 @@ import path from 'node:path';
 import { ProjectOperationError, normalizeProjectError } from './errors';
 import { isPortableProjectName } from './portable-name';
 import type { ContentIndexEntry } from './project-format';
+import { projectPageStorageMatch } from './project-storage-adapters';
 import { PROJECT_METADATA_DIRECTORY } from './project-paths';
 
 export interface DiscoveredProjectNode {
   name: string;
   kind: 'folder' | 'page';
   locator: string;
+  pageType?: string;
 }
 
 export interface ProjectFileIdentity {
@@ -226,17 +228,22 @@ export class ProjectFileSystem {
         continue;
       }
 
-      if (!stats.isFile() || !directoryEntry.name.toLowerCase().endsWith('.md')) {
+      if (!stats.isFile()) {
         continue;
       }
 
-      const name = directoryEntry.name.slice(0, -3);
+      const storage = projectPageStorageMatch(directoryEntry.name);
+      if (!storage) {
+        continue;
+      }
+      const name = directoryEntry.name.slice(0, -storage.extension.length);
 
       if (isPortableProjectName(name)) {
         discovered.push({
           name,
           kind: 'page',
           locator: this.joinLocator(parent?.locator, directoryEntry.name),
+          pageType: storage.pageType,
         });
       }
     }

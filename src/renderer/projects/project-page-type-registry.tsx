@@ -7,6 +7,8 @@ import type {
   ProjectPageNode,
   ProjectResult,
 } from '../../shared/contracts';
+import { isProjectInstanceTypeId } from '../../shared/contracts';
+import type { TranslationKey } from '../../shared/i18n/catalogs';
 import type { Translate } from '../pages/page-types';
 import { createEditorModeState, readEditorMode } from './editor-mode';
 import type { MarkdownDocumentController } from './markdown-document-controller';
@@ -38,7 +40,12 @@ export interface ProjectPageComponentProps {
 export interface ProjectPageTypeDefinition {
   pageType: string;
   icon: string;
-  Page: ComponentType<ProjectPageComponentProps>;
+  title?: string;
+  titleKey?: TranslationKey;
+  description?: string;
+  descriptionKey?: TranslationKey;
+  availability: 'available' | 'coming-soon' | 'unavailable';
+  Page?: ComponentType<ProjectPageComponentProps>;
 }
 
 type MarkdownDocumentState =
@@ -157,20 +164,73 @@ export const PROJECT_PAGE_TYPE_DEFINITIONS = {
   markdown: {
     pageType: 'markdown',
     icon: markdownPageIcon,
+    titleKey: 'projects.instanceNote',
+    descriptionKey: 'projects.instanceNoteDescription',
+    availability: 'available',
     Page: MarkdownProjectPage,
+  },
+  checklist: {
+    pageType: 'checklist',
+    icon: markdownPageIcon,
+    titleKey: 'projects.instanceChecklist',
+    descriptionKey: 'projects.comingSoon',
+    availability: 'coming-soon',
+  },
+  kanban: {
+    pageType: 'kanban',
+    icon: markdownPageIcon,
+    titleKey: 'projects.instanceBoard',
+    descriptionKey: 'projects.comingSoon',
+    availability: 'coming-soon',
+  },
+  gallery: {
+    pageType: 'gallery',
+    icon: markdownPageIcon,
+    titleKey: 'projects.instanceGallery',
+    descriptionKey: 'projects.comingSoon',
+    availability: 'coming-soon',
   },
 } as const satisfies Record<string, ProjectPageTypeDefinition>;
 
 export type RegisteredProjectPageType =
   keyof typeof PROJECT_PAGE_TYPE_DEFINITIONS;
 
+const projectPageTypeRegistry = new Map<string, ProjectPageTypeDefinition>(
+  Object.values(PROJECT_PAGE_TYPE_DEFINITIONS).map((definition) => [
+    definition.pageType,
+    definition,
+  ]),
+);
+
+export function registerProjectPageTypeDefinition(
+  definition: ProjectPageTypeDefinition,
+): () => void {
+  if (!isProjectInstanceTypeId(definition.pageType)) {
+    throw new Error(`Invalid project page type: ${definition.pageType}`);
+  }
+  if ((!definition.title && !definition.titleKey) ||
+      (!definition.description && !definition.descriptionKey)) {
+    throw new Error(
+      `Project page type requires display metadata: ${definition.pageType}`,
+    );
+  }
+  if (projectPageTypeRegistry.has(definition.pageType)) {
+    throw new Error(`Project page type already registered: ${definition.pageType}`);
+  }
+  projectPageTypeRegistry.set(definition.pageType, definition);
+  return () => {
+    if (projectPageTypeRegistry.get(definition.pageType) === definition) {
+      projectPageTypeRegistry.delete(definition.pageType);
+    }
+  };
+}
+
+export function listProjectPageTypeDefinitions(): readonly ProjectPageTypeDefinition[] {
+  return [...projectPageTypeRegistry.values()];
+}
+
 export function getProjectPageTypeDefinition(
   pageType: string,
 ): ProjectPageTypeDefinition | undefined {
-  return (
-    PROJECT_PAGE_TYPE_DEFINITIONS as Record<
-      string,
-      ProjectPageTypeDefinition
-    >
-  )[pageType];
+  return projectPageTypeRegistry.get(pageType);
 }

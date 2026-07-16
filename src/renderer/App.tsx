@@ -236,7 +236,9 @@ function unavailableProjectResult<T>(message: string): ProjectResult<T> {
   };
 }
 
-function createMarkdownController(): MarkdownDocumentController {
+function createMarkdownController(
+  onSaveError?: (message: string) => void,
+): MarkdownDocumentController {
   return new MarkdownDocumentController({
     reload: (request) => {
       const operation = getApi().readMarkdownDocument;
@@ -254,6 +256,7 @@ function createMarkdownController(): MarkdownDocumentController {
             unavailableProjectResult('The project bridge is unavailable.'),
           );
     },
+    onSaveError: (error) => onSaveError?.(error.message),
   });
 }
 
@@ -274,11 +277,11 @@ export function App() {
   const [projectNodes, setProjectNodes] = useState<
     ReadonlyMap<string, ProjectTreeNode>
   >(() => new Map());
-  const [documentController, setDocumentController] = useState(
-    createMarkdownController,
+  const [projectNotice, setProjectNotice] = useState<string>();
+  const [documentController, setDocumentController] = useState(() =>
+    createMarkdownController(setProjectNotice),
   );
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
-  const [projectNotice, setProjectNotice] = useState<string>();
   const [restoreCandidate, setRestoreCandidate] =
     useState<WorkspaceSessionSnapshot | null>(null);
   const [restorePending, setRestorePending] = useState(false);
@@ -379,7 +382,7 @@ export function App() {
 
   const replaceDocumentController = useCallback((): void => {
     documentControllerRef.current.dispose();
-    const next = createMarkdownController();
+    const next = createMarkdownController(setProjectNotice);
     documentControllerRef.current = next;
     setDocumentController(next);
   }, []);
@@ -472,20 +475,10 @@ export function App() {
         return true;
       }
 
-      if (projectRef.current) {
-        if (!(await flushProjectDocuments())) {
-          return false;
-        }
-
-        if (closeRequestRef.current || restorePendingRef.current) {
-          return false;
-        }
-      }
-
       dispatchUserAction(action);
       return true;
     },
-    [dispatchUserAction, flushProjectDocuments],
+    [dispatchUserAction],
   );
 
   const enqueueWorkspaceTransition = useCallback(
@@ -514,10 +507,8 @@ export function App() {
 
   const dispatchGuardedTabAction = useCallback(
     (action: WorkspaceAction): Promise<boolean> =>
-      projectRef.current
-        ? enqueueWorkspaceTransition(() => performGuardedTabAction(action))
-        : performGuardedTabAction(action),
-    [enqueueWorkspaceTransition, performGuardedTabAction],
+      performGuardedTabAction(action),
+    [performGuardedTabAction],
   );
 
   const activateProject = useCallback(

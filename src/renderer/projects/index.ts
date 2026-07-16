@@ -1,4 +1,5 @@
 export * from './CreateProjectDialog';
+export * from './AddInstancePopover';
 export * from './MarkdownEditor';
 export * from './markdown-document-controller';
 export * from './MoveProjectNodeDialog';

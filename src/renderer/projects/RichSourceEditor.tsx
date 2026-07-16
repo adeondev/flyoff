@@ -14,6 +14,7 @@ import {
   type SourceSelection,
 } from './source-caret';
 import { reconcileSource } from './source-renderer';
+import { resolveSourceInput } from './source-input';
 
 export interface RichSourceEditorProps {
   ariaLabel: string;
@@ -182,23 +183,36 @@ export function RichSourceEditor({
         callbacksRef.current.onRedo();
         return;
       }
-      if (
-        event.inputType === 'insertParagraph' ||
-        event.inputType === 'insertLineBreak'
-      ) {
-        event.preventDefault();
-        commitReplacement(event.inputType, '\n');
-        return;
-      }
       if (composingRef.current) {
         return;
       }
 
+      const before = {
+        content: readSource(editor),
+        selection: readSelection(editor),
+      };
+      const resolved = resolveSourceInput(before, event.inputType, event.data);
+      if (resolved) {
+        event.preventDefault();
+        if (resolved.content === before.content) {
+          reconcileSource(editor, resolved.content);
+          writeSelection(editor, resolved.selection);
+          stateRef.current = resolved;
+          callbacksRef.current.onSelectionChange(resolved.selection);
+          return;
+        }
+        commit(
+          before,
+          resolved.content,
+          resolved.selection,
+          event.inputType,
+          performance.now(),
+        );
+        return;
+      }
+
       pendingRef.current = {
-        before: {
-          content: readSource(editor),
-          selection: readSelection(editor),
-        },
+        before,
         inputType: event.inputType,
         timestamp: performance.now(),
       };
@@ -224,6 +238,44 @@ export function RichSourceEditor({
       }
       event.preventDefault();
       commitReplacement('insertFromDrop', normalizedText(text));
+    }
+
+    function handleCut(event: ClipboardEvent): void {
+      const before = {
+        content: readSource(editor),
+        selection: readSelection(editor),
+      };
+      if (before.selection.start === before.selection.end) {
+        return;
+      }
+      event.preventDefault();
+      event.clipboardData?.setData(
+        'text/plain',
+        before.content.slice(before.selection.start, before.selection.end),
+      );
+      const resolved = resolveSourceInput(before, 'deleteByCut');
+      if (resolved) {
+        commit(
+          before,
+          resolved.content,
+          resolved.selection,
+          'deleteByCut',
+          performance.now(),
+        );
+      }
+    }
+
+    function handleCopy(event: ClipboardEvent): void {
+      const source = readSource(editor);
+      const selected = readSelection(editor);
+      if (selected.start === selected.end) {
+        return;
+      }
+      event.preventDefault();
+      event.clipboardData?.setData(
+        'text/plain',
+        source.slice(selected.start, selected.end),
+      );
     }
 
     function handleCompositionStart(): void {
@@ -272,6 +324,8 @@ export function RichSourceEditor({
     editor.addEventListener('compositionend', handleCompositionEnd);
     editor.addEventListener('input', handleInput);
     editor.addEventListener('paste', handlePaste);
+    editor.addEventListener('copy', handleCopy);
+    editor.addEventListener('cut', handleCut);
     editor.addEventListener('drop', handleDrop);
     editor.ownerDocument.addEventListener(
       'selectionchange',
@@ -287,6 +341,8 @@ export function RichSourceEditor({
       editor.removeEventListener('compositionend', handleCompositionEnd);
       editor.removeEventListener('input', handleInput);
       editor.removeEventListener('paste', handlePaste);
+      editor.removeEventListener('copy', handleCopy);
+      editor.removeEventListener('cut', handleCut);
       editor.removeEventListener('drop', handleDrop);
       editor.ownerDocument.removeEventListener(
         'selectionchange',

@@ -214,6 +214,68 @@ describe('project workspace integration', () => {
     expect(screen.getByRole('tab', { name: 'Home' })).toBeTruthy();
   });
 
+  it('closes note tabs immediately and recovers a later autosave failure', async () => {
+    let finishSave:
+      | ((result: {
+          ok: false;
+          error: { code: 'io-error'; message: string };
+        }) => void)
+      | undefined;
+    const saveMarkdownDocument = vi.fn(
+      () =>
+        new Promise<{
+          ok: false;
+          error: { code: 'io-error'; message: string };
+        }>((resolve) => {
+          finishSave = resolve;
+        }),
+    );
+    installProjectApi({ saveMarkdownDocument });
+    render(<App />);
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Open Project' }),
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Roadmap' }));
+    const editor = await screen.findByRole('textbox', {
+      name: 'Markdown editor',
+    });
+    editor.textContent = '# Changed';
+    fireEvent.input(editor);
+    fireEvent.keyDown(editor, { ctrlKey: true, key: 's' });
+    await waitFor(() => expect(saveMarkdownDocument).toHaveBeenCalledOnce());
+
+    fireEvent.click(screen.getByRole('tab', { name: project.name }));
+    expect(
+      screen
+        .getByRole('tab', { name: project.name })
+        .getAttribute('aria-selected'),
+    ).toBe('true');
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Close tab: Roadmap' }),
+    );
+    expect(screen.queryByRole('tab', { name: 'Roadmap' })).toBeNull();
+
+    await act(async () => {
+      finishSave?.({
+        ok: false,
+        error: {
+          code: 'io-error',
+          message: 'Background save failed',
+        },
+      });
+    });
+    expect(screen.getByRole('alert').textContent).toContain(
+      'Background save failed',
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Roadmap' }));
+    expect(
+      (await screen.findByRole('textbox', { name: 'Markdown editor' }))
+        .textContent,
+    ).toContain('# Changed');
+  });
+
   it('waits for a pending trash operation before confirming window close', async () => {
     let closeListener:
       | Parameters<FlyoffApi['onCloseRequested']>[0]

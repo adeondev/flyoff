@@ -29,15 +29,6 @@ interface DropTarget {
   edge: 'before' | 'after';
 }
 
-const TAB_CLOSE_FALLBACK_MS = 160;
-
-function allowsMotion(): boolean {
-  return (
-    typeof window.matchMedia !== 'function' ||
-    !window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  );
-}
-
 function focusTab(
   refs: Map<string, HTMLButtonElement>,
   tabs: readonly TabDescriptor[],
@@ -73,13 +64,8 @@ export function TabBar({
   const pendingFocusTabId = useRef<string | undefined>(undefined);
   const draggedTabId = useRef<string | undefined>(undefined);
   const dropTargetRef = useRef<DropTarget | undefined>(undefined);
-  const closingTabIdsRef = useRef(new Set<string>());
-  const closeTimers = useRef(new Map<string, number>());
   const [dropTarget, setDropTarget] = useState<DropTarget>();
   const [draggingTabId, setDraggingTabId] = useState<string>();
-  const [closingTabIds, setClosingTabIds] = useState<ReadonlySet<string>>(
-    () => new Set(),
-  );
 
   useEffect(() => {
     const tabId = pendingFocusTabId.current;
@@ -104,50 +90,10 @@ export function TabBar({
     }
   }, [activeTabId]);
 
-  useEffect(
-    () => () => {
-      for (const timer of closeTimers.current.values()) {
-        window.clearTimeout(timer);
-      }
-      closeTimers.current.clear();
-    },
-    [],
-  );
-
-  function finishClosingTab(tabId: string): void {
-    if (!closingTabIdsRef.current.delete(tabId)) {
-      return;
-    }
-
-    const timer = closeTimers.current.get(tabId);
-    if (timer !== undefined) {
-      window.clearTimeout(timer);
-      closeTimers.current.delete(tabId);
-    }
-
-    onClose(tabId);
-    setClosingTabIds(new Set(closingTabIdsRef.current));
-  }
-
   function closeAndFocusNeighbor(tab: TabDescriptor, index: number): void {
-    if (closingTabIdsRef.current.has(tab.tabId)) {
-      return;
-    }
-
     const neighbor = tabs[index + 1] ?? tabs[index - 1];
     pendingFocusTabId.current = neighbor?.tabId ?? 'page:home';
-
-    if (!allowsMotion()) {
-      onClose(tab.tabId);
-      return;
-    }
-
-    closingTabIdsRef.current.add(tab.tabId);
-    setClosingTabIds(new Set(closingTabIdsRef.current));
-    const timer = window.setTimeout(() => {
-      finishClosingTab(tab.tabId);
-    }, TAB_CLOSE_FALLBACK_MS);
-    closeTimers.current.set(tab.tabId, timer);
+    onClose(tab.tabId);
   }
 
   function handleKeyDown(
@@ -314,25 +260,12 @@ export function TabBar({
               : '';
           const draggingClass =
             draggingTabId === tab.tabId ? ' page-tab--dragging' : '';
-          const closingClass = closingTabIds.has(tab.tabId)
-            ? ' page-tab--closing'
-            : '';
-
           return (
             <div
-              className={`page-tab${active ? ' page-tab--active' : ''}${dropClass}${draggingClass}${closingClass}`}
-              draggable={!closingTabIds.has(tab.tabId)}
+              className={`page-tab${active ? ' page-tab--active' : ''}${dropClass}${draggingClass}`}
+              draggable
               key={tab.tabId}
               onDragEnd={clearDragState}
-              onTransitionEnd={(event) => {
-                if (
-                  event.target === event.currentTarget &&
-                  event.propertyName === 'flex-basis' &&
-                  closingTabIdsRef.current.has(tab.tabId)
-                ) {
-                  finishClosingTab(tab.tabId);
-                }
-              }}
               onDragStart={(event) => {
                 draggedTabId.current = tab.tabId;
                 setDraggingTabId(tab.tabId);

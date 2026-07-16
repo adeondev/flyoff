@@ -7,6 +7,7 @@ import {
   isCreateProjectNodeRequest,
   isCreateProjectRequest,
   isMarkdownDocument,
+  isMoveProjectNodeRequest,
   isProjectResult,
   isProjectSummary,
   isSaveMarkdownDocumentRequest,
@@ -69,6 +70,36 @@ describe('project contracts', () => {
         name: 'Quadro',
         kind: 'page',
         pageType: 'kanban',
+      }),
+    ).toBe(true);
+    expect(
+      isCreateProjectNodeRequest({
+        parentId: null,
+        name: 'Mapa',
+        kind: 'page',
+        pageType: 'example-plugin:mind-map',
+      }),
+    ).toBe(true);
+    expect(
+      isCreateProjectNodeRequest({
+        parentId: null,
+        name: 'Desconhecido',
+        kind: 'page',
+        pageType: 'custom-without-plugin',
+      }),
+    ).toBe(false);
+    expect(
+      isMoveProjectNodeRequest({
+        nodeId,
+        parentId: null,
+        beforeNodeId: null,
+      }),
+    ).toBe(true);
+    expect(
+      isMoveProjectNodeRequest({
+        nodeId,
+        parentId: null,
+        beforeNodeId: 'invalid',
       }),
     ).toBe(false);
     expect(

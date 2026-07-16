@@ -18,8 +18,11 @@ import type {
   TrashProjectNodeRequest,
   TrashProjectNodeOutcome,
 } from '../../shared/contracts';
-import { DropdownMenu, type MenuItem } from '../components/menu';
 import type { Translate } from '../pages/page-types';
+import {
+  AddInstancePopover,
+  type AddInstanceChoice,
+} from './AddInstancePopover';
 import { MoveProjectNodeDialog } from './MoveProjectNodeDialog';
 import { projectNodeInputName } from './project-node-name';
 import { ProjectTree, type ProjectTreeInlineEdit } from './ProjectTree';
@@ -84,21 +87,6 @@ export interface ProjectSidebarHandle {
   refresh: () => Promise<boolean>;
 }
 
-function createMenuItems(translate: Translate): readonly MenuItem[] {
-  return [
-    {
-      id: 'new-note',
-      kind: 'action',
-      label: translate('projects.newNote'),
-    },
-    {
-      id: 'new-folder',
-      kind: 'action',
-      label: translate('projects.newFolder'),
-    },
-  ];
-}
-
 export const ProjectSidebar = forwardRef<
   ProjectSidebarHandle,
   ProjectSidebarProps
@@ -133,6 +121,11 @@ export const ProjectSidebar = forwardRef<
   const [trashingNode, setTrashingNode] = useState<ProjectTreeNode>();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
+  const [instancePicker, setInstancePicker] = useState<{
+    parentId: string | null;
+    position: { x: number; y: number };
+    restoreFocus?: HTMLElement | null;
+  }>();
 
   useEffect(() => () => controller.dispose(), [controller]);
   useEffect(() => {
@@ -165,12 +158,13 @@ export const ProjectSidebar = forwardRef<
     async (
       parentId: string | null,
       kind: ProjectTreeNode['kind'],
+      pageType?: string,
     ): Promise<void> => {
       setError(undefined);
       if (parentId) {
         await controller.setExpanded(parentId, true);
       }
-      setEdit({ mode: 'create', parentId, kind });
+      setEdit({ mode: 'create', parentId, kind, pageType });
     },
     [controller],
   );
@@ -221,7 +215,7 @@ export const ProjectSidebar = forwardRef<
             : {
                 kind: 'page',
                 name: requestName,
-                pageType: 'markdown',
+                pageType: edit.pageType ?? 'markdown',
                 parentId: edit.parentId,
               },
         );
@@ -262,6 +256,7 @@ export const ProjectSidebar = forwardRef<
   async function moveByDrop(
     node: ProjectTreeNode,
     parentId: string | null,
+    beforeNodeId?: string | null,
   ): Promise<void> {
     if (pending || !(await allowNodeChange(node))) {
       return;
@@ -270,7 +265,11 @@ export const ProjectSidebar = forwardRef<
     setPending(true);
     setError(undefined);
     try {
-      const result = await onMoveNode({ nodeId: node.nodeId, parentId });
+      const result = await onMoveNode({
+        nodeId: node.nodeId,
+        parentId,
+        ...(beforeNodeId === undefined ? {} : { beforeNodeId }),
+      });
       if (!result.ok) {
         reportError(result.error.message);
         return;
@@ -316,7 +315,22 @@ export const ProjectSidebar = forwardRef<
     return onTrashNode(request);
   }
 
-  const addItems = createMenuItems(translate);
+  function openInstancePicker(
+    parentId: string | null,
+    position: { x: number; y: number },
+    restoreFocus?: HTMLElement | null,
+  ): void {
+    setInstancePicker({ parentId, position, restoreFocus });
+  }
+
+  function chooseInstance(choice: AddInstanceChoice): void {
+    const target = instancePicker;
+    if (!target) {
+      return;
+    }
+    setInstancePicker(undefined);
+    void startCreate(target.parentId, choice.kind, choice.pageType);
+  }
 
   return (
     <aside
@@ -356,24 +370,25 @@ export const ProjectSidebar = forwardRef<
           >
             <span aria-hidden="true">↻</span>
           </button>
-          <DropdownMenu
-            items={addItems}
-            onAction={(action) => {
-              void startCreate(null, action === 'new-folder' ? 'folder' : 'page');
+          <button
+            aria-expanded={Boolean(instancePicker)}
+            aria-haspopup="dialog"
+            aria-label={translate('projects.addInstance')}
+            className="project-sidebar__tool"
+            disabled={pending}
+            onClick={(event) => {
+              const bounds = event.currentTarget.getBoundingClientRect();
+              openInstancePicker(
+                null,
+                { x: bounds.left, y: bounds.bottom + 4 },
+                event.currentTarget,
+              );
             }}
-            trigger={(props) => (
-              <button
-                {...props}
-                aria-label={translate('projects.add')}
-                className="project-sidebar__tool"
-                disabled={pending}
-                title={translate('projects.add')}
-                type="button"
-              >
-                <span aria-hidden="true">+</span>
-              </button>
-            )}
-          />
+            title={translate('projects.addInstance')}
+            type="button"
+          >
+            <span aria-hidden="true">+</span>
+          </button>
         </div>
       </header>
       {error ? (
@@ -394,9 +409,11 @@ export const ProjectSidebar = forwardRef<
           controller={controller}
           edit={edit}
           onCancelEdit={() => setEdit(undefined)}
-          onMoveNode={(node, parentId) => void moveByDrop(node, parentId)}
+          onMoveNode={(node, parentId, beforeNodeId) =>
+            void moveByDrop(node, parentId, beforeNodeId)
+          }
           onOpenNode={onOpenNode}
-          onRequestCreate={(parentId, kind) => void startCreate(parentId, kind)}
+          onRequestAddInstance={openInstancePicker}
           onRequestMove={setMovingNode}
           onRequestRename={(node) => setEdit({ mode: 'rename', node })}
           onRequestTrash={setTrashingNode}
@@ -405,6 +422,16 @@ export const ProjectSidebar = forwardRef<
           translate={translate}
         />
       </div>
+      {instancePicker ? (
+        <AddInstancePopover
+          onClose={() => setInstancePicker(undefined)}
+          onSelect={chooseInstance}
+          parentId={instancePicker.parentId}
+          position={instancePicker.position}
+          restoreFocus={instancePicker.restoreFocus}
+          translate={translate}
+        />
+      ) : null}
       {movingNode ? (
         <MoveProjectNodeDialog
           controller={controller}

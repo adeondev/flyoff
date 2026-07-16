@@ -79,6 +79,17 @@ export interface TranslationCatalog {
     emptyWorkspace: string;
     refresh: string;
     add: string;
+    addInstance: string;
+    searchInstances: string;
+    noInstances: string;
+    instanceNote: string;
+    instanceNoteDescription: string;
+    instanceChecklist: string;
+    instanceBoard: string;
+    instanceGallery: string;
+    instanceFolder: string;
+    instanceFolderDescription: string;
+    comingSoon: string;
     moreActions: string;
     newNote: string;
     newFolder: string;
@@ -86,7 +97,6 @@ export interface TranslationCatalog {
     move: string;
     moveTo: string;
     trash: string;
-    empty: string;
     loading: string;
     loadFailed: string;
     operationFailed: string;
@@ -249,6 +259,17 @@ export const ptBR = {
     emptyWorkspace: 'Nenhuma aba aberta.',
     refresh: 'Atualizar',
     add: 'Adicionar',
+    addInstance: 'Adicionar instância',
+    searchInstances: 'Buscar instâncias',
+    noInstances: 'Nenhuma instância encontrada.',
+    instanceNote: 'Nota',
+    instanceNoteDescription: 'Markdown',
+    instanceChecklist: 'Checklist',
+    instanceBoard: 'Quadro',
+    instanceGallery: 'Galeria',
+    instanceFolder: 'Pasta',
+    instanceFolderDescription: 'Organiza outras instâncias',
+    comingSoon: 'Em breve',
     moreActions: 'Mais ações',
     newNote: 'Nova nota',
     newFolder: 'Nova pasta',
@@ -256,7 +277,6 @@ export const ptBR = {
     move: 'Mover',
     moveTo: 'Mover para…',
     trash: 'Mover para a lixeira',
-    empty: 'Esta pasta está vazia.',
     loading: 'Carregando…',
     loadFailed: 'Não foi possível carregar esta pasta.',
     operationFailed: 'Não foi possível concluir a operação.',
@@ -414,6 +434,17 @@ export const enUS = {
     emptyWorkspace: 'No tab open.',
     refresh: 'Refresh',
     add: 'Add',
+    addInstance: 'Add instance',
+    searchInstances: 'Search instances',
+    noInstances: 'No instances found.',
+    instanceNote: 'Note',
+    instanceNoteDescription: 'Markdown',
+    instanceChecklist: 'Checklist',
+    instanceBoard: 'Board',
+    instanceGallery: 'Gallery',
+    instanceFolder: 'Folder',
+    instanceFolderDescription: 'Organizes other instances',
+    comingSoon: 'Coming soon',
     moreActions: 'More actions',
     newNote: 'New note',
     newFolder: 'New folder',
@@ -421,7 +452,6 @@ export const enUS = {
     move: 'Move',
     moveTo: 'Move to…',
     trash: 'Move to trash',
-    empty: 'This folder is empty.',
     loading: 'Loading…',
     loadFailed: 'This folder could not be loaded.',
     operationFailed: 'The operation could not be completed.',

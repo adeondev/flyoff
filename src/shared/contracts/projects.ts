@@ -1,12 +1,14 @@
 export const PROJECT_FORMAT = 'flyoff-project' as const;
 export const PROJECT_FORMAT_VERSION = 1 as const;
 export const PROJECT_INDEX_FORMAT = 'flyoff-content-index' as const;
-export const PROJECT_INDEX_VERSION = 1 as const;
+export const PROJECT_INDEX_VERSION = 2 as const;
+export const PROJECT_INDEX_LEGACY_VERSION = 1 as const;
 
 export const PROJECT_MANIFEST_MAX_BYTES = 64 * 1024;
 export const PROJECT_INDEX_MAX_BYTES = 32 * 1024 * 1024;
 export const MARKDOWN_DOCUMENT_MAX_BYTES = 8 * 1024 * 1024;
 export const PROJECT_NAME_MAX_LENGTH = 100;
+export const PROJECT_INSTANCE_TYPE_MAX_LENGTH = 128;
 
 export const PROJECT_IPC_CHANNELS = {
   selectCreateLocation: 'flyoff:projects:create-location:select',
@@ -67,7 +69,7 @@ export interface ProjectFolderNode extends ProjectTreeNodeBase {
 
 export interface ProjectPageNode extends ProjectTreeNodeBase {
   kind: 'page';
-  pageType: 'markdown';
+  pageType: string;
 }
 
 export type ProjectTreeNode = ProjectFolderNode | ProjectPageNode;
@@ -107,7 +109,7 @@ export type CreateProjectNodeRequest =
       parentId: string | null;
       name: string;
       kind: 'page';
-      pageType: 'markdown';
+      pageType: string;
     };
 
 export interface RenameProjectNodeRequest {
@@ -118,6 +120,7 @@ export interface RenameProjectNodeRequest {
 export interface MoveProjectNodeRequest {
   nodeId: string;
   parentId: string | null;
+  beforeNodeId?: string | null;
 }
 
 export interface TrashProjectNodeRequest {
@@ -166,6 +169,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function isProjectIdentifier(value: unknown): value is string {
   return typeof value === 'string' && uuidPattern.test(value);
+}
+
+const builtInProjectInstanceTypes = new Set([
+  'markdown',
+  'checklist',
+  'kanban',
+  'gallery',
+]);
+const customProjectInstanceTypePattern =
+  /^[a-z][a-z0-9._-]{0,62}:[a-z][a-z0-9._-]{0,62}$/;
+
+export function isProjectInstanceTypeId(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length <= PROJECT_INSTANCE_TYPE_MAX_LENGTH &&
+    (builtInProjectInstanceTypes.has(value) ||
+      customProjectInstanceTypePattern.test(value))
+  );
 }
 
 export function isPortableProjectName(value: unknown): value is string {
@@ -255,7 +276,7 @@ export function isProjectTreeNode(value: unknown): value is ProjectTreeNode {
 
   return (
     value.kind === 'folder' ||
-    (value.kind === 'page' && value.pageType === 'markdown')
+    (value.kind === 'page' && isProjectInstanceTypeId(value.pageType))
   );
 }
 
@@ -337,7 +358,7 @@ export function isCreateProjectNodeRequest(
 
   return (
     value.kind === 'folder' ||
-    (value.kind === 'page' && value.pageType === 'markdown')
+    (value.kind === 'page' && isProjectInstanceTypeId(value.pageType))
   );
 }
 
@@ -357,7 +378,10 @@ export function isMoveProjectNodeRequest(
   return (
     isRecord(value) &&
     isProjectIdentifier(value.nodeId) &&
-    hasNodeParent(value)
+    hasNodeParent(value) &&
+    (value.beforeNodeId === undefined ||
+      value.beforeNodeId === null ||
+      isProjectIdentifier(value.beforeNodeId))
   );
 }
 

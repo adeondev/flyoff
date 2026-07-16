@@ -35,6 +35,8 @@ export function ProjectContentPage({
 
   if (
     !definition ||
+    !definition.Page ||
+    definition.availability !== 'available' ||
     (node !== undefined &&
       (node.kind !== 'page' || node.pageType !== pageType))
   ) {

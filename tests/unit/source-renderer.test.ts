@@ -12,9 +12,24 @@ describe('incremental source renderer', () => {
     reconcileSource(root, '# one\n\nthree');
 
     expect(root.querySelectorAll(':scope > .md-line')).toHaveLength(3);
+    expect(root.querySelectorAll('.md-line__gutter')).toHaveLength(3);
     expect(root.querySelectorAll('.md-line__content')).toHaveLength(3);
+    expect(root.querySelectorAll('[data-md-placeholder]')).toHaveLength(1);
     expect(root.children[2]?.getAttribute('data-line')).toBe('3');
     expect(readSource(root)).toBe('# one\n\nthree');
+  });
+
+  it('keeps gutters and empty-line placeholders out of the source', () => {
+    const root = document.createElement('div');
+    reconcileSource(root, 'a\n');
+
+    expect(
+      [...root.querySelectorAll('.md-line__gutter')].map(
+        (gutter) => gutter.textContent,
+      ),
+    ).toEqual(['1', '2']);
+    expect(readSource(root)).toBe('a\n');
+    expect(root.style.getPropertyValue('--md-line-number-digits')).toBe('3');
   });
 
   it('preserves unchanged prefix and suffix line nodes', () => {

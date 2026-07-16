@@ -54,10 +54,12 @@ export function usePanelResize({
       }
 
       event.preventDefault();
+      const handle = event.currentTarget;
       const startX = event.clientX;
       const startSize = getSize();
       let latest = startSize;
       document.documentElement.classList.add(RESIZING_CLASS);
+      handle.dataset.resizing = 'true';
 
       const move = (moveEvent: PointerEvent) => {
         latest = clamp(
@@ -72,6 +74,7 @@ export function usePanelResize({
         window.removeEventListener('pointerup', end);
         window.removeEventListener('pointercancel', end);
         document.documentElement.classList.remove(RESIZING_CLASS);
+        delete handle.dataset.resizing;
         onCommit(latest);
       };
 

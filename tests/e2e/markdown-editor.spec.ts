@@ -16,12 +16,14 @@ import { terminateProcessTree } from './terminate-process';
 const repositoryRoot = path.resolve(__dirname, '../..');
 
 interface Labels {
+  addInstance: string;
   chooseLocation: string;
   create: string;
   edit: string;
   editor: string;
   name: string;
   newNote: string;
+  note: string;
   newProject: string;
   projectName: string;
   reading: string;
@@ -32,13 +34,15 @@ interface Labels {
 
 function labelsFor(locale: string): Labels {
   return locale === 'en-US'
-    ? {
+      ? {
+        addInstance: 'Add instance',
         chooseLocation: 'Choose location',
         create: 'Create',
         edit: 'Edit',
         editor: 'Markdown editor',
         name: 'Name',
         newNote: 'New note',
+        note: 'Note',
         newProject: 'New Project',
         projectName: 'Project name',
         reading: 'Reading',
@@ -46,13 +50,15 @@ function labelsFor(locale: string): Labels {
         split: 'Split',
         undo: 'Undo',
       }
-    : {
+      : {
+        addInstance: 'Adicionar instância',
         chooseLocation: 'Escolher local',
         create: 'Criar',
         edit: 'Editar',
         editor: 'Editor Markdown',
         name: 'Nome',
         newNote: 'Nova nota',
+        note: 'Nota',
         newProject: 'Novo Projeto',
         projectName: 'Nome do projeto',
         reading: 'Leitura',
@@ -132,13 +138,29 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
       .click();
     await expect(dialog.getByText(canonicalParent)).toBeVisible();
     await dialog.getByRole('button', { name: labels.create }).click();
-    await page.getByRole('button', { name: labels.newNote }).click();
+    await page.getByRole('button', { name: labels.addInstance }).click();
+    const instancePicker = page.getByRole('dialog', {
+      name: labels.addInstance,
+    });
+    await expect(instancePicker).toBeVisible();
+    await instancePicker
+      .getByRole('option', { name: new RegExp(`^${labels.note}`) })
+      .click();
     const nameInput = page.getByRole('textbox', { name: labels.name });
     await nameInput.fill(noteName);
     await nameInput.press('Enter');
 
     let editor = page.getByRole('textbox', { name: labels.editor });
     await editor.click();
+    await page.keyboard.type('a');
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('Enter');
+    await expect.poll(() => sourceOf(editor)).toBe('a\n\n');
+    await page.keyboard.press('Backspace');
+    await expect.poll(() => sourceOf(editor)).toBe('a\n');
+    await page.keyboard.press('Backspace');
+    await expect.poll(() => sourceOf(editor)).toBe('a');
+    await editor.selectText();
     await page.keyboard.type('==uau==');
     await page.keyboard.press('Enter');
     await page.keyboard.type('[text](https://x.dev)');
@@ -239,6 +261,7 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
           '.md-line[data-line="2"]',
         );
         const content = line?.querySelector<HTMLElement>('.md-line__content');
+        const gutter = line?.querySelector<HTMLElement>('.md-line__gutter');
         const view = document.querySelector<HTMLElement>('.markdown-view');
         const sourceStyle = getComputedStyle(root);
         const lineStyle = line ? getComputedStyle(line) : undefined;
@@ -251,8 +274,18 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
               : 0,
           fontSize: Number.parseFloat(sourceStyle.fontSize),
           gutterFontSize: line
-            ? Number.parseFloat(getComputedStyle(line, '::before').fontSize)
+            ? Number.parseFloat(getComputedStyle(gutter!).fontSize)
             : 0,
+          gutterLeft:
+            line && gutter
+              ? gutter.getBoundingClientRect().left -
+                root.getBoundingClientRect().left
+              : -1,
+          gutterOverlap:
+            gutter && content
+              ? gutter.getBoundingClientRect().right >
+                content.getBoundingClientRect().left
+              : true,
           lastNumber:
             root.querySelector('.md-line:last-child')?.getAttribute('data-line'),
           lineCount: root.querySelectorAll(':scope > .md-line').length,
@@ -269,8 +302,10 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
 
       expect(metrics.fontSize).toBeCloseTo(14 * targetScale, 1);
       expect(metrics.gutterFontSize).toBeCloseTo(metrics.fontSize, 1);
-      expect(metrics.contentOffset).toBeCloseTo(3.75 * metrics.fontSize, 0);
-      expect(metrics.sourcePadding).toBeCloseTo(28 * targetScale, 1);
+      expect(metrics.gutterLeft).toBeCloseTo(28, 1);
+      expect(metrics.gutterOverlap).toBe(false);
+      expect(metrics.contentOffset).toBeGreaterThan(28 + metrics.fontSize * 3);
+      expect(metrics.sourcePadding).toBe(0);
       expect(metrics.readingPadding).toBeCloseTo(28 * targetScale, 1);
       expect(metrics.lineCount).toBe(1_001);
       expect(metrics.lastNumber).toBe('1001');

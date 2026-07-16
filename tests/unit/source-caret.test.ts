@@ -81,6 +81,20 @@ describe('rich source caret mapping', () => {
     });
   });
 
+  it('ignores real gutter cells and empty-line sentinels', () => {
+    const root = mount('a\n');
+    const gutter = root.querySelector('.md-line__gutter')!;
+
+    expect(readSource(root)).toBe('a\n');
+    const selection = document.getSelection()!;
+    const range = document.createRange();
+    range.selectNodeContents(gutter);
+    range.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    expect(readSelection(root).start).toBe(0);
+  });
+
   it('serializes internal breaks and transient Chromium blocks', () => {
     const root = document.createElement('div');
     root.innerHTML =

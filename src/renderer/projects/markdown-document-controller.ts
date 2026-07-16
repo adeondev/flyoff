@@ -38,6 +38,7 @@ export interface MarkdownDocumentControllerOptions {
     request: ReadMarkdownDocumentRequest,
   ) => Promise<ProjectResult<MarkdownDocument>>;
   debounceMs?: number;
+  onSaveError?: (error: ProjectFailureDetails, nodeId: string) => void;
 }
 
 interface MarkdownBufferEntry {
@@ -78,16 +79,19 @@ export class MarkdownDocumentController {
   private readonly debounceMs: number;
   private readonly saveDocument: MarkdownDocumentControllerOptions['save'];
   private readonly reloadDocument: MarkdownDocumentControllerOptions['reload'];
+  private readonly onSaveError?: MarkdownDocumentControllerOptions['onSaveError'];
   private disposed = false;
 
   constructor({
     debounceMs = DEFAULT_AUTOSAVE_DELAY,
+    onSaveError,
     reload,
     save,
   }: MarkdownDocumentControllerOptions) {
     this.debounceMs = Math.max(0, debounceMs);
     this.reloadDocument = reload;
     this.saveDocument = save;
+    this.onSaveError = onSaveError;
   }
 
   open(document: MarkdownDocument): MarkdownBufferSnapshot {
@@ -192,6 +196,14 @@ export class MarkdownDocumentController {
       return;
     }
     const next = clampSelection(selection, entry.snapshot.content.length);
+    const previous = entry.snapshot.selection;
+    if (
+      previous.start !== next.start ||
+      previous.end !== next.end ||
+      previous.direction !== next.direction
+    ) {
+      this.history.breakCoalescing(nodeId);
+    }
     entry.snapshot = { ...entry.snapshot, selection: next };
     this.editorStates.set(nodeId, {
       content: entry.snapshot.content,
@@ -411,12 +423,15 @@ export class MarkdownDocumentController {
     try {
       result = await this.saveDocument(request);
     } catch (error) {
-      this.setFailure(entry, rejectedOperation(String(error)));
+      const failure = rejectedOperation(String(error));
+      this.setFailure(entry, failure);
+      this.onSaveError?.(failure, entry.snapshot.nodeId);
       return false;
     }
 
     if (!result.ok) {
       this.setFailure(entry, result.error);
+      this.onSaveError?.(result.error, entry.snapshot.nodeId);
       return false;
     }
 

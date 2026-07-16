@@ -176,6 +176,7 @@ class DocumentHistory {
   private readonly undoStack: HistoryEntry[] = [];
   private readonly redoStack: HistoryEntry[] = [];
   lastUsed = 0;
+  private mergeBarrier = false;
 
   get bytes(): number {
     return [...this.undoStack, ...this.redoStack].reduce(
@@ -199,7 +200,9 @@ class DocumentHistory {
     }
 
     const previous = this.undoStack.at(-1);
-    const merged = previous ? mergeEntries(previous, entry) : undefined;
+    const merged = previous && !this.mergeBarrier
+      ? mergeEntries(previous, entry)
+      : undefined;
     if (merged) {
       this.undoStack[this.undoStack.length - 1] = merged;
     } else {
@@ -208,7 +211,12 @@ class DocumentHistory {
         this.undoStack.shift();
       }
     }
+    this.mergeBarrier = false;
     this.redoStack.length = 0;
+  }
+
+  breakCoalescing(): void {
+    this.mergeBarrier = true;
   }
 
   undo(state: SourceEditorState): SourceEditorState | undefined {
@@ -256,6 +264,7 @@ class DocumentHistory {
   clear(): void {
     this.undoStack.length = 0;
     this.redoStack.length = 0;
+    this.mergeBarrier = false;
   }
 }
 
@@ -296,6 +305,10 @@ export class MarkdownHistoryStore {
 
   canRedo(nodeId: string): boolean {
     return this.documents.get(nodeId)?.canRedo ?? false;
+  }
+
+  breakCoalescing(nodeId: string): void {
+    this.documents.get(nodeId)?.breakCoalescing();
   }
 
   reset(nodeId: string): void {

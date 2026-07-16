@@ -32,7 +32,7 @@
 
 .flyoff-panel-resizer:hover::before,
 .flyoff-panel-resizer:focus-visible::before,
-.flyoff-resizing .flyoff-panel-resizer::before {
+.flyoff-panel-resizer[data-resizing='true']::before {
   background: var(--color-accent);
 }
 

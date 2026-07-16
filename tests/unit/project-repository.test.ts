@@ -93,6 +93,107 @@ describe('ProjectRepository', () => {
     ).toBe(true);
   });
 
+  it('uses alphabetical order until a branch is manually reordered', async () => {
+    const repository = await createRepository();
+    const alpha = await repository.createMarkdownPage(null, 'Alpha');
+    await repository.createFolder(null, 'Beta');
+    const zulu = await repository.createMarkdownPage(null, 'Zulu');
+
+    expect((await repository.listChildren(null)).map(({ name }) => name)).toEqual([
+      'Alpha',
+      'Beta',
+      'Notas',
+      'Zulu',
+    ]);
+
+    await repository.moveNode(zulu.nodeId, null, alpha.nodeId);
+    await repository.renameNode(zulu.nodeId, 'Ômega');
+    await repository.createMarkdownPage(null, 'Antes');
+    writeFileSync(
+      path.join(repository.rootPath, 'Externo.md'),
+      '# arquivo externo',
+      'utf8',
+    );
+
+    expect((await repository.listChildren(null)).map(({ name }) => name)).toEqual([
+      'Ômega',
+      'Alpha',
+      'Beta',
+      'Notas',
+      'Antes',
+      'Externo',
+    ]);
+
+    const reopened = await ProjectRepository.open(repository.rootPath);
+    expect((await reopened.listChildren(null)).map(({ name }) => name)).toEqual([
+      'Ômega',
+      'Alpha',
+      'Beta',
+      'Notas',
+      'Antes',
+      'Externo',
+    ]);
+  });
+
+  it('migrates a v1 content index to v2 without changing node identities', async () => {
+    const repository = await createRepository();
+    const note = await repository.createMarkdownPage(null, 'Legado');
+    const indexPath = path.join(
+      repository.rootPath,
+      '.flyoff',
+      'content-index.json',
+    );
+    const legacy = JSON.parse(readFileSync(indexPath, 'utf8')) as {
+      formatVersion: number;
+      entries: Array<Record<string, unknown>>;
+    };
+    legacy.formatVersion = 1;
+    for (const entry of legacy.entries) {
+      delete entry.sortOrder;
+    }
+    writeFileSync(indexPath, JSON.stringify(legacy), 'utf8');
+
+    const reopened = await ProjectRepository.open(repository.rootPath);
+    expect(await reopened.getNode(note.nodeId)).toMatchObject({
+      nodeId: note.nodeId,
+      name: 'Legado',
+    });
+    expect(
+      (JSON.parse(readFileSync(indexPath, 'utf8')) as { formatVersion: number })
+        .formatVersion,
+    ).toBe(2);
+  });
+
+  it('preserves indexed custom page types when their adapter is unavailable', async () => {
+    const repository = await createRepository();
+    const note = await repository.createMarkdownPage(null, 'Plugin');
+    const indexPath = path.join(
+      repository.rootPath,
+      '.flyoff',
+      'content-index.json',
+    );
+    const index = JSON.parse(readFileSync(indexPath, 'utf8')) as {
+      entries: Array<Record<string, unknown>>;
+    };
+    const entry = index.entries.find(({ nodeId }) => nodeId === note.nodeId)!;
+    entry.pageType = 'example-plugin:canvas';
+    entry.locator = 'Plugin.canvas';
+    renameSync(
+      path.join(repository.rootPath, 'Plugin.md'),
+      path.join(repository.rootPath, 'Plugin.canvas'),
+    );
+    writeFileSync(indexPath, JSON.stringify(index), 'utf8');
+
+    const reopened = await ProjectRepository.open(repository.rootPath);
+    expect(await reopened.listChildren(null)).toContainEqual({
+      nodeId: note.nodeId,
+      parentId: null,
+      name: 'Plugin',
+      kind: 'page',
+      pageType: 'example-plugin:canvas',
+    });
+  });
+
   it('reads and saves UTF-8 Markdown with revision conflicts', async () => {
     const repository = await createRepository();
     const note = await repository.createMarkdownPage(null, 'Diário');

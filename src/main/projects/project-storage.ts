@@ -36,6 +36,7 @@ export interface ProjectStorage {
   rootPath: string;
   manifest: ProjectManifest;
   index?: ProjectContentIndex;
+  indexNeedsMigration?: boolean;
   createId: () => string;
 }
 
@@ -192,7 +193,7 @@ export async function openProjectStorage(
       path.join(metadataPath, PROJECT_MANIFEST_FILENAME),
       canonicalRoot,
     );
-    const index = await readIndex(
+    const parsedIndex = await readIndex(
       path.join(metadataPath, PROJECT_INDEX_FILENAME),
       rawManifest.projectId,
       canonicalRoot,
@@ -201,7 +202,8 @@ export async function openProjectStorage(
     return {
       rootPath: canonicalRoot,
       manifest: rawManifest,
-      index,
+      index: parsedIndex?.index,
+      indexNeedsMigration: parsedIndex?.migrated,
       createId: options.createId ?? randomUUID,
     };
   } catch (error) {
@@ -265,7 +267,7 @@ async function readIndex(
   indexPath: string,
   projectId: string,
   containmentRoot: string,
-): Promise<ProjectContentIndex | undefined> {
+): Promise<ReturnType<typeof parseProjectContentIndex>> {
   try {
     return parseProjectContentIndex(
       await readBoundedJson(indexPath, PROJECT_INDEX_MAX_BYTES, {

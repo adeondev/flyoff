@@ -243,7 +243,11 @@ export class ProjectService {
     return this.withActiveProject(senderKey, (repository) =>
       request.kind === 'folder'
         ? repository.createFolder(request.parentId, request.name)
-        : repository.createMarkdownPage(request.parentId, request.name),
+        : repository.createPage(
+            request.parentId,
+            request.name,
+            request.pageType,
+          ),
     );
   }
 
@@ -261,7 +265,11 @@ export class ProjectService {
     request: MoveProjectNodeRequest,
   ): Promise<ProjectResult<ProjectTreeNode>> {
     return this.withActiveProject(senderKey, (repository) =>
-      repository.moveNode(request.nodeId, request.parentId),
+      repository.moveNode(
+        request.nodeId,
+        request.parentId,
+        request.beforeNodeId,
+      ),
     );
   }
 
