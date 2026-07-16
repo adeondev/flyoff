@@ -10,6 +10,8 @@ import { createPortal } from 'react-dom';
 
 import type { ToastDescriptor } from './toast-state';
 
+const TOAST_EXIT_DURATION = 180;
+
 export interface ToastHostProps {
   ariaLabel: string;
   closeLabel: string;
@@ -50,7 +52,7 @@ function ToastItem({
     setExiting(true);
     exitTimerRef.current = window.setTimeout(
       () => onDismissRef.current(),
-      90,
+      TOAST_EXIT_DURATION,
     );
   }, []);
 

@@ -10,6 +10,8 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 
+import folderIcon from '../../../public/images/icons/instances/folder.svg';
+import { MaskedIcon } from '../components/MaskedIcon';
 import type { Translate } from '../pages/page-types';
 import { listProjectPageTypeDefinitions } from './project-page-type-registry';
 
@@ -32,6 +34,7 @@ interface InstanceOption extends AddInstanceChoice {
   label: string;
   description: string;
   disabled: boolean;
+  icon: string;
 }
 
 const PAGE_TYPE_ORDER = ['markdown', 'checklist', 'kanban', 'gallery'];
@@ -85,6 +88,7 @@ export function AddInstancePopover({
             ? translate(definition.descriptionKey)
             : definition.pageType),
         disabled: definition.availability !== 'available',
+        icon: definition.icon,
       }));
     return [
       ...pages,
@@ -94,6 +98,7 @@ export function AddInstancePopover({
         label: translate('projects.instanceFolder'),
         description: translate('projects.instanceFolderDescription'),
         disabled: false,
+        icon: folderIcon,
       },
     ];
   }, [translate]);
@@ -215,9 +220,9 @@ export function AddInstancePopover({
               tabIndex={-1}
               type="button"
             >
-              <span
-                aria-hidden="true"
-                className={`add-instance-popover__icon add-instance-popover__icon--${option.id}`}
+              <MaskedIcon
+                className="add-instance-popover__icon"
+                icon={option.icon}
               />
               <span className="add-instance-popover__copy">
                 <strong>{option.label}</strong>

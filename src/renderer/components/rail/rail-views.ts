@@ -1,6 +1,6 @@
-import graphIcon from '../../../../public/images/icons/homepage/models.svg';
-import mediaIcon from '../../../../public/images/icons/homepage/this-device.svg';
-import projectIcon from '../../../../public/images/icons/homepage/new-project.svg';
+import graphIcon from '../../../../public/images/icons/navigation/graph.svg';
+import mediaIcon from '../../../../public/images/icons/navigation/media.svg';
+import projectIcon from '../../../../public/images/icons/instances/project.svg';
 import settingsIcon from '../../../../public/images/icons/homepage/configuration.svg';
 import type { Translate } from '../../pages/page-types';
 

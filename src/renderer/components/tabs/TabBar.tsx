@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type DragEvent,
@@ -27,6 +28,73 @@ interface TabBarProps {
 interface DropTarget {
   tabId: string;
   edge: 'before' | 'after';
+}
+
+interface TabVisualBounds {
+  height: number;
+  left: number;
+  top: number;
+  width: number;
+}
+
+interface ClosingTabVisual {
+  active: boolean;
+  bounds: TabVisualBounds;
+  presentation: TabPresentation;
+  tab: TabDescriptor;
+}
+
+const TAB_CLOSE_DURATION = 140;
+
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  );
+}
+
+function removedTabVisuals(
+  currentTabs: readonly TabDescriptor[],
+  previousTabs: readonly TabDescriptor[],
+  previousActiveTabId: string | null,
+  previousBounds: ReadonlyMap<string, TabVisualBounds>,
+  previousPresentations: ReadonlyMap<string, TabPresentation>,
+): ClosingTabVisual[] {
+  const currentContext = currentTabs[0]?.target.type === 'internal'
+    ? 'home'
+    : currentTabs[0]
+      ? 'project'
+      : undefined;
+  const previousContext = previousTabs[0]?.target.type === 'internal'
+    ? 'home'
+    : previousTabs[0]
+      ? 'project'
+      : undefined;
+  if (
+    currentContext &&
+    previousContext &&
+    currentContext !== previousContext
+  ) {
+    return [];
+  }
+
+  const currentIds = new Set(currentTabs.map(({ tabId }) => tabId));
+
+  return previousTabs.flatMap((tab) => {
+    const bounds = previousBounds.get(tab.tabId);
+    const presentation = previousPresentations.get(tab.tabId);
+
+    return currentIds.has(tab.tabId) || !bounds || !presentation
+      ? []
+      : [
+          {
+            active: tab.tabId === previousActiveTabId,
+            bounds,
+            presentation,
+            tab,
+          },
+        ];
+  });
 }
 
 function focusTab(
@@ -61,11 +129,133 @@ export function TabBar({
 }: TabBarProps) {
   const tabRefs = useRef(new Map<string, HTMLButtonElement>());
   const wrapperRefs = useRef(new Map<string, HTMLDivElement>());
+  const tabListRef = useRef<HTMLDivElement>(null);
   const pendingFocusTabId = useRef<string | undefined>(undefined);
   const draggedTabId = useRef<string | undefined>(undefined);
   const dropTargetRef = useRef<DropTarget | undefined>(undefined);
+  const previousTabsRef = useRef(tabs);
+  const previousActiveTabIdRef = useRef(activeTabId);
+  const previousBoundsRef = useRef(new Map<string, TabVisualBounds>());
+  const previousPresentationsRef = useRef(
+    new Map<string, TabPresentation>(),
+  );
+  const closingTimersRef = useRef(new Map<string, number>());
   const [dropTarget, setDropTarget] = useState<DropTarget>();
   const [draggingTabId, setDraggingTabId] = useState<string>();
+  const [closingTabs, setClosingTabs] = useState<ClosingTabVisual[]>([]);
+
+  function finishClosingTab(tabId: string): void {
+    const timer = closingTimersRef.current.get(tabId);
+    if (timer !== undefined) {
+      window.clearTimeout(timer);
+      closingTimersRef.current.delete(tabId);
+    }
+    setClosingTabs((current) =>
+      current.filter(({ tab }) => tab.tabId !== tabId),
+    );
+  }
+
+  useEffect(
+    () => () => {
+      for (const timer of closingTimersRef.current.values()) {
+        window.clearTimeout(timer);
+      }
+      closingTimersRef.current.clear();
+    },
+    [],
+  );
+
+  useLayoutEffect(() => {
+    const tabList = tabListRef.current;
+    if (!tabList) {
+      return;
+    }
+
+    const removed = removedTabVisuals(
+      tabs,
+      previousTabsRef.current,
+      previousActiveTabIdRef.current,
+      previousBoundsRef.current,
+      previousPresentationsRef.current,
+    );
+    const reducedMotion = prefersReducedMotion();
+    const tabListBounds = tabList.getBoundingClientRect();
+    const nextBounds = new Map<string, TabVisualBounds>();
+
+    for (const tab of tabs) {
+      const element = wrapperRefs.current.get(tab.tabId);
+      if (!element) {
+        continue;
+      }
+
+      const bounds = element.getBoundingClientRect();
+      const relativeBounds = {
+        height: bounds.height,
+        left: bounds.left - tabListBounds.left + tabList.scrollLeft,
+        top: bounds.top - tabListBounds.top + tabList.scrollTop,
+        width: bounds.width,
+      };
+      nextBounds.set(tab.tabId, relativeBounds);
+
+      const previous = previousBoundsRef.current.get(tab.tabId);
+      const deltaX = previous ? previous.left - relativeBounds.left : 0;
+      if (
+        removed.length > 0 &&
+        !reducedMotion &&
+        Math.abs(deltaX) >= 0.5 &&
+        typeof element.animate === 'function'
+      ) {
+        element.animate(
+          [
+            { transform: `translateX(${deltaX}px)` },
+            { transform: 'translateX(0)' },
+          ],
+          {
+            duration: TAB_CLOSE_DURATION,
+            easing: 'cubic-bezier(0.16, 1, 0.3, 1)',
+          },
+        );
+      }
+    }
+
+    if (removed.length > 0 && !reducedMotion) {
+      setClosingTabs((current) => {
+        const next = [...current];
+        for (const visual of removed) {
+          if (!next.some(({ tab }) => tab.tabId === visual.tab.tabId)) {
+            next.push(visual);
+          }
+        }
+        return next;
+      });
+
+      for (const { tab } of removed) {
+        if (!closingTimersRef.current.has(tab.tabId)) {
+          closingTimersRef.current.set(
+            tab.tabId,
+            window.setTimeout(
+              () => {
+                closingTimersRef.current.delete(tab.tabId);
+                setClosingTabs((current) =>
+                  current.filter(
+                    ({ tab: currentTab }) => currentTab.tabId !== tab.tabId,
+                  ),
+                );
+              },
+              TAB_CLOSE_DURATION + 30,
+            ),
+          );
+        }
+      }
+    }
+
+    previousTabsRef.current = tabs;
+    previousActiveTabIdRef.current = activeTabId;
+    previousBoundsRef.current = nextBounds;
+    previousPresentationsRef.current = new Map(
+      tabs.map((tab) => [tab.tabId, getPresentation(tab)]),
+    );
+  }, [activeTabId, getPresentation, tabs]);
 
   useEffect(() => {
     const tabId = pendingFocusTabId.current;
@@ -244,6 +434,7 @@ export function TabBar({
         }}
         onDragOver={handleTabListDragOver}
         onDrop={handleDrop}
+        ref={tabListRef}
         role="tablist"
       >
         {tabs.map((tab, index) => {
@@ -324,6 +515,41 @@ export function TabBar({
             </div>
           );
         })}
+        {closingTabs.map(
+          ({ active, bounds, presentation, tab }) => (
+            <div
+              aria-hidden="true"
+              className={`page-tab page-tab--closing${active ? ' page-tab--active' : ''}`}
+              key={`closing:${tab.tabId}`}
+              onAnimationEnd={(event) => {
+                if (event.currentTarget === event.target) {
+                  finishClosingTab(tab.tabId);
+                }
+              }}
+              style={{
+                height: bounds.height,
+                left: bounds.left,
+                maxWidth: bounds.width,
+                minWidth: bounds.width,
+                top: bounds.top,
+                width: bounds.width,
+              }}
+            >
+              <span className="page-tab__trigger">
+                <MaskedIcon
+                  className="page-tab__icon"
+                  icon={presentation.icon}
+                />
+                <span className="page-tab__label">{presentation.title}</span>
+              </span>
+              <span className="page-tab__close">
+                <svg aria-hidden="true" viewBox="0 0 16 16">
+                  <path d="M4 4l8 8m0-8-8 8" />
+                </svg>
+              </span>
+            </div>
+          ),
+        )}
       </div>
     </div>
   );

@@ -20,9 +20,11 @@
       <div class="rail-links">
         <a class="rail-link rail-link--home" href="#produto" aria-label="Product" data-section-link="produto"></a>
         <a class="rail-link rail-link--device" href="#what-is-flyoff" aria-label="How it works" data-section-link="what-is-flyoff"></a>
-        <a class="rail-link rail-link--code" href="#offers" aria-label="What Flyoff offers" data-section-link="offers"><span aria-hidden="true">&lt;/&gt;</span></a>
+        <a class="rail-link rail-link--code" href="#offers" aria-label="What Flyoff offers" data-section-link="offers"></a>
       </div>
-      <a class="rail-github" href="https://github.com/adeondev/flyoff" target="_blank" rel="noreferrer" aria-label="Open the Flyoff repository on GitHub">↗</a>
+      <a class="rail-github" href="https://github.com/adeondev/flyoff" target="_blank" rel="noreferrer" aria-label="Open the Flyoff repository on GitHub">
+        <span class="site-icon site-icon--github" aria-hidden="true"></span>
+      </a>
     </nav>
 
     <header class="mobile-header">
@@ -41,7 +43,10 @@
         <nav class="page-nav" aria-label="Page shortcuts">
           <a href="#produto">Product</a>
           <a href="#what-is-flyoff">How it works</a>
-          <a class="repository-link" href="https://github.com/adeondev/flyoff" target="_blank" rel="noreferrer">View on GitHub ↗</a>
+          <a class="repository-link" href="https://github.com/adeondev/flyoff" target="_blank" rel="noreferrer">
+            <span class="site-icon site-icon--github" aria-hidden="true"></span>
+            View on GitHub
+          </a>
         </nav>
       </header>
 
@@ -53,9 +58,18 @@
           </div>
           <p class="hero-tagline">A note-taking app focused on speed and practicality.</p>
           <div class="hero-actions" aria-label="Primary links">
-            <a class="button button--primary" href="https://github.com/adeondev/flyoff/releases" target="_blank" rel="noreferrer">Installation</a>
-            <a class="button button--secondary" href="https://github.com/adeondev/flyoff#readme" target="_blank" rel="noreferrer">Documentation</a>
-            <a class="button button--secondary" href="https://github.com/adeondev/flyoff" target="_blank" rel="noreferrer">Source Code</a>
+            <a class="button button--primary" href="https://github.com/adeondev/flyoff/releases" target="_blank" rel="noreferrer">
+              <span class="site-icon site-icon--installation" aria-hidden="true"></span>
+              Installation
+            </a>
+            <a class="button button--secondary" href="https://github.com/adeondev/flyoff#readme" target="_blank" rel="noreferrer">
+              <span class="site-icon site-icon--documentation" aria-hidden="true"></span>
+              Documentation
+            </a>
+            <a class="button button--secondary" href="https://github.com/adeondev/flyoff" target="_blank" rel="noreferrer">
+              <span class="site-icon site-icon--source-code" aria-hidden="true"></span>
+              Source Code
+            </a>
           </div>
         </section>
 
@@ -89,44 +103,77 @@
           </div>
           <div class="offers-grid">
             <article class="offer-card">
-              <img class="offer-card__icon" src="public/images/website/icons/markdown.png" alt="" aria-hidden="true" />
+              <span class="offer-card__icon site-icon site-icon--note" aria-hidden="true"></span>
               <h3>Markdown Support</h3>
               <p>Write in plain Markdown so your notes stay portable and easy to edit anywhere.</p>
             </article>
             <article class="offer-card">
-              <img class="offer-card__icon" src="public/images/website/icons/telemetry_black_mode.png" alt="" aria-hidden="true" />
+              <span class="offer-card__icon site-icon site-icon--graph" aria-hidden="true"></span>
               <h3>No Telemetry</h3>
               <p>No analytics, no background tracking, and no product data being collected.</p>
             </article>
             <article class="offer-card">
-              <img class="offer-card__icon" src="public/images/website/icons/machine_only.png" alt="" aria-hidden="true" />
+              <span class="offer-card__icon site-icon site-icon--file" aria-hidden="true"></span>
               <h3>Machine Only</h3>
               <p>Your notes live on your device first, in regular files and folders you control.</p>
             </article>
             <article class="offer-card">
-              <img class="offer-card__icon" src="public/images/website/icons/lan_projects.png" alt="" aria-hidden="true" />
+              <span class="offer-card__icon site-icon site-icon--project" aria-hidden="true"></span>
               <h3>LAN Projects</h3>
               <p>Use shared local-network folders when a project needs to be available across machines.</p>
             </article>
             <article class="offer-card">
-              <img class="offer-card__icon offer-card__icon--light" src="public/images/website/icons/open_source.png" alt="" aria-hidden="true" />
+              <span class="offer-card__icon site-icon site-icon--source-code" aria-hidden="true"></span>
               <h3>Open Source</h3>
               <p>Follow the code, review changes, and help shape the app as it grows.</p>
             </article>
             <article class="offer-card">
-              <img class="offer-card__icon offer-card__icon--accent" src="public/images/website/icons/more.png" alt="" aria-hidden="true" />
+              <span class="offer-card__icon site-icon site-icon--plus" aria-hidden="true"></span>
               <h3>And a Lot more</h3>
               <p>Built for daily notes, books, checklists, and the small workflows around them.</p>
             </article>
           </div>
-          <a class="offers-link" href="https://github.com/adeondev/flyoff#readme" target="_blank" rel="noreferrer">See all the features</a>
+          <a class="offers-link" href="https://github.com/adeondev/flyoff#readme" target="_blank" rel="noreferrer">
+            See all the features
+            <span class="site-icon site-icon--chevron" aria-hidden="true"></span>
+          </a>
+        </section>
+
+        <section class="install-section" aria-label="Install Flyoff">
+          <div class="install-card-wrap">
+            <img class="install-card__flick" src="public/images/flick/flick_top.png" alt="" aria-hidden="true" />
+            <article class="install-card">
+              <div class="install-card__copy">
+                <h2 id="install-title">Ready to start writing?</h2>
+                <p>Install Flyoff and keep your notes fast, local, and yours.</p>
+                <div class="install-card__platforms">
+                  <span class="platform-badge"><span class="site-icon site-icon--windows" aria-hidden="true"></span>Windows</span>
+                  <span class="platform-badge"><span class="site-icon site-icon--macos" aria-hidden="true"></span>macOS</span>
+                  <span class="platform-badge"><span class="site-icon site-icon--linux" aria-hidden="true"></span>Linux</span>
+                </div>
+              </div>
+              <div class="install-card__actions">
+                <a class="install-card__button" href="https://github.com/adeondev/flyoff/releases" target="_blank" rel="noreferrer">
+                  <span class="site-icon site-icon--installation" aria-hidden="true"></span>
+                  Install now
+                </a>
+                <a class="install-card__link" href="https://github.com/adeondev/flyoff/releases" target="_blank" rel="noreferrer">
+                  <span class="site-icon site-icon--github" aria-hidden="true"></span>
+                  View Releases
+                </a>
+              </div>
+            </article>
+          </div>
         </section>
       </main>
 
       <footer class="site-footer">
         <img src="public/images/flyoff/text_black_mode.svg" alt="Flyoff" />
         <p>0.1.0 · Electron · React · TypeScript</p>
-        <a href="https://github.com/adeondev/flyoff" target="_blank" rel="noreferrer">GitHub ↗</a>
+        <a href="https://github.com/adeondev/flyoff" target="_blank" rel="noreferrer">
+          <span class="site-icon site-icon--github" aria-hidden="true"></span>
+          GitHub
+        </a>
       </footer>
     </div>
   </body>

@@ -95,13 +95,9 @@ img {
   color: var(--color-accent-bright);
 }
 
-.titlebar__sidebar-toggle svg {
-  width: 17px;
-  height: 17px;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.35;
-  stroke-linejoin: round;
+.titlebar__sidebar-toggle-icon {
+  width: 18px;
+  height: 18px;
 }
 
 .titlebar__menu {
@@ -302,6 +298,7 @@ img {
 }
 
 .pages-bar__tabs {
+  position: relative;
   display: flex;
   min-width: 0;
   flex: 1;
@@ -337,20 +334,14 @@ img {
   background: var(--color-surface);
   color: var(--color-text-muted);
   cursor: grab;
-  animation: page-tab-open 110ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  animation: page-tab-open var(--dur-micro) var(--ease-out);
   transform-origin: left center;
   transition:
-    background-color 70ms linear,
-    border-left-width 110ms cubic-bezier(0.2, 0.8, 0.2, 1),
-    border-right-width 110ms cubic-bezier(0.2, 0.8, 0.2, 1),
-    border-color 70ms linear,
-    color 70ms linear,
-    flex-basis 110ms cubic-bezier(0.2, 0.8, 0.2, 1),
-    margin-left 110ms cubic-bezier(0.2, 0.8, 0.2, 1),
-    max-width 110ms cubic-bezier(0.2, 0.8, 0.2, 1),
-    min-width 110ms cubic-bezier(0.2, 0.8, 0.2, 1),
-    opacity 90ms linear,
-    transform 70ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    background-color var(--dur-micro) var(--ease-out),
+    border-color var(--dur-micro) var(--ease-out),
+    color var(--dur-micro) var(--ease-out),
+    opacity var(--dur-micro) var(--ease-out),
+    transform var(--dur-micro) var(--ease-out);
 }
 
 .page-tab--active {
@@ -416,18 +407,14 @@ img {
 }
 
 .page-tab--closing {
-  width: 0;
-  min-width: 0;
-  max-width: 0;
-  flex-basis: 0;
-  margin-left: 0;
+  position: absolute;
+  z-index: 4;
+  flex: none;
+  margin: 0;
   overflow: hidden;
-  border-right-width: 0;
-  border-left-width: 0;
-  opacity: 0;
   pointer-events: none;
-  animation: none;
-  transform: none;
+  animation: page-tab-close var(--dur-micro) var(--ease-in) both;
+  transform-origin: left center;
 }
 
 .page-tab__trigger:focus-visible,
@@ -455,14 +442,15 @@ img {
   cursor: default;
   opacity: 1;
   transition:
-    width 90ms cubic-bezier(0.2, 0.8, 0.2, 1),
-    opacity 55ms linear;
+    opacity var(--dur-micro) var(--ease-out),
+    transform var(--dur-micro) var(--ease-out);
 }
 
 .page-tab__close--hidden {
-  width: 0;
+  visibility: hidden;
   opacity: 0;
   pointer-events: none;
+  transform: scale(0.82);
 }
 
 .page-tab__close:hover {
@@ -485,25 +473,25 @@ img {
 
 @keyframes page-tab-open {
   from {
-    width: 0;
-    min-width: 0;
-    max-width: 0;
-    flex-basis: 0;
-    margin-left: 0;
-    border-right-width: 0;
-    border-left-width: 0;
     opacity: 0;
+    transform: translateX(-10px) scale(0.9, 0.96);
   }
 
   to {
-    width: 176px;
-    min-width: 124px;
-    max-width: 216px;
-    flex-basis: 176px;
-    margin-left: 4px;
-    border-right-width: 1px;
-    border-left-width: 1px;
     opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@keyframes page-tab-close {
+  from {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateX(-12px) scale(0.84, 0.94);
   }
 }
 
@@ -659,8 +647,16 @@ img {
 .placeholder-page {
   display: grid;
   min-height: 100%;
+  align-content: center;
+  justify-items: center;
+  gap: 14px;
   padding: 48px;
-  place-items: center;
+  color: var(--color-text-muted);
+}
+
+.placeholder-page__icon {
+  width: 32px;
+  height: 32px;
 }
 
 .placeholder-page h1 {
@@ -851,6 +847,10 @@ img {
   .page-tab {
     animation: none;
     transition: none;
+  }
+
+  .page-tab--closing {
+    display: none;
   }
 
   .page-tab__close {

@@ -1,10 +1,10 @@
 import { createElement, type ComponentType, type ReactNode } from 'react';
 
+import flyoffLogo from '../../../public/images/flyoff/flyoff-logo.svg';
 import configurationIcon from '../../../public/images/icons/homepage/configuration.svg';
-import helpIcon from '../../../public/images/icons/homepage/help.svg';
-import homeIcon from '../../../public/images/icons/homepage/home.svg';
-import thisDeviceIcon from '../../../public/images/icons/homepage/this-device.svg';
-import updateIcon from '../../../public/images/icons/homepage/update-app.svg';
+import folderOpenIcon from '../../../public/images/icons/instances/folder-open.svg';
+import refreshIcon from '../../../public/images/icons/actions/refresh.svg';
+import documentationIcon from '../../../public/images/icons/site/documentation.svg';
 import {
   createEditorModeState,
   readEditorMode,
@@ -67,7 +67,7 @@ export const PAGE_REGISTRY = {
   [INTERNAL_PAGE_IDS.home]: {
     id: INTERNAL_PAGE_IDS.home,
     titleKey: 'pages.home',
-    icon: homeIcon,
+    icon: flyoffLogo,
     singleton: true,
     retention: 'keep-alive',
     stateVersion: 1,
@@ -78,7 +78,7 @@ export const PAGE_REGISTRY = {
   [INTERNAL_PAGE_IDS.thisDevice]: {
     id: INTERNAL_PAGE_IDS.thisDevice,
     titleKey: 'pages.thisDevice',
-    icon: thisDeviceIcon,
+    icon: folderOpenIcon,
     singleton: true,
     retention: 'keep-alive',
     stateVersion: 1,
@@ -100,7 +100,7 @@ export const PAGE_REGISTRY = {
   [INTERNAL_PAGE_IDS.help]: {
     id: INTERNAL_PAGE_IDS.help,
     titleKey: 'pages.help',
-    icon: helpIcon,
+    icon: documentationIcon,
     singleton: true,
     retention: 'keep-alive',
     stateVersion: 1,
@@ -111,7 +111,7 @@ export const PAGE_REGISTRY = {
   [INTERNAL_PAGE_IDS.updateApp]: {
     id: INTERNAL_PAGE_IDS.updateApp,
     titleKey: 'pages.updateApp',
-    icon: updateIcon,
+    icon: refreshIcon,
     singleton: true,
     retention: 'keep-alive',
     stateVersion: 1,
@@ -174,12 +174,12 @@ export function renderRegisteredInternalPage(
     throw new TypeError('Expected an internal page target.');
   }
 
-  const PageComponent = getPageDefinition(
-    props.descriptor.target.pageId,
-  ).component;
+  const definition = getPageDefinition(props.descriptor.target.pageId);
+  const PageComponent = definition.component;
 
   return createElement(PageComponent, {
     ...props,
+    icon: definition.icon,
     descriptor: props.descriptor as TabDescriptor & {
       target: { type: 'internal'; pageId: InternalPageId };
     },

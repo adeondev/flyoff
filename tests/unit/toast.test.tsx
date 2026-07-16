@@ -60,7 +60,7 @@ describe('toast queue', () => {
     expect(onDismiss).not.toHaveBeenCalledWith('1');
     expect(onDismiss).toHaveBeenCalledWith('2');
     fireEvent.mouseLeave(error);
-    await act(async () => vi.advanceTimersByTimeAsync(8_100));
+    await act(async () => vi.advanceTimersByTimeAsync(8_200));
     expect(onDismiss).toHaveBeenCalledWith('1');
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Dismiss' })[0]!);

@@ -51,11 +51,21 @@
 }
 
 .rail-placeholder__body {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
   text-align: center;
 }
 
+.rail-placeholder__icon {
+  width: 28px;
+  height: 28px;
+  margin-bottom: 4px;
+  color: var(--color-text-muted);
+}
+
 .rail-placeholder__title {
-  margin: 0 0 6px;
+  margin: 0;
   color: var(--color-text);
   font-size: 14px;
   font-weight: 600;

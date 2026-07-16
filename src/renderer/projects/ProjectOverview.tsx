@@ -1,4 +1,7 @@
+import folderIcon from '../../../public/images/icons/instances/folder.svg';
+import noteIcon from '../../../public/images/icons/instances/note.svg';
 import type { ProjectSummary } from '../../shared/contracts';
+import { MaskedIcon } from '../components/MaskedIcon';
 import type { Translate } from '../pages/page-types';
 
 export interface ProjectOverviewProps {
@@ -26,11 +29,11 @@ export function ProjectOverview({
         </div>
         <div className="project-overview__actions">
           <button onClick={onNewMarkdown} type="button">
-            <span aria-hidden="true">+</span>
+            <MaskedIcon icon={noteIcon} />
             {translate('projects.newNote')}
           </button>
           <button onClick={onNewFolder} type="button">
-            <span aria-hidden="true">+</span>
+            <MaskedIcon icon={folderIcon} />
             {translate('projects.newFolder')}
           </button>
         </div>

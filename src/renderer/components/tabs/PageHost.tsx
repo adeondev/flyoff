@@ -2,6 +2,7 @@ import {
   Component,
   useEffect,
   useRef,
+  useState,
   type ReactNode,
   type UIEvent,
 } from 'react';
@@ -60,6 +61,37 @@ interface PagePanelProps {
   renderPage: PageRenderer;
   onPageStateChange: (tabId: string, state: PageSessionState) => void;
   onScrollChange: (tabId: string, scrollTop: number) => void;
+}
+
+interface ActiveOnlyRetentionState {
+  key: string;
+  visited: ReadonlySet<string>;
+}
+
+function activeOnlyRetentionState(
+  activeTabId: string | null,
+  tabs: readonly TabDescriptor[],
+  previous: ReadonlySet<string> = new Set(),
+): ActiveOnlyRetentionState {
+  const openTabIds = new Set(tabs.map(({ tabId }) => tabId));
+  const visited = new Set(
+    [...previous].filter((tabId) => openTabIds.has(tabId)),
+  );
+  const activeDescriptor = activeTabId
+    ? tabs.find(({ tabId }) => tabId === activeTabId)
+    : undefined;
+
+  if (
+    activeDescriptor &&
+    getPageRetention(activeDescriptor.target) === 'active-only'
+  ) {
+    visited.add(activeDescriptor.tabId);
+  }
+
+  return {
+    key: `${activeTabId ?? ''}\u0000${tabs.map(({ tabId }) => tabId).join('\u0000')}`,
+    visited,
+  };
 }
 
 function renderPanelPage(
@@ -146,10 +178,29 @@ export function PageHost({
   onScrollChange,
   emptyState,
 }: PageHostProps) {
+  const [storedRetention, setStoredRetention] =
+    useState<ActiveOnlyRetentionState>(() =>
+      activeOnlyRetentionState(activeTabId, tabs),
+    );
+  let retention = storedRetention;
+  const retentionKey = `${activeTabId ?? ''}\u0000${tabs
+    .map(({ tabId }) => tabId)
+    .join('\u0000')}`;
+
+  if (storedRetention.key !== retentionKey) {
+    retention = activeOnlyRetentionState(
+      activeTabId,
+      tabs,
+      storedRetention.visited,
+    );
+    setStoredRetention(retention);
+  }
+
   const retainedTabs = tabs.filter(
     (descriptor) =>
       descriptor.tabId === activeTabId ||
-      getPageRetention(descriptor.target) === 'keep-alive',
+      getPageRetention(descriptor.target) === 'keep-alive' ||
+      retention.visited.has(descriptor.tabId),
   );
 
   if (retainedTabs.length === 0 && emptyState) {

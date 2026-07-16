@@ -26,6 +26,7 @@ export interface PageRenderProps {
 
 export interface InternalPageProps extends PageRenderProps {
   descriptor: TabDescriptor & { target: InternalTabTarget };
+  icon?: string;
 }
 
 export type PageRenderer = (props: PageRenderProps) => ReactNode;

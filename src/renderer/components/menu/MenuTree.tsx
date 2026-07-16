@@ -13,6 +13,8 @@ import {
   type MutableRefObject,
 } from 'react';
 
+import chevronRightIcon from '../../../../public/images/icons/actions/chevron-right.svg';
+import { MaskedIcon } from '../MaskedIcon';
 import { calculateMenuPosition, type MenuPlacement } from './menu-position';
 import type { MenuItem } from './menu-types';
 
@@ -64,11 +66,7 @@ function focusElement(element: HTMLElement | undefined): void {
 }
 
 function ChevronRight() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 12 12">
-      <path d="m4 2 4 4-4 4" />
-    </svg>
-  );
+  return <MaskedIcon icon={chevronRightIcon} />;
 }
 
 function useMenuPosition(

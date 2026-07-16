@@ -8,9 +8,16 @@ import {
   type KeyboardEvent,
 } from 'react';
 
+import chevronRightIcon from '../../../public/images/icons/actions/chevron-right.svg';
+import ellipsisIcon from '../../../public/images/icons/actions/ellipsis.svg';
+import fileIcon from '../../../public/images/icons/instances/file.svg';
+import folderOpenIcon from '../../../public/images/icons/instances/folder-open.svg';
+import folderIcon from '../../../public/images/icons/instances/folder.svg';
 import type { ProjectTreeNode } from '../../shared/contracts';
+import { MaskedIcon } from '../components/MaskedIcon';
 import { ContextMenu, DropdownMenu, type MenuItem } from '../components/menu';
 import type { Translate } from '../pages/page-types';
+import { getProjectPageTypeDefinition } from './project-page-type-registry';
 import { projectNodeDisplayName } from './project-node-name';
 import type { ProjectTreeController } from './project-tree-controller';
 
@@ -116,15 +123,32 @@ function ProjectTreeChevron({
   kind: ProjectTreeNode['kind'];
 }) {
   return (
-    <span
-      aria-hidden="true"
+    <MaskedIcon
       className={`project-tree__chevron${
         kind === 'folder' ? '' : ' project-tree__chevron--empty'
       }${expanded ? ' project-tree__chevron--expanded' : ''}`}
-    >
-      {'›'}
-    </span>
+      icon={chevronRightIcon}
+    />
   );
+}
+
+function ProjectTreeKindIcon({
+  expanded = false,
+  kind,
+  pageType,
+}: {
+  expanded?: boolean;
+  kind: ProjectTreeNode['kind'];
+  pageType?: string;
+}) {
+  const icon =
+    kind === 'folder'
+      ? expanded
+        ? folderOpenIcon
+        : folderIcon
+      : (pageType && getProjectPageTypeDefinition(pageType)?.icon) ?? fileIcon;
+
+  return <MaskedIcon className="project-tree__kind" icon={icon} />;
 }
 
 interface InlineEditorProps {
@@ -564,9 +588,10 @@ export function ProjectTree({
                 {renameEdit ? (
                   <div className="project-tree__node">
                     <ProjectTreeChevron expanded={expanded} kind={node.kind} />
-                    <span
-                      aria-hidden="true"
-                      className={`project-tree__kind project-tree__kind--${node.kind}`}
+                    <ProjectTreeKindIcon
+                      expanded={expanded}
+                      kind={node.kind}
+                      pageType={node.kind === 'page' ? node.pageType : undefined}
                     />
                     <InlineEditor
                       initialValue={projectNodeDisplayName(node)}
@@ -592,9 +617,10 @@ export function ProjectTree({
                     type="button"
                   >
                   <ProjectTreeChevron expanded={expanded} kind={node.kind} />
-                  <span
-                    aria-hidden="true"
-                    className={`project-tree__kind project-tree__kind--${node.kind}`}
+                  <ProjectTreeKindIcon
+                    expanded={expanded}
+                    kind={node.kind}
+                    pageType={node.kind === 'page' ? node.pageType : undefined}
                   />
                     <span className="project-tree__label">
                       {projectNodeDisplayName(node)}
@@ -621,7 +647,10 @@ export function ProjectTree({
                         tabIndex={-1}
                         type="button"
                       >
-                        <span aria-hidden="true">•••</span>
+                        <MaskedIcon
+                          className="project-tree__menu-icon"
+                          icon={ellipsisIcon}
+                        />
                       </button>
                     )}
                   />
@@ -658,10 +687,10 @@ export function ProjectTree({
             role="treeitem"
             style={{ '--project-tree-depth': depth } as React.CSSProperties}
           >
-            <span aria-hidden="true" className="project-tree__chevron project-tree__chevron--empty" />
-            <span
-              aria-hidden="true"
-              className={`project-tree__kind project-tree__kind--${createEdit.kind}`}
+            <ProjectTreeChevron kind={createEdit.kind} />
+            <ProjectTreeKindIcon
+              kind={createEdit.kind}
+              pageType={createEdit.pageType}
             />
             <InlineEditor
               kind={createEdit.kind}

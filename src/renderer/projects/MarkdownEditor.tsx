@@ -8,7 +8,11 @@ import {
 } from 'react';
 import { flushSync } from 'react-dom';
 
+import editModeIcon from '../../../public/images/icons/editor/code-block.svg';
+import readingModeIcon from '../../../public/images/icons/editor/preview.svg';
+import splitModeIcon from '../../../public/images/icons/actions/sidebar-toggle.svg';
 import type { MarkdownDocument } from '../../shared/contracts';
+import { MaskedIcon } from '../components/MaskedIcon';
 import type { Translate } from '../pages/page-types';
 import type { EditorMode } from './editor-mode';
 import { applyMarkdownAction, type MarkdownAction } from './markdown-actions';
@@ -26,10 +30,11 @@ import type {
 const MODE_OPTIONS: readonly {
   id: EditorMode;
   labelKey: Parameters<Translate>[0];
+  icon: string;
 }[] = [
-  { id: 'edit', labelKey: 'projects.modeEdit' },
-  { id: 'reading', labelKey: 'projects.modeReading' },
-  { id: 'split', labelKey: 'projects.modeSplit' },
+  { id: 'edit', labelKey: 'projects.modeEdit', icon: editModeIcon },
+  { id: 'reading', labelKey: 'projects.modeReading', icon: readingModeIcon },
+  { id: 'split', labelKey: 'projects.modeSplit', icon: splitModeIcon },
 ];
 
 export interface MarkdownEditorHandle {
@@ -234,6 +239,10 @@ export const MarkdownEditor = forwardRef<
                 onClick={() => onModeChange?.(option.id)}
                 type="button"
               >
+                <MaskedIcon
+                  className="markdown-editor__mode-icon"
+                  icon={option.icon}
+                />
                 {translate(option.labelKey)}
               </button>
             ))}

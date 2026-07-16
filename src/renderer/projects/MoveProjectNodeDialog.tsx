@@ -1,10 +1,14 @@
 import { useEffect, useReducer, useState, type FormEvent } from 'react';
 
+import chevronRightIcon from '../../../public/images/icons/actions/chevron-right.svg';
+import folderOpenIcon from '../../../public/images/icons/instances/folder-open.svg';
+import folderIcon from '../../../public/images/icons/instances/folder.svg';
 import type {
   MoveProjectNodeRequest,
   ProjectResult,
   ProjectTreeNode,
 } from '../../shared/contracts';
+import { MaskedIcon } from '../components/MaskedIcon';
 import type { Translate } from '../pages/page-types';
 import { ProjectDialog } from './ProjectDialog';
 import { projectNodeDisplayName } from './project-node-name';
@@ -50,14 +54,22 @@ function FolderBranch({
                 onClick={() => void controller.toggle(folder.nodeId)}
                 type="button"
               >
-                <span aria-hidden="true">{expanded ? '⌄' : '›'}</span>
+                <MaskedIcon
+                  className={`project-folder-picker__chevron${
+                    expanded ? ' project-folder-picker__chevron--expanded' : ''
+                  }`}
+                  icon={chevronRightIcon}
+                />
               </button>
               <button
                 className="project-folder-picker__select"
                 onClick={() => onSelect(folder.nodeId)}
                 type="button"
               >
-                <span aria-hidden="true" className="project-tree__kind project-tree__kind--folder" />
+                <MaskedIcon
+                  className="project-tree__kind"
+                  icon={expanded ? folderOpenIcon : folderIcon}
+                />
                 {projectNodeDisplayName(folder)}
               </button>
             </div>
@@ -167,7 +179,7 @@ export function MoveProjectNodeDialog({
             role="treeitem"
             type="button"
           >
-            <span aria-hidden="true" className="project-tree__kind project-tree__kind--folder" />
+            <MaskedIcon className="project-tree__kind" icon={folderIcon} />
             {translate('projects.rootFolder')}
           </button>
           <FolderBranch

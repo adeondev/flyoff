@@ -7,6 +7,10 @@ import {
   useState,
 } from 'react';
 
+import arrowLeftIcon from '../../../public/images/icons/actions/arrow-left.svg';
+import plusIcon from '../../../public/images/icons/actions/plus.svg';
+import refreshIcon from '../../../public/images/icons/actions/refresh.svg';
+import projectIcon from '../../../public/images/icons/instances/project.svg';
 import type {
   CreateProjectNodeRequest,
   ListProjectChildrenRequest,
@@ -18,6 +22,7 @@ import type {
   TrashProjectNodeRequest,
   TrashProjectNodeOutcome,
 } from '../../shared/contracts';
+import { MaskedIcon } from '../components/MaskedIcon';
 import type { Translate } from '../pages/page-types';
 import {
   AddInstancePopover,
@@ -342,7 +347,10 @@ export const ProjectSidebar = forwardRef<
           title={project.location}
           type="button"
         >
-          <span className="project-sidebar__project-mark" aria-hidden="true" />
+          <MaskedIcon
+            className="project-sidebar__project-mark"
+            icon={projectIcon}
+          />
           <span>{project.name}</span>
         </button>
         <div className="project-sidebar__tools">
@@ -354,7 +362,10 @@ export const ProjectSidebar = forwardRef<
             title={translate('projects.closeProject')}
             type="button"
           >
-            <span aria-hidden="true">←</span>
+            <MaskedIcon
+              className="project-sidebar__tool-icon"
+              icon={arrowLeftIcon}
+            />
           </button>
           <button
             aria-label={translate('projects.refresh')}
@@ -364,7 +375,10 @@ export const ProjectSidebar = forwardRef<
             title={translate('projects.refresh')}
             type="button"
           >
-            <span aria-hidden="true">↻</span>
+            <MaskedIcon
+              className="project-sidebar__tool-icon"
+              icon={refreshIcon}
+            />
           </button>
           <button
             aria-expanded={Boolean(instancePicker)}
@@ -383,7 +397,10 @@ export const ProjectSidebar = forwardRef<
             title={translate('projects.addInstance')}
             type="button"
           >
-            <span aria-hidden="true">+</span>
+            <MaskedIcon
+              className="project-sidebar__tool-icon"
+              icon={plusIcon}
+            />
           </button>
         </div>
       </header>

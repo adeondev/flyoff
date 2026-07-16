@@ -1,6 +1,9 @@
 import { useEffect, useState, type ComponentType } from 'react';
 
-import markdownPageIcon from '../../../public/images/icons/homepage/import-project.svg';
+import checklistIcon from '../../../public/images/icons/instances/checklist.svg';
+import galleryIcon from '../../../public/images/icons/instances/image.svg';
+import markdownPageIcon from '../../../public/images/icons/instances/note.svg';
+import kanbanIcon from '../../../public/images/icons/instances/table.svg';
 import type {
   MarkdownDocument,
   PageSessionState,
@@ -173,21 +176,21 @@ export const PROJECT_PAGE_TYPE_DEFINITIONS = {
   },
   checklist: {
     pageType: 'checklist',
-    icon: markdownPageIcon,
+    icon: checklistIcon,
     titleKey: 'projects.instanceChecklist',
     descriptionKey: 'projects.comingSoon',
     availability: 'coming-soon',
   },
   kanban: {
     pageType: 'kanban',
-    icon: markdownPageIcon,
+    icon: kanbanIcon,
     titleKey: 'projects.instanceBoard',
     descriptionKey: 'projects.comingSoon',
     availability: 'coming-soon',
   },
   gallery: {
     pageType: 'gallery',
-    icon: markdownPageIcon,
+    icon: galleryIcon,
     titleKey: 'projects.instanceGallery',
     descriptionKey: 'projects.comingSoon',
     availability: 'coming-soon',

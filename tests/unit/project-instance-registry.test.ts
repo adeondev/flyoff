@@ -7,10 +7,20 @@ import {
 } from '../../src/main/projects/project-storage-adapters';
 import {
   getProjectPageTypeDefinition,
+  listProjectPageTypeDefinitions,
   registerProjectPageTypeDefinition,
 } from '../../src/renderer/projects/project-page-type-registry';
 
 describe('project instance registries', () => {
+  it('assigns a distinct icon to every built-in instance type', () => {
+    const builtIn = listProjectPageTypeDefinitions().filter(({ pageType }) =>
+      ['markdown', 'checklist', 'kanban', 'gallery'].includes(pageType),
+    );
+
+    expect(builtIn).toHaveLength(4);
+    expect(new Set(builtIn.map(({ icon }) => icon)).size).toBe(4);
+  });
+
   it('registers and cleanly unloads a custom storage adapter', () => {
     const unregister = registerProjectPageStorageAdapter({
       pageType: 'example-plugin:canvas',

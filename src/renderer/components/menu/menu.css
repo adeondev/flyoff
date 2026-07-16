@@ -95,15 +95,9 @@
   place-items: center;
 }
 
-.flyoff-menu__submenu-indicator svg {
+.flyoff-menu__submenu-indicator .home__icon {
   width: 12px;
   height: 12px;
-  overflow: visible;
-  fill: none;
-  stroke: currentColor;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.4;
 }
 
 .flyoff-menu__separator {

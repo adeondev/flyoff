@@ -9,8 +9,9 @@ import {
 } from 'react';
 
 import flyoffLogo from '../../public/images/flyoff/flyoff-logo.svg';
-import markdownPageIcon from '../../public/images/icons/homepage/import-project.svg';
-import projectOverviewIcon from '../../public/images/icons/homepage/new-project.svg';
+import sidebarToggleIcon from '../../public/images/icons/actions/sidebar-toggle.svg';
+import markdownPageIcon from '../../public/images/icons/instances/note.svg';
+import projectOverviewIcon from '../../public/images/icons/instances/project.svg';
 import {
   APPLICATION_MENU_COMMANDS,
   APPLICATION_MENU_DEFINITIONS,
@@ -52,6 +53,7 @@ import { CloseConfirmationDialog } from './components/dialog/CloseConfirmationDi
 import { SessionRestoreToast } from './components/dialog/SessionRestoreToast';
 import { ToastHost } from './components/feedback/ToastHost';
 import { useToastQueue } from './components/feedback/toast-state';
+import { MaskedIcon } from './components/MaskedIcon';
 import {
   MenuBar,
   type MenuBarItem,
@@ -168,15 +170,6 @@ interface TitlebarProps {
   onWindowAction: (action: WindowControlAction) => void;
 }
 
-function SidebarToggleIcon() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 16 16">
-      <rect x="1.75" y="2.75" width="12.5" height="10.5" rx="1.75" />
-      <line x1="6.25" y1="2.75" x2="6.25" y2="13.25" />
-    </svg>
-  );
-}
-
 function Titlebar({
   menus,
   platform,
@@ -207,7 +200,7 @@ function Titlebar({
         title={toggleSidebarLabel}
         type="button"
       >
-        <SidebarToggleIcon />
+        <MaskedIcon className="titlebar__sidebar-toggle-icon" icon={sidebarToggleIcon} />
       </button>
       {!isMacOS && menus.length > 0 ? (
         <MenuBar
@@ -1663,6 +1656,7 @@ export function App() {
         layout.railViewId !== RAIL_VIEW_IDS.project ? (
           <PlaceholderPanel
             hint={translate('rail.comingSoon')}
+            icon={resolveRailView(layout.railViewId).icon}
             title={translate(resolveRailView(layout.railViewId).labelKey)}
           />
         ) : null}
