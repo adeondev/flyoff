@@ -5,6 +5,12 @@ import type {
   ReadMarkdownDocumentRequest,
   SaveMarkdownDocumentRequest,
 } from '../../shared/contracts';
+import {
+  MarkdownHistoryStore,
+  type SourceEditorState,
+  type SourceEditTransaction,
+} from './markdown-history';
+import type { SourceSelection } from './source-caret';
 
 export type MarkdownBufferStatus =
   | 'saved'
@@ -20,6 +26,7 @@ export interface MarkdownBufferSnapshot {
   revision: string;
   dirty: boolean;
   status: MarkdownBufferStatus;
+  selection: SourceSelection;
   error?: ProjectFailureDetails;
 }
 
@@ -43,12 +50,31 @@ interface MarkdownBufferEntry {
 
 const DEFAULT_AUTOSAVE_DELAY = 500;
 
+function emptySelection(): SourceSelection {
+  return { start: 0, end: 0, direction: 'none' };
+}
+
+function clampSelection(
+  selection: SourceSelection,
+  contentLength: number,
+): SourceSelection {
+  const start = Math.min(Math.max(0, selection.start), contentLength);
+  const end = Math.min(Math.max(start, selection.end), contentLength);
+  return {
+    start,
+    end,
+    direction: start === end ? 'none' : selection.direction,
+  };
+}
+
 function rejectedOperation(message: string): ProjectFailureDetails {
   return { code: 'io-error', message };
 }
 
 export class MarkdownDocumentController {
   private readonly buffers = new Map<string, MarkdownBufferEntry>();
+  private readonly editorStates = new Map<string, SourceEditorState>();
+  private readonly history = new MarkdownHistoryStore();
   private readonly debounceMs: number;
   private readonly saveDocument: MarkdownDocumentControllerOptions['save'];
   private readonly reloadDocument: MarkdownDocumentControllerOptions['reload'];
@@ -86,10 +112,24 @@ export class MarkdownDocumentController {
         revision: document.revision,
         dirty: false,
         status: 'saved',
+        selection: emptySelection(),
       },
       savedContent: document.content,
       listeners: new Set(),
     };
+    const previousState = this.editorStates.get(document.nodeId);
+    if (previousState?.content === document.content) {
+      entry.snapshot.selection = clampSelection(
+        previousState.selection,
+        document.content.length,
+      );
+    } else {
+      this.history.reset(document.nodeId);
+    }
+    this.editorStates.set(document.nodeId, {
+      content: document.content,
+      selection: entry.snapshot.selection,
+    });
     this.buffers.set(document.nodeId, entry);
     return entry.snapshot;
   }
@@ -106,6 +146,80 @@ export class MarkdownDocumentController {
 
   update(nodeId: string, content: string): void {
     const entry = this.getEntry(nodeId);
+    this.history.reset(nodeId);
+    this.updateContent(
+      entry,
+      content,
+      clampSelection(entry.snapshot.selection, content.length),
+    );
+  }
+
+  commitEditorTransaction(
+    nodeId: string,
+    transaction: SourceEditTransaction,
+  ): void {
+    const entry = this.getEntry(nodeId);
+    const after: SourceEditorState = {
+      content: transaction.after.content,
+      selection: clampSelection(
+        transaction.after.selection,
+        transaction.after.content.length,
+      ),
+    };
+
+    if (transaction.before.content === entry.snapshot.content) {
+      this.history.record(nodeId, {
+        ...transaction,
+        before: {
+          content: transaction.before.content,
+          selection: clampSelection(
+            transaction.before.selection,
+            transaction.before.content.length,
+          ),
+        },
+        after,
+      });
+    } else {
+      this.history.reset(nodeId);
+    }
+
+    this.updateContent(entry, after.content, after.selection);
+  }
+
+  setEditorSelection(nodeId: string, selection: SourceSelection): void {
+    const entry = this.buffers.get(nodeId);
+    if (!entry) {
+      return;
+    }
+    const next = clampSelection(selection, entry.snapshot.content.length);
+    entry.snapshot = { ...entry.snapshot, selection: next };
+    this.editorStates.set(nodeId, {
+      content: entry.snapshot.content,
+      selection: next,
+    });
+  }
+
+  undo(nodeId: string): SourceEditorState | undefined {
+    return this.applyHistory(nodeId, 'undo');
+  }
+
+  redo(nodeId: string): SourceEditorState | undefined {
+    return this.applyHistory(nodeId, 'redo');
+  }
+
+  canUndo(nodeId: string): boolean {
+    return this.history.canUndo(nodeId);
+  }
+
+  canRedo(nodeId: string): boolean {
+    return this.history.canRedo(nodeId);
+  }
+
+  private updateContent(
+    entry: MarkdownBufferEntry,
+    content: string,
+    selection: SourceSelection,
+  ): void {
     const blockedByConflict = entry.snapshot.status === 'conflict';
     const saveInProgress = Boolean(entry.savePromise);
     const dirty = blockedByConflict || content !== entry.savedContent;
@@ -113,6 +227,7 @@ export class MarkdownDocumentController {
     this.setSnapshot(entry, {
       ...entry.snapshot,
       content,
+      selection,
       dirty,
       status: dirty
         ? blockedByConflict
@@ -125,6 +240,7 @@ export class MarkdownDocumentController {
         ? { error: entry.snapshot.error }
         : {}),
     });
+    this.editorStates.set(entry.snapshot.nodeId, { content, selection });
 
     this.clearTimer(entry);
     if (dirty && !blockedByConflict && !saveInProgress) {
@@ -226,6 +342,8 @@ export class MarkdownDocumentController {
       entry.listeners.clear();
     }
     this.buffers.clear();
+    this.editorStates.clear();
+    this.history.clear();
   }
 
   private getEntry(nodeId: string): MarkdownBufferEntry {
@@ -310,6 +428,7 @@ export class MarkdownDocumentController {
       revision: result.value.revision,
       dirty: changedWhileSaving,
       status: changedWhileSaving ? 'dirty' : 'saved',
+      selection: entry.snapshot.selection,
     });
 
     if (changedWhileSaving) {
@@ -335,14 +454,41 @@ export class MarkdownDocumentController {
     document: MarkdownDocument,
   ): void {
     this.clearTimer(entry);
+    this.history.reset(document.nodeId);
     entry.savedContent = document.content;
+    const selection = clampSelection(
+      entry.snapshot.selection,
+      document.content.length,
+    );
     this.setSnapshot(entry, {
       nodeId: document.nodeId,
       content: document.content,
       revision: document.revision,
       dirty: false,
       status: 'saved',
+      selection,
     });
+    this.editorStates.set(document.nodeId, {
+      content: document.content,
+      selection,
+    });
+  }
+
+  private applyHistory(
+    nodeId: string,
+    direction: 'undo' | 'redo',
+  ): SourceEditorState | undefined {
+    const entry = this.getEntry(nodeId);
+    const current: SourceEditorState = {
+      content: entry.snapshot.content,
+      selection: entry.snapshot.selection,
+    };
+    const next = this.history[direction](nodeId, current);
+    if (!next) {
+      return undefined;
+    }
+    this.updateContent(entry, next.content, next.selection);
+    return next;
   }
 
   private clearTimer(entry: MarkdownBufferEntry): void {

@@ -269,13 +269,9 @@ export function parseInline(text: string): InlineNode[] {
     }
 
     if (char === '\n') {
-      if (buffer.endsWith('  ')) {
-        buffer = buffer.replace(/ +$/, '');
-        flush();
-        nodes.push({ type: 'break' });
-      } else {
-        buffer = `${buffer.replace(/ +$/, '')} `;
-      }
+      buffer = buffer.replace(/ +$/, '');
+      flush();
+      nodes.push({ type: 'break' });
       index += 1;
       while (text[index] === ' ') {
         index += 1;

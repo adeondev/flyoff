@@ -15,6 +15,7 @@ import { MarkdownReadingView } from './MarkdownReadingView';
 import { MarkdownToolbar } from './MarkdownToolbar';
 import { RichSourceEditor } from './RichSourceEditor';
 import { readSelection, writeSelection } from './source-caret';
+import type { SourceEditTransaction } from './markdown-history';
 import type {
   MarkdownDocumentController,
   MarkdownBufferSnapshot,
@@ -87,6 +88,7 @@ export const MarkdownEditor = forwardRef<
 ) {
   const [snapshot, setSnapshot] = useState(() => controller.open(document));
   const editorRef = useRef<HTMLDivElement>(null);
+  const selectionRef = useRef(snapshot.selection);
   const nodeId = document.nodeId;
 
   useEffect(() => {
@@ -102,6 +104,10 @@ export const MarkdownEditor = forwardRef<
   useEffect(() => {
     onDirtyChange?.(snapshot.dirty);
   }, [onDirtyChange, snapshot.dirty]);
+
+  useEffect(() => {
+    selectionRef.current = snapshot.selection;
+  }, [snapshot.selection]);
 
   useEffect(() => {
     const editor = editorRef.current;
@@ -121,10 +127,37 @@ export const MarkdownEditor = forwardRef<
   );
 
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
+    const platform =
+      editorRef.current?.ownerDocument.documentElement.dataset.platform;
+    const primary = platform === 'darwin' ? event.metaKey : event.ctrlKey;
+    const key = event.key.toLocaleLowerCase();
+
+    if (primary && !event.altKey && key === 'z') {
+      event.preventDefault();
+      if (event.shiftKey) {
+        controller.redo(nodeId);
+      } else {
+        controller.undo(nodeId);
+      }
+      return;
+    }
+
+    if (
+      platform !== 'darwin' &&
+      event.ctrlKey &&
+      !event.altKey &&
+      !event.shiftKey &&
+      key === 'y'
+    ) {
+      event.preventDefault();
+      controller.redo(nodeId);
+      return;
+    }
+
     if (
       !event.altKey &&
       (event.ctrlKey || event.metaKey) &&
-      event.key.toLocaleLowerCase() === 's'
+      key === 's'
     ) {
       event.preventDefault();
       if (snapshot.status !== 'conflict') {
@@ -140,13 +173,35 @@ export const MarkdownEditor = forwardRef<
       return;
     }
 
-    const { end, start } = readSelection(editor);
+    const currentSelection = editor.contains(
+      editor.ownerDocument.getSelection()?.anchorNode ?? null,
+    )
+      ? readSelection(editor)
+      : selectionRef.current;
+    const { end, start } = currentSelection;
     const edit = applyMarkdownAction(action, snapshot.content, start, end);
-    controller.update(nodeId, edit.value);
+    const nextSelection = {
+      start: edit.selectionStart,
+      end: edit.selectionEnd,
+      direction:
+        edit.selectionStart === edit.selectionEnd
+          ? ('none' as const)
+          : ('forward' as const),
+    };
+    controller.commitEditorTransaction(nodeId, {
+      before: { content: snapshot.content, selection: currentSelection },
+      after: { content: edit.value, selection: nextSelection },
+      inputType: `toolbar:${action}`,
+      timestamp: performance.now(),
+    });
     requestAnimationFrame(() => {
       editor.focus();
-      writeSelection(editor, edit.selectionStart, edit.selectionEnd);
+      writeSelection(editor, nextSelection);
     });
+  }
+
+  function handleTransaction(transaction: SourceEditTransaction): void {
+    controller.commitEditorTransaction(nodeId, transaction);
   }
 
   const status = statusLabel(snapshot, translate);
@@ -226,9 +281,17 @@ export const MarkdownEditor = forwardRef<
             ariaLabel={translate('projects.editorLabel')}
             autoFocus={autoFocus}
             editorRef={editorRef}
-            onChange={(next) => controller.update(nodeId, next)}
+            nodeId={nodeId}
             onKeyDown={handleKeyDown}
+            onRedo={() => controller.redo(nodeId)}
             onScroll={(scrollPosition) => onScrollChange?.(scrollPosition)}
+            onSelectionChange={(next) => {
+              selectionRef.current = next;
+              controller.setEditorSelection(nodeId, next);
+            }}
+            onTransaction={handleTransaction}
+            onUndo={() => controller.undo(nodeId)}
+            selection={snapshot.selection}
             value={snapshot.content}
           />
         )}

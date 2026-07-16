@@ -48,4 +48,25 @@ describe('markdown DOM renderer', () => {
     expect(container.querySelector('code')?.textContent).toBe('**not bold**');
     expect(container.querySelector('strong')).toBeNull();
   });
+
+  it('renders a simple line ending between highlight and link as br', () => {
+    const container = render('==uau==\n[text](https://x.dev)');
+    const paragraph = container.querySelector('p')!;
+
+    expect(paragraph.querySelector('mark')?.textContent).toBe('uau');
+    expect(paragraph.querySelector('br')).toBeTruthy();
+    expect(paragraph.querySelector('a')?.textContent).toBe('text');
+    expect([...paragraph.children].map(({ tagName }) => tagName)).toEqual([
+      'MARK',
+      'BR',
+      'A',
+    ]);
+  });
+
+  it('keeps a blank line as a block boundary', () => {
+    const container = render('one\n\ntwo');
+
+    expect([...container.querySelectorAll('p')].map((node) => node.textContent))
+      .toEqual(['one', 'two']);
+  });
 });

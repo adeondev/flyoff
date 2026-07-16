@@ -5,116 +5,293 @@ import {
   type RefObject,
 } from 'react';
 
-import { highlightSource } from './markdown-highlight';
+import type { SourceEditTransaction } from './markdown-history';
 import {
-  readCaret,
   readSelection,
   readSource,
   replaceRange,
-  writeCaret,
+  writeSelection,
+  type SourceSelection,
 } from './source-caret';
+import { reconcileSource } from './source-renderer';
 
 export interface RichSourceEditorProps {
   ariaLabel: string;
   autoFocus?: boolean;
   editorRef: RefObject<HTMLDivElement | null>;
+  nodeId: string;
+  selection: SourceSelection;
   value: string;
-  onChange: (value: string) => void;
   onKeyDown?: (event: KeyboardEvent<HTMLDivElement>) => void;
+  onRedo: () => void;
   onScroll?: (scrollTop: number) => void;
+  onSelectionChange: (selection: SourceSelection) => void;
+  onTransaction: (transaction: SourceEditTransaction) => void;
+  onUndo: () => void;
 }
 
-// highlightSource escapes every character of the note, so the only markup it
-// produces is the line and token spans this module owns.
-function render(root: HTMLElement, source: string, caret?: number): void {
-  root.innerHTML = highlightSource(source);
+interface PendingInput {
+  before: SourceEditTransaction['before'];
+  inputType: string;
+  timestamp: number;
+}
 
-  if (caret !== undefined) {
-    writeCaret(root, caret);
-  }
+function collapsedSelection(offset: number): SourceSelection {
+  return { start: offset, end: offset, direction: 'none' };
+}
+
+function normalizedText(value: string): string {
+  return value.replace(/\r\n?/g, '\n');
 }
 
 export function RichSourceEditor({
   ariaLabel,
   autoFocus = false,
   editorRef,
-  onChange,
+  nodeId,
   onKeyDown,
+  onRedo,
   onScroll,
+  onSelectionChange,
+  onTransaction,
+  onUndo,
+  selection,
   value,
 }: RichSourceEditorProps) {
   const composingRef = useRef(false);
-  const changeRef = useRef(onChange);
+  const compositionTimerRef = useRef<number | undefined>(undefined);
+  const pendingRef = useRef<PendingInput | undefined>(undefined);
+  const stateRef = useRef({ content: value, selection });
+  const callbacksRef = useRef({
+    onRedo,
+    onSelectionChange,
+    onTransaction,
+    onUndo,
+  });
 
   useEffect(() => {
-    changeRef.current = onChange;
-  }, [onChange]);
+    callbacksRef.current = {
+      onRedo,
+      onSelectionChange,
+      onTransaction,
+      onUndo,
+    };
+  }, [onRedo, onSelectionChange, onTransaction, onUndo]);
 
   useEffect(() => {
     const root = editorRef.current;
-
-    if (root && readSource(root) !== value) {
-      render(root, value);
-    }
-  }, [editorRef, value]);
-
-  useEffect(() => {
-    const root = editorRef.current;
-
-    if (!root) {
+    if (!root || composingRef.current) {
       return;
     }
 
-    function commit(source: string, caret: number): void {
-      if (root) {
-        render(root, source, caret);
-      }
-      changeRef.current(source);
+    if (readSource(root) !== value) {
+      reconcileSource(root, value);
+      writeSelection(root, selection);
+      stateRef.current = { content: value, selection };
+    }
+  }, [editorRef, selection, value]);
+
+  useEffect(() => {
+    const root = editorRef.current;
+    if (!root) {
+      return;
+    }
+    const editor = root;
+
+    function commit(
+      before: SourceEditTransaction['before'],
+      content: string,
+      nextSelection: SourceSelection,
+      inputType: string,
+      timestamp: number,
+    ): void {
+      reconcileSource(editor, content);
+      writeSelection(editor, nextSelection);
+      const after = { content, selection: nextSelection };
+      stateRef.current = after;
+      pendingRef.current = undefined;
+      callbacksRef.current.onTransaction({
+        after,
+        before,
+        inputType,
+        timestamp,
+      });
     }
 
-    function handleInput(): void {
-      if (!root || composingRef.current) {
+    function commitReplacement(inputType: string, inserted: string): void {
+      const before = {
+        content: readSource(editor),
+        selection: readSelection(editor),
+      };
+      const content = replaceRange(
+        before.content,
+        before.selection.start,
+        before.selection.end,
+        inserted,
+      );
+      const caret = before.selection.start + inserted.length;
+      commit(
+        before,
+        content,
+        collapsedSelection(caret),
+        inputType,
+        performance.now(),
+      );
+    }
+
+    function finishNativeInput(inputType?: string): void {
+      if (composingRef.current) {
         return;
       }
 
-      commit(readSource(root), readCaret(root));
+      const before = pendingRef.current?.before ?? stateRef.current;
+      const after = {
+        content: readSource(editor),
+        selection: readSelection(editor),
+      };
+      const resolvedInputType =
+        inputType ?? pendingRef.current?.inputType ?? 'insertText';
+      const timestamp = pendingRef.current?.timestamp ?? performance.now();
+
+      if (after.content === before.content) {
+        reconcileSource(editor, after.content);
+        writeSelection(editor, after.selection);
+        stateRef.current = after;
+        pendingRef.current = undefined;
+        callbacksRef.current.onSelectionChange(after.selection);
+        return;
+      }
+
+      commit(
+        before,
+        after.content,
+        after.selection,
+        resolvedInputType,
+        timestamp,
+      );
     }
 
-    // The browser decides its own structure for Enter, so the newline is
-    // applied to the source instead and the editor re-renders from that.
     function handleBeforeInput(event: InputEvent): void {
+      if (event.inputType === 'historyUndo') {
+        event.preventDefault();
+        callbacksRef.current.onUndo();
+        return;
+      }
+      if (event.inputType === 'historyRedo') {
+        event.preventDefault();
+        callbacksRef.current.onRedo();
+        return;
+      }
       if (
-        !root ||
-        (event.inputType !== 'insertParagraph' &&
-          event.inputType !== 'insertLineBreak')
+        event.inputType === 'insertParagraph' ||
+        event.inputType === 'insertLineBreak'
       ) {
+        event.preventDefault();
+        commitReplacement(event.inputType, '\n');
+        return;
+      }
+      if (composingRef.current) {
         return;
       }
 
+      pendingRef.current = {
+        before: {
+          content: readSource(editor),
+          selection: readSelection(editor),
+        },
+        inputType: event.inputType,
+        timestamp: performance.now(),
+      };
+    }
+
+    function handleInput(event: InputEvent): void {
+      finishNativeInput(event.inputType);
+    }
+
+    function handlePaste(event: ClipboardEvent): void {
+      const text = event.clipboardData?.getData('text/plain');
+      if (text === undefined) {
+        return;
+      }
       event.preventDefault();
-      const { end, start } = readSelection(root);
-      commit(replaceRange(readSource(root), start, end, '\n'), start + 1);
+      commitReplacement('insertFromPaste', normalizedText(text));
+    }
+
+    function handleDrop(event: DragEvent): void {
+      const text = event.dataTransfer?.getData('text/plain');
+      if (text === undefined || text === '') {
+        return;
+      }
+      event.preventDefault();
+      commitReplacement('insertFromDrop', normalizedText(text));
     }
 
     function handleCompositionStart(): void {
+      if (compositionTimerRef.current !== undefined) {
+        window.clearTimeout(compositionTimerRef.current);
+      }
       composingRef.current = true;
+      pendingRef.current = {
+        before: {
+          content: readSource(editor),
+          selection: readSelection(editor),
+        },
+        inputType: 'insertCompositionText',
+        timestamp: performance.now(),
+      };
     }
 
     function handleCompositionEnd(): void {
       composingRef.current = false;
-      handleInput();
+      compositionTimerRef.current = window.setTimeout(() => {
+        compositionTimerRef.current = undefined;
+        finishNativeInput('insertCompositionText');
+      }, 0);
     }
 
-    root.addEventListener('input', handleInput);
-    root.addEventListener('beforeinput', handleBeforeInput);
-    root.addEventListener('compositionstart', handleCompositionStart);
-    root.addEventListener('compositionend', handleCompositionEnd);
+    function handleSelectionChange(): void {
+      const selectionInDocument = editor.ownerDocument.getSelection();
+      if (
+        composingRef.current ||
+        !selectionInDocument?.anchorNode ||
+        (!editor.contains(selectionInDocument.anchorNode) &&
+          selectionInDocument.anchorNode !== editor)
+      ) {
+        return;
+      }
+      const nextSelection = readSelection(editor);
+      stateRef.current = {
+        content: stateRef.current.content,
+        selection: nextSelection,
+      };
+      callbacksRef.current.onSelectionChange(nextSelection);
+    }
+
+    editor.addEventListener('beforeinput', handleBeforeInput);
+    editor.addEventListener('compositionstart', handleCompositionStart);
+    editor.addEventListener('compositionend', handleCompositionEnd);
+    editor.addEventListener('input', handleInput);
+    editor.addEventListener('paste', handlePaste);
+    editor.addEventListener('drop', handleDrop);
+    editor.ownerDocument.addEventListener(
+      'selectionchange',
+      handleSelectionChange,
+    );
 
     return () => {
-      root.removeEventListener('input', handleInput);
-      root.removeEventListener('beforeinput', handleBeforeInput);
-      root.removeEventListener('compositionstart', handleCompositionStart);
-      root.removeEventListener('compositionend', handleCompositionEnd);
+      if (compositionTimerRef.current !== undefined) {
+        window.clearTimeout(compositionTimerRef.current);
+      }
+      editor.removeEventListener('beforeinput', handleBeforeInput);
+      editor.removeEventListener('compositionstart', handleCompositionStart);
+      editor.removeEventListener('compositionend', handleCompositionEnd);
+      editor.removeEventListener('input', handleInput);
+      editor.removeEventListener('paste', handlePaste);
+      editor.removeEventListener('drop', handleDrop);
+      editor.ownerDocument.removeEventListener(
+        'selectionchange',
+        handleSelectionChange,
+      );
     };
   }, [editorRef]);
 
@@ -125,18 +302,21 @@ export function RichSourceEditor({
   }, [autoFocus, editorRef]);
 
   return (
-    <div
-      aria-label={ariaLabel}
-      aria-multiline="true"
-      className="markdown-source__editor"
-      contentEditable="plaintext-only"
-      onKeyDown={onKeyDown}
-      onScroll={(event) => onScroll?.(event.currentTarget.scrollTop)}
-      ref={editorRef}
-      role="textbox"
-      spellCheck={false}
-      suppressContentEditableWarning
-      tabIndex={0}
-    />
+    <div className="markdown-source">
+      <div
+        aria-label={ariaLabel}
+        aria-multiline="true"
+        className="markdown-source__editor"
+        contentEditable="plaintext-only"
+        data-markdown-node-id={nodeId}
+        onKeyDown={onKeyDown}
+        onScroll={(event) => onScroll?.(event.currentTarget.scrollTop)}
+        ref={editorRef}
+        role="textbox"
+        spellCheck={false}
+        suppressContentEditableWarning
+        tabIndex={0}
+      />
+    </div>
   );
 }

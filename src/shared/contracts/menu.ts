@@ -30,6 +30,8 @@ export const APPLICATION_MENU_COMMANDS = {
 
 export const RENDERER_MENU_COMMANDS = {
   closeTab: 'file.closeTab',
+  undo: 'editor.undo',
+  redo: 'editor.redo',
 } as const;
 
 export type ApplicationMenuCommand =

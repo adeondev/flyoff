@@ -304,6 +304,9 @@ export function App() {
   const restoreRequestStartedRef = useRef(false);
   const workspaceTransitionRef = useRef<Promise<void>>(Promise.resolve());
   const workspaceRef = useRef<HTMLDivElement>(null);
+  const lastEditableTargetRef = useRef<
+    { kind: 'markdown'; nodeId: string } | { kind: 'native' }
+  >(undefined);
   const layout = useWorkspaceLayout();
   const adjustNoteFontScale = layout.adjustNoteFontScale;
   const translate = translator.translate;
@@ -874,6 +877,53 @@ export function App() {
     }
   }, [dispatchGuardedTabAction]);
 
+  const executeRendererMenuCommand = useCallback(
+    (command: RendererMenuCommand): void => {
+      if (command === RENDERER_MENU_COMMANDS.closeTab) {
+        closeActiveTab();
+        return;
+      }
+
+      const lastTarget = lastEditableTargetRef.current;
+      const activeTabState = selectActiveTabs(workspaceStateRef.current);
+      const activeTab = activeTabState.tabs.find(
+        ({ tabId }) => tabId === activeTabState.activeTabId,
+      );
+      const activeNodeId =
+        activeTab?.target.type === 'project-content'
+          ? activeTab.target.nodeId
+          : undefined;
+
+      if (
+        lastTarget?.kind === 'markdown' &&
+        lastTarget.nodeId === activeNodeId &&
+        documentControllerRef.current.getSnapshot(activeNodeId)
+      ) {
+        if (command === RENDERER_MENU_COMMANDS.undo) {
+          documentControllerRef.current.undo(activeNodeId);
+        } else if (command === RENDERER_MENU_COMMANDS.redo) {
+          documentControllerRef.current.redo(activeNodeId);
+        }
+        requestAnimationFrame(() => {
+          const editor = [
+            ...document.querySelectorAll<HTMLElement>(
+              '[data-markdown-node-id]',
+            ),
+          ].find(({ dataset }) => dataset.markdownNodeId === activeNodeId);
+          editor?.focus();
+        });
+        return;
+      }
+
+      const fallback =
+        command === RENDERER_MENU_COMMANDS.undo
+          ? APPLICATION_MENU_COMMANDS.undo
+          : APPLICATION_MENU_COMMANDS.redo;
+      void getApi().executeMenuCommand?.(fallback).catch(() => undefined);
+    },
+    [closeActiveTab],
+  );
+
   const controlWindow = useCallback(
     (action: WindowControlAction): void => {
       void getApi()
@@ -887,9 +937,7 @@ export function App() {
   const executeMenuCommand = useCallback(
     (command: string): void => {
       if (isRendererMenuCommand(command)) {
-        if (command === RENDERER_MENU_COMMANDS.closeTab) {
-          closeActiveTab();
-        }
+        executeRendererMenuCommand(command);
         return;
       }
 
@@ -897,7 +945,7 @@ export function App() {
         void getApi().executeMenuCommand?.(command).catch(() => undefined);
       }
     },
-    [closeActiveTab],
+    [executeRendererMenuCommand],
   );
 
   const respondToClose = useCallback(
@@ -1200,6 +1248,35 @@ export function App() {
   }, [restorePending, sessionReady, workspaceState]);
 
   useEffect(() => {
+    function handleFocusIn(event: FocusEvent): void {
+      const target = event.target;
+      if (!(target instanceof Element)) {
+        return;
+      }
+
+      const markdownEditor = target.closest<HTMLElement>(
+        '[data-markdown-node-id]',
+      );
+      const nodeId = markdownEditor?.dataset.markdownNodeId;
+      if (nodeId) {
+        lastEditableTargetRef.current = { kind: 'markdown', nodeId };
+        return;
+      }
+
+      if (
+        target.matches(
+          'input, textarea, [contenteditable="true"], [contenteditable="plaintext-only"]',
+        )
+      ) {
+        lastEditableTargetRef.current = { kind: 'native' };
+      }
+    }
+
+    document.addEventListener('focusin', handleFocusIn, true);
+    return () => document.removeEventListener('focusin', handleFocusIn, true);
+  }, []);
+
+  useEffect(() => {
     const api = getApi();
     const removeCloseListener = api.onCloseRequested?.((request) => {
       if (restorePendingRef.current) {
@@ -1240,9 +1317,7 @@ export function App() {
     });
     const removeMenuListener = api.onRendererMenuCommand?.(
       (command: RendererMenuCommand) => {
-        if (command === RENDERER_MENU_COMMANDS.closeTab) {
-          closeActiveTab();
-        }
+        executeRendererMenuCommand(command);
       },
     );
 
@@ -1251,7 +1326,7 @@ export function App() {
       removeMenuListener?.();
     };
   }, [
-    closeActiveTab,
+    executeRendererMenuCommand,
     resolveRestoreCandidate,
     respondToClose,
     submitCloseResponse,

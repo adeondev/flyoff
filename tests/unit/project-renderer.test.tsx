@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { MarkdownEditor } from '../../src/renderer/projects/MarkdownEditor';
 import { MarkdownDocumentController } from '../../src/renderer/projects/markdown-document-controller';
+import { writeSelection } from '../../src/renderer/projects/source-caret';
 import { CreateProjectDialog } from '../../src/renderer/projects/CreateProjectDialog';
 import {
   projectNodeDisplayName,
@@ -441,5 +442,100 @@ describe('Markdown editor', () => {
     editor.scrollTop = 144;
     fireEvent.scroll(editor);
     expect(onScrollChange).toHaveBeenCalledWith(144);
+  });
+
+  it('commits Enter and multiline paste as visible, undoable steps', async () => {
+    const original: MarkdownDocument = {
+      nodeId: note.nodeId,
+      content: '==uau==',
+      revision: '1'.repeat(64),
+    };
+    const controller = new MarkdownDocumentController({
+      reload: vi.fn(),
+      save: vi.fn(),
+    });
+    render(
+      <MarkdownEditor
+        controller={controller}
+        document={original}
+        mode="split"
+        translate={translate}
+      />,
+    );
+    const editor = screen.getByRole('textbox', {
+      name: 'projects.editorLabel',
+    });
+    writeSelection(editor, original.content.length);
+
+    fireEvent(
+      editor,
+      new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'insertParagraph',
+      }),
+    );
+    expect(controller.getSnapshot(note.nodeId)?.content).toBe('==uau==\n');
+
+    fireEvent.paste(editor, {
+      clipboardData: {
+        getData: () => '[text](https://x.dev)\r\nlast',
+      },
+    });
+    expect(controller.getSnapshot(note.nodeId)?.content).toBe(
+      '==uau==\n[text](https://x.dev)\nlast',
+    );
+    await waitFor(() => {
+      const reading = document.querySelector('.markdown-view')!;
+      expect(reading.querySelectorAll('br')).toHaveLength(2);
+      expect(reading.querySelector('mark')?.textContent).toBe('uau');
+      expect(reading.querySelector('a')?.textContent).toBe('text');
+    });
+
+    fireEvent.keyDown(editor, { key: 'z', ctrlKey: true });
+    expect(controller.getSnapshot(note.nodeId)?.content).toBe('==uau==\n');
+    fireEvent.keyDown(editor, { key: 'z', ctrlKey: true });
+    expect(controller.getSnapshot(note.nodeId)?.content).toBe('==uau==');
+    fireEvent.keyDown(editor, { key: 'z', ctrlKey: true, shiftKey: true });
+    expect(controller.getSnapshot(note.nodeId)?.content).toBe('==uau==\n');
+  });
+
+  it('records IME composition once and keeps toolbar edits in history', async () => {
+    const original: MarkdownDocument = {
+      nodeId: note.nodeId,
+      content: 'a',
+      revision: '1'.repeat(64),
+    };
+    const controller = new MarkdownDocumentController({
+      reload: vi.fn(),
+      save: vi.fn(),
+    });
+    render(
+      <MarkdownEditor
+        controller={controller}
+        document={original}
+        translate={translate}
+      />,
+    );
+    const editor = screen.getByRole('textbox', {
+      name: 'projects.editorLabel',
+    });
+    writeSelection(editor, 1);
+    fireEvent.compositionStart(editor);
+    editor.textContent = 'a字';
+    fireEvent.input(editor, { inputType: 'insertCompositionText' });
+    fireEvent.compositionEnd(editor);
+
+    await waitFor(() => {
+      expect(controller.getSnapshot(note.nodeId)?.content).toBe('a字');
+    });
+    fireEvent.keyDown(editor, { key: 'z', ctrlKey: true });
+    expect(controller.getSnapshot(note.nodeId)?.content).toBe('a');
+
+    writeSelection(editor, 0, 1);
+    fireEvent.click(screen.getByRole('button', { name: 'toolbar.bold' }));
+    expect(controller.getSnapshot(note.nodeId)?.content).toBe('**a**');
+    controller.undo(note.nodeId);
+    expect(controller.getSnapshot(note.nodeId)?.content).toBe('a');
   });
 });

@@ -131,4 +131,34 @@ describe('markdown inline parser', () => {
       { type: 'text', value: '*literal*' },
     ]);
   });
+
+  it('keeps every simple line ending as one visible break', () => {
+    expect(parseInline('==uau==\n[text](https://x.dev)')).toEqual([
+      { type: 'highlight', children: [{ type: 'text', value: 'uau' }] },
+      { type: 'break' },
+      {
+        type: 'link',
+        url: 'https://x.dev',
+        title: null,
+        children: [{ type: 'text', value: 'text' }],
+      },
+    ]);
+  });
+
+  it('normalizes line endings and does not duplicate hard breaks', () => {
+    const expected = [
+      { type: 'text', value: 'one' },
+      { type: 'break' },
+      { type: 'text', value: 'two' },
+    ];
+
+    expect(parseMarkdown('one\r\ntwo').children[0]).toMatchObject({
+      children: expected,
+    });
+    expect(parseMarkdown('one\rtwo').children[0]).toMatchObject({
+      children: expected,
+    });
+    expect(parseInline('one  \ntwo')).toEqual(expected);
+    expect(parseInline('one\\\ntwo')).toEqual(expected);
+  });
 });

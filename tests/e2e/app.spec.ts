@@ -244,8 +244,10 @@ test.describe('Flyoff desktop shell', () => {
         'onWindowStateChanged',
         'executeMenuCommand',
         'getRestorableTabSession',
+        'getUiState',
         'resolveRestorableTabSession',
         'saveTabSession',
+        'saveUiState',
         'onCloseRequested',
         'respondToCloseRequest',
         'onRendererMenuCommand',
@@ -372,6 +374,7 @@ test.describe('Flyoff desktop shell', () => {
       })
       .click();
     await expect(page.getByRole('tab', { name: projectName })).toHaveCount(0);
+    await page.locator('.project-empty__close').click();
     await expect(page.getByRole('tab', { name: labels.home })).toHaveAttribute(
       'aria-selected',
       'true',
@@ -397,6 +400,7 @@ test.describe('Flyoff desktop shell', () => {
         name: `${labels.closePrefix}: ${projectName}`,
       })
       .click();
+    await page.locator('.project-empty__close').click();
     await expect
       .poll(() =>
         page.evaluate(async () =>
@@ -501,7 +505,7 @@ test.describe('Flyoff desktop shell', () => {
             label: item.label,
             roles:
               item.submenu?.items.map(
-                (child) => child.role ?? child.type,
+                (child) => child.role ?? child.id ?? child.type,
               ) ?? [],
           })) ?? [],
       };
@@ -514,20 +518,20 @@ test.describe('Flyoff desktop shell', () => {
 
     expect(menu.items.map(({ id }) => id)).toEqual(expectedIds);
     expect(menu.items.find(({ id }) => id === 'edit-menu')?.roles).toEqual([
-      'undo',
-      'redo',
-      'separator',
+      'editor.undo',
+      'editor.redo',
+      'edit-history-separator',
       'cut',
       'copy',
       'paste',
-      'separator',
+      'edit-selection-separator',
       'selectall',
     ]);
     expect(menu.items.find(({ id }) => id === 'view-menu')?.roles).toEqual([
       'resetzoom',
       'zoomin',
       'zoomout',
-      'separator',
+      'view-display-separator',
       'togglefullscreen',
     ]);
 

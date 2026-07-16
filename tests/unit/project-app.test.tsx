@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { App } from '../../src/renderer/App';
 import {
+  RENDERER_MENU_COMMANDS,
   TAB_SESSION_VERSION,
   WORKSPACE_SESSION_VERSION,
   type BootstrapState,
@@ -20,6 +21,7 @@ import {
   type MarkdownDocument,
   type ProjectSummary,
   type ProjectTreeNode,
+  type RendererMenuCommand,
   type WorkspaceSessionSnapshot,
 } from '../../src/shared/contracts';
 
@@ -658,6 +660,45 @@ describe('project workspace integration', () => {
       await screen.findByRole('textbox', { name: 'Markdown editor' }),
     ).toBeTruthy();
     expect(screen.getByRole('document', { name: 'Reading' })).toBeTruthy();
+  });
+
+  it('routes menu undo to the last active Markdown editor with native fallback', async () => {
+    let menuListener:
+      | ((command: RendererMenuCommand) => void)
+      | undefined;
+    const api = installProjectApi({
+      onRendererMenuCommand: vi.fn((listener) => {
+        menuListener = listener;
+        return () => undefined;
+      }),
+    });
+    render(<App />);
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Open Project' }),
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Roadmap' }));
+    const editor = await screen.findByRole('textbox', {
+      name: 'Markdown editor',
+    });
+    fireEvent.focus(editor);
+    editor.textContent = '# Changed';
+    fireEvent.input(editor, { inputType: 'insertText' });
+    await waitFor(() => expect(editor.textContent).toContain('# Changed'));
+
+    act(() => menuListener?.(RENDERER_MENU_COMMANDS.undo));
+    await waitFor(() => expect(editor.textContent).toContain('# Roadmap'));
+    await waitFor(() => expect(document.activeElement).toBe(editor));
+    act(() => menuListener?.(RENDERER_MENU_COMMANDS.redo));
+    await waitFor(() => expect(editor.textContent).toContain('# Changed'));
+
+    const input = document.createElement('input');
+    document.body.append(input);
+    fireEvent.focus(input);
+    act(() => menuListener?.(RENDERER_MENU_COMMANDS.undo));
+    await waitFor(() => {
+      expect(api.executeMenuCommand).toHaveBeenCalledWith('edit.undo');
+    });
   });
 
   it('switches project rail views between the tree and placeholders', async () => {

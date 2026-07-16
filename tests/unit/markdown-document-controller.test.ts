@@ -4,6 +4,7 @@ import {
   MarkdownDocumentController,
   type MarkdownBufferSnapshot,
 } from '../../src/renderer/projects/markdown-document-controller';
+import type { SourceEditTransaction } from '../../src/renderer/projects/markdown-history';
 import type {
   MarkdownDocument,
   SaveMarkdownDocumentRequest,
@@ -15,6 +16,25 @@ const secondRevision = 'b'.repeat(64);
 
 function document(content = '', revision = firstRevision): MarkdownDocument {
   return { nodeId, content, revision };
+}
+
+function edit(
+  before: string,
+  after: string,
+  timestamp = 0,
+): SourceEditTransaction {
+  return {
+    before: {
+      content: before,
+      selection: { start: before.length, end: before.length, direction: 'none' },
+    },
+    after: {
+      content: after,
+      selection: { start: after.length, end: after.length, direction: 'none' },
+    },
+    inputType: 'insertText',
+    timestamp,
+  };
 }
 
 afterEach(() => {
@@ -175,5 +195,99 @@ describe('MarkdownDocumentController', () => {
       dirty: true,
       status: 'conflict',
     });
+  });
+
+  it('undoes and redoes editor transactions with their selections', () => {
+    const controller = new MarkdownDocumentController({
+      reload: vi.fn(),
+      save: vi.fn(),
+    });
+    controller.open(document('one'));
+    controller.commitEditorTransaction(nodeId, edit('one', 'one!'));
+
+    expect(controller.canUndo(nodeId)).toBe(true);
+    expect(controller.undo(nodeId)).toEqual({
+      content: 'one',
+      selection: { start: 3, end: 3, direction: 'none' },
+    });
+    expect(controller.getSnapshot(nodeId)).toMatchObject({
+      content: 'one',
+      dirty: false,
+    });
+    expect(controller.canRedo(nodeId)).toBe(true);
+    expect(controller.redo(nodeId)).toEqual({
+      content: 'one!',
+      selection: { start: 4, end: 4, direction: 'none' },
+    });
+  });
+
+  it('keeps history through autosave and a clean tab remount', async () => {
+    vi.useFakeTimers();
+    const save = vi.fn(async (request: SaveMarkdownDocumentRequest) => ({
+      ok: true as const,
+      value: document(request.content, secondRevision),
+    }));
+    const controller = new MarkdownDocumentController({
+      reload: vi.fn(),
+      save,
+    });
+    controller.open(document('one'));
+    controller.commitEditorTransaction(nodeId, edit('one', 'one!'));
+    await vi.advanceTimersByTimeAsync(500);
+
+    expect(controller.discardClean(nodeId)).toBe(true);
+    controller.open(document('one!', secondRevision));
+    expect(controller.undo(nodeId)?.content).toBe('one');
+    expect(controller.getSnapshot(nodeId)?.dirty).toBe(true);
+  });
+
+  it('resets history on external reload and clamps the saved selection', async () => {
+    const reload = vi.fn(async () => ({
+      ok: true as const,
+      value: document('x', secondRevision),
+    }));
+    const controller = new MarkdownDocumentController({
+      reload,
+      save: vi.fn(),
+    });
+    controller.open(document('long'));
+    controller.commitEditorTransaction(nodeId, edit('long', 'longer'));
+    controller.setEditorSelection(nodeId, {
+      start: 4,
+      end: 6,
+      direction: 'backward',
+    });
+
+    expect(await controller.reload(nodeId)).toBe(true);
+    expect(controller.canUndo(nodeId)).toBe(false);
+    expect(controller.getSnapshot(nodeId)?.selection).toEqual({
+      start: 1,
+      end: 1,
+      direction: 'none',
+    });
+  });
+
+  it('preserves local history when a conflict is overwritten', async () => {
+    const save = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        error: { code: 'conflict', message: 'External edit' },
+      })
+      .mockImplementationOnce(async (request: SaveMarkdownDocumentRequest) => ({
+        ok: true as const,
+        value: document(request.content, secondRevision),
+      }));
+    const controller = new MarkdownDocumentController({
+      reload: vi.fn(),
+      save,
+    });
+    controller.open(document('one'));
+    controller.commitEditorTransaction(nodeId, edit('one', 'one!'));
+
+    expect(await controller.save(nodeId)).toBe(false);
+    expect(await controller.overwrite(nodeId)).toBe(true);
+    expect(controller.canUndo(nodeId)).toBe(true);
+    expect(controller.undo(nodeId)?.content).toBe('one');
   });
 });

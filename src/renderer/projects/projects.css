@@ -507,6 +507,20 @@
 }
 
 .markdown-editor {
+  --md-source-font-size: calc(14px * var(--md-scale, 1));
+  --md-reading-font-size: calc(15px * var(--md-scale, 1));
+  --md-content-padding-block: calc(22px * var(--md-scale, 1));
+  --md-content-padding-inline: calc(28px * var(--md-scale, 1));
+  --md-block-spacing: calc(16px * var(--md-scale, 1));
+  --md-section-spacing: calc(24px * var(--md-scale, 1));
+  --md-h1-size: 1.75em;
+  --md-h2-size: 1.5em;
+  --md-h3-size: 1.25em;
+  --md-h4-size: 1.1em;
+  --md-h5-size: 0.95em;
+  --md-h6-size: 0.9em;
+  --md-heading-line-height: 1.25;
+
   display: flex;
   width: 100%;
   height: 100%;
@@ -607,8 +621,6 @@
 }
 
 .markdown-source {
-  --md-gutter: 48px;
-
   position: relative;
   min-width: 0;
   min-height: 0;
@@ -618,14 +630,16 @@
 }
 
 .markdown-source__editor {
+  --md-gutter: 3.75em;
+
   height: 100%;
-  padding: 22px 28px;
+  padding: var(--md-content-padding-block) var(--md-content-padding-inline);
   overflow: auto;
   outline: 0;
   color: var(--color-text);
   caret-color: var(--color-accent-bright);
   font-family: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, monospace;
-  font-size: calc(14px * var(--md-scale, 1));
+  font-size: var(--md-source-font-size);
   line-height: 1.65;
   tab-size: 2;
   white-space: pre-wrap;
@@ -638,24 +652,35 @@
   background: color-mix(in srgb, var(--color-accent) 42%, transparent);
 }
 
-/* One block per source line, so the number stays on the first visual row of a
-   wrapped line and each line can size itself independently. */
 .md-line {
-  position: relative;
-  display: block;
+  display: grid;
+  grid-template-columns: var(--md-gutter) minmax(0, 1fr);
+  align-items: baseline;
   min-height: 1.65em;
-  padding-left: var(--md-gutter);
 }
 
 .md-line::before {
   content: attr(data-line);
-  position: absolute;
-  left: 0;
-  width: calc(var(--md-gutter) - 14px);
+  grid-column: 1;
+  grid-row: 1;
+  padding-right: 1em;
   color: var(--color-text-disabled);
+  font-size: 1em;
+  font-weight: 400;
   font-variant-numeric: tabular-nums;
+  line-height: inherit;
   text-align: right;
   user-select: none;
+}
+
+.md-line__content {
+  min-width: 0;
+  min-height: 1.65em;
+  grid-column: 2;
+  grid-row: 1;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .md-tok-mark,
@@ -666,23 +691,33 @@
 
 .md-tok-heading {
   color: var(--color-text);
+  font-style: normal;
   font-weight: 700;
+  line-height: var(--md-heading-line-height);
 }
 
 .md-tok-h1 {
-  font-size: 1.7em;
+  font-size: var(--md-h1-size);
 }
 
 .md-tok-h2 {
-  font-size: 1.45em;
+  font-size: var(--md-h2-size);
 }
 
 .md-tok-h3 {
-  font-size: 1.25em;
+  font-size: var(--md-h3-size);
 }
 
 .md-tok-h4 {
-  font-size: 1.1em;
+  font-size: var(--md-h4-size);
+}
+
+.md-tok-h5 {
+  font-size: var(--md-h5-size);
+}
+
+.md-tok-h6 {
+  font-size: var(--md-h6-size);
 }
 
 .md-tok-strong {
@@ -800,23 +835,13 @@
   border-right: 1px solid var(--color-border);
 }
 
-/* Line numbers must not scale with a heading's own font size. */
-.md-line::before {
-  font-size: 14px;
-  font-weight: 400;
-  line-height: 1.65;
-}
-
-/* Typography follows the rendered-markdown conventions GitHub uses: a 1.5 body
-   line-height with fixed block spacing, so headings do not inherit huge
-   em-based margins from their own font size. */
 .markdown-view {
   min-height: 0;
   flex: 1;
   overflow: auto;
-  padding: 22px 28px;
+  padding: var(--md-content-padding-block) var(--md-content-padding-inline);
   color: var(--color-text);
-  font-size: calc(15px * var(--md-scale, 1));
+  font-size: var(--md-reading-font-size);
   line-height: 1.5;
   outline: 0;
   word-wrap: break-word;
@@ -836,10 +861,11 @@
 .markdown-view h4,
 .markdown-view h5,
 .markdown-view h6 {
-  margin: 24px 0 16px;
+  margin: var(--md-section-spacing) 0 var(--md-block-spacing);
   color: var(--color-text);
+  font-style: normal;
   font-weight: 600;
-  line-height: 1.25;
+  line-height: var(--md-heading-line-height);
 }
 
 .markdown-view h1,
@@ -849,28 +875,28 @@
 }
 
 .markdown-view h1 {
-  font-size: 2em;
+  font-size: var(--md-h1-size);
 }
 
 .markdown-view h2 {
-  font-size: 1.5em;
+  font-size: var(--md-h2-size);
 }
 
 .markdown-view h3 {
-  font-size: 1.25em;
+  font-size: var(--md-h3-size);
 }
 
 .markdown-view h4 {
-  font-size: 1em;
+  font-size: var(--md-h4-size);
 }
 
 .markdown-view h5 {
-  font-size: 0.875em;
+  font-size: var(--md-h5-size);
 }
 
 .markdown-view h6 {
   color: var(--color-text-muted);
-  font-size: 0.85em;
+  font-size: var(--md-h6-size);
 }
 
 .markdown-view p,
@@ -878,7 +904,7 @@
 .markdown-view ol,
 .markdown-view blockquote,
 .markdown-view pre {
-  margin: 0 0 16px;
+  margin: 0 0 var(--md-block-spacing);
 }
 
 .markdown-view a {
@@ -900,7 +926,7 @@
 }
 
 .markdown-view pre {
-  padding: 16px;
+  padding: var(--md-block-spacing);
   overflow: auto;
   border-radius: 6px;
   background: var(--color-surface);
@@ -952,7 +978,7 @@
 
 .markdown-view hr {
   height: 0.25em;
-  margin: 24px 0;
+  margin: var(--md-section-spacing) 0;
   border: 0;
   background: var(--color-border);
 }

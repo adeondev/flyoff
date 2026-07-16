@@ -107,18 +107,16 @@ export const APPLICATION_MENU_DEFINITIONS = [
     children: [
       {
         kind: 'action',
-        command: command.undo,
-        target: 'main',
+        command: rendererCommand.undo,
+        target: 'renderer',
         labelKey: 'menu.undo',
-        role: 'undo',
         shortcut: { accelerator: 'CommandOrControl+Z', display: 'Ctrl+Z' },
       },
       {
         kind: 'action',
-        command: command.redo,
-        target: 'main',
+        command: rendererCommand.redo,
+        target: 'renderer',
         labelKey: 'menu.redo',
-        role: 'redo',
         shortcut: {
           accelerator: 'CommandOrControl+Shift+Z',
           display: 'Ctrl+Shift+Z',
