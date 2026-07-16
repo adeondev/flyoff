@@ -617,13 +617,13 @@
   background: var(--color-background);
 }
 
-.markdown-source__highlight,
-.markdown-source__input {
-  position: absolute;
-  margin: 0;
+.markdown-source__editor {
+  height: 100%;
   padding: 22px 28px;
-  border: 0;
-  inset: 0;
+  overflow: auto;
+  outline: 0;
+  color: var(--color-text);
+  caret-color: var(--color-accent-bright);
   font-family: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, monospace;
   font-size: calc(14px * var(--md-scale, 1));
   line-height: 1.65;
@@ -633,24 +633,13 @@
   overflow-wrap: break-word;
 }
 
-.markdown-source__highlight {
-  overflow: hidden;
-  color: var(--color-text);
-  pointer-events: none;
-}
-
-.markdown-source__input {
-  overflow: auto;
-  padding-left: calc(28px + var(--md-gutter));
-  resize: none;
-  outline: 0;
-  background: transparent;
-  color: transparent;
-  caret-color: var(--color-accent-bright);
+.markdown-source__editor::selection,
+.markdown-source__editor ::selection {
+  background: color-mix(in srgb, var(--color-accent) 42%, transparent);
 }
 
 /* One block per source line, so the number stays on the first visual row of a
-   wrapped line while the text keeps the same left edge as the textarea. */
+   wrapped line and each line can size itself independently. */
 .md-line {
   position: relative;
   display: block;
@@ -669,10 +658,6 @@
   user-select: none;
 }
 
-.markdown-source__input::selection {
-  background: color-mix(in srgb, var(--color-accent) 42%, transparent);
-}
-
 .md-tok-mark,
 .md-tok-attr,
 .md-tok-rule {
@@ -681,7 +666,23 @@
 
 .md-tok-heading {
   color: var(--color-text);
-  font-weight: 600;
+  font-weight: 700;
+}
+
+.md-tok-h1 {
+  font-size: 1.7em;
+}
+
+.md-tok-h2 {
+  font-size: 1.45em;
+}
+
+.md-tok-h3 {
+  font-size: 1.25em;
+}
+
+.md-tok-h4 {
+  font-size: 1.1em;
 }
 
 .md-tok-strong {
@@ -797,6 +798,13 @@
 
 .markdown-editor__body--split .markdown-source {
   border-right: 1px solid var(--color-border);
+}
+
+/* Line numbers must not scale with a heading's own font size. */
+.md-line::before {
+  font-size: 14px;
+  font-weight: 400;
+  line-height: 1.65;
 }
 
 /* Typography follows the rendered-markdown conventions GitHub uses: a 1.5 body

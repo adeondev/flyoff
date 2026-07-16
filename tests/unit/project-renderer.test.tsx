@@ -388,7 +388,8 @@ describe('Markdown editor', () => {
     );
 
     const editor = screen.getByRole('textbox', { name: 'projects.editorLabel' });
-    fireEvent.change(editor, { target: { value: '# Changed' } });
+    editor.textContent = '# Changed';
+    fireEvent.input(editor);
     fireEvent.keyDown(editor, { key: 's', ctrlKey: true });
     await waitFor(() => expect(save).toHaveBeenCalledTimes(1));
     expect(save).toHaveBeenCalledWith({
@@ -410,7 +411,7 @@ describe('Markdown editor', () => {
     });
   });
 
-  it('restores and reports the textarea scroll position', () => {
+  it('restores and reports the source scroll position', () => {
     const original: MarkdownDocument = {
       nodeId: note.nodeId,
       content: Array.from({ length: 100 }, (_, index) => `Line ${index}`).join(
@@ -435,7 +436,7 @@ describe('Markdown editor', () => {
 
     const editor = screen.getByRole('textbox', {
       name: 'projects.editorLabel',
-    }) as HTMLTextAreaElement;
+    });
     expect(editor.scrollTop).toBe(72);
     editor.scrollTop = 144;
     fireEvent.scroll(editor);

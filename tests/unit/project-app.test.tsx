@@ -191,10 +191,9 @@ describe('project workspace integration', () => {
     });
     expect(screen.queryByRole('tab', { name: 'Roadmap.md' })).toBeNull();
     expect(
-      (await screen.findByRole('textbox', {
-        name: 'Markdown editor',
-      })) as HTMLTextAreaElement,
-    ).toHaveProperty('value', '# Roadmap');
+      (await screen.findByRole('textbox', { name: 'Markdown editor' }))
+        .textContent,
+    ).toContain('# Roadmap');
 
     fireEvent.click(screen.getByRole('button', { name: 'Close project' }));
 

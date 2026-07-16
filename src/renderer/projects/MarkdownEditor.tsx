@@ -13,7 +13,8 @@ import type { EditorMode } from './editor-mode';
 import { applyMarkdownAction, type MarkdownAction } from './markdown-actions';
 import { MarkdownReadingView } from './MarkdownReadingView';
 import { MarkdownToolbar } from './MarkdownToolbar';
-import { SourceEditor } from './SourceEditor';
+import { RichSourceEditor } from './RichSourceEditor';
+import { readSelection, writeSelection } from './source-caret';
 import type {
   MarkdownDocumentController,
   MarkdownBufferSnapshot,
@@ -85,7 +86,7 @@ export const MarkdownEditor = forwardRef<
   forwardedRef,
 ) {
   const [snapshot, setSnapshot] = useState(() => controller.open(document));
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
   const nodeId = document.nodeId;
 
   useEffect(() => {
@@ -103,9 +104,9 @@ export const MarkdownEditor = forwardRef<
   }, [onDirtyChange, snapshot.dirty]);
 
   useEffect(() => {
-    const textarea = textareaRef.current;
-    if (textarea && textarea.scrollTop !== scrollTop) {
-      textarea.scrollTop = scrollTop;
+    const editor = editorRef.current;
+    if (editor && editor.scrollTop !== scrollTop) {
+      editor.scrollTop = scrollTop;
     }
   }, [scrollTop]);
 
@@ -114,12 +115,12 @@ export const MarkdownEditor = forwardRef<
     () => ({
       flush: () => controller.flush(nodeId),
       isDirty: () => controller.isDirty(nodeId),
-      focus: () => textareaRef.current?.focus(),
+      focus: () => editorRef.current?.focus(),
     }),
     [controller, nodeId],
   );
 
-  function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
+  function handleKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
     if (
       !event.altKey &&
       (event.ctrlKey || event.metaKey) &&
@@ -133,22 +134,18 @@ export const MarkdownEditor = forwardRef<
   }
 
   function handleToolbarAction(action: MarkdownAction): void {
-    const textarea = textareaRef.current;
+    const editor = editorRef.current;
 
-    if (!textarea) {
+    if (!editor) {
       return;
     }
 
-    const edit = applyMarkdownAction(
-      action,
-      snapshot.content,
-      textarea.selectionStart,
-      textarea.selectionEnd,
-    );
+    const { end, start } = readSelection(editor);
+    const edit = applyMarkdownAction(action, snapshot.content, start, end);
     controller.update(nodeId, edit.value);
     requestAnimationFrame(() => {
-      textarea.focus();
-      textarea.setSelectionRange(edit.selectionStart, edit.selectionEnd);
+      editor.focus();
+      writeSelection(editor, edit.selectionStart, edit.selectionEnd);
     });
   }
 
@@ -225,13 +222,13 @@ export const MarkdownEditor = forwardRef<
       )}
       <div className={`markdown-editor__body markdown-editor__body--${mode}`}>
         {mode === 'reading' ? null : (
-          <SourceEditor
+          <RichSourceEditor
             ariaLabel={translate('projects.editorLabel')}
             autoFocus={autoFocus}
+            editorRef={editorRef}
             onChange={(next) => controller.update(nodeId, next)}
             onKeyDown={handleKeyDown}
             onScroll={(scrollPosition) => onScrollChange?.(scrollPosition)}
-            textareaRef={textareaRef}
             value={snapshot.content}
           />
         )}
