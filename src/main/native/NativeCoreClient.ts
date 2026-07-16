@@ -7,6 +7,7 @@ import {
 } from '../../shared/contracts';
 
 const STARTUP_TIMEOUT_MS = 5_000;
+const OUTPUT_LIMIT = 2_000;
 
 export interface NativeCoreClientOptions {
   entryPath: string;
@@ -34,6 +35,7 @@ export class NativeCoreClient {
     return new Promise((resolve, reject) => {
       let settled = false;
       let expectedExit = false;
+      let output = '';
       let child: UtilityProcess | undefined;
 
       const rejectStartup = (error: Error) => {
@@ -49,9 +51,12 @@ export class NativeCoreClient {
       };
 
       const timeout = setTimeout(() => {
+        const detail = output.trim();
         rejectStartup(
           new Error(
-            `The native core did not start within ${STARTUP_TIMEOUT_MS} ms.`,
+            `The native core did not start within ${STARTUP_TIMEOUT_MS} ms.${
+              detail ? `\n\n${detail}` : ''
+            }`,
           ),
         );
       }, STARTUP_TIMEOUT_MS);
@@ -59,7 +64,7 @@ export class NativeCoreClient {
       try {
         child = utilityProcess.fork(this.options.entryPath, [], {
           serviceName: 'Flyoff Native Core',
-          stdio: 'ignore',
+          stdio: ['ignore', 'pipe', 'pipe'],
         });
         this.child = child;
       } catch (error) {
@@ -68,6 +73,15 @@ export class NativeCoreClient {
         reject(error instanceof Error ? error : new Error(String(error)));
         return;
       }
+
+      // Without this the process only reports an exit code, which says nothing
+      // about why the native module refused to load.
+      const collectOutput = (chunk: unknown): void => {
+        output = `${output}${String(chunk)}`.slice(-OUTPUT_LIMIT);
+      };
+
+      child.stderr?.on('data', collectOutput);
+      child.stdout?.on('data', collectOutput);
 
       child.on('message', (message: unknown) => {
         if (!isNativeCoreMessage(message)) {
@@ -116,7 +130,14 @@ export class NativeCoreClient {
         if (!settled) {
           clearTimeout(timeout);
           settled = true;
-          reject(new Error(`The native core exited with code ${code}.`));
+          const detail = output.trim();
+          reject(
+            new Error(
+              `The native core exited with code ${code}.${
+                detail ? `\n\n${detail}` : ''
+              }`,
+            ),
+          );
           return;
         }
 

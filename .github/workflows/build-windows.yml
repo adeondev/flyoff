@@ -29,6 +29,12 @@ jobs:
       - name: Test the native core against Node.js
         run: npm run test:native
 
+      # Every build shipped as 0.1.0, so Squirrel could not tell two builds
+      # apart and installed over itself. Give each build its own version.
+      - name: Version this build
+        shell: bash
+        run: npm version "0.1.${GITHUB_RUN_NUMBER}" --no-git-tag-version --allow-same-version
+
       - name: Make Windows distributables
         run: npm run make -- --platform=win32 --arch=x64
 
