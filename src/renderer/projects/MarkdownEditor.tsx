@@ -10,6 +10,7 @@ import {
 import type { MarkdownDocument } from '../../shared/contracts';
 import type { Translate } from '../pages/page-types';
 import { MarkdownReadingView } from './MarkdownReadingView';
+import { SourceEditor } from './SourceEditor';
 import type {
   MarkdownDocumentController,
   MarkdownBufferSnapshot,
@@ -197,15 +198,13 @@ export const MarkdownEditor = forwardRef<
       ) : null}
       <div className={`markdown-editor__body markdown-editor__body--${mode}`}>
         {mode === 'reading' ? null : (
-          <textarea
-            aria-label={translate('projects.editorLabel')}
+          <SourceEditor
+            ariaLabel={translate('projects.editorLabel')}
             autoFocus={autoFocus}
-            className="markdown-editor__input"
-            onChange={(event) => controller.update(nodeId, event.target.value)}
+            onChange={(next) => controller.update(nodeId, next)}
             onKeyDown={handleKeyDown}
-            onScroll={(event) => onScrollChange?.(event.currentTarget.scrollTop)}
-            ref={textareaRef}
-            spellCheck={false}
+            onScroll={(scrollPosition) => onScrollChange?.(scrollPosition)}
+            textareaRef={textareaRef}
             value={snapshot.content}
           />
         )}

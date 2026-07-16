@@ -606,26 +606,88 @@
   font-size: 12px;
 }
 
-.markdown-editor__input {
-  width: 100%;
-  height: 100%;
+.markdown-source {
+  position: relative;
+  min-width: 0;
   min-height: 0;
   flex: 1;
-  padding: 24px max(28px, calc((100% - 820px) / 2));
-  resize: none;
-  border: 0;
-  outline: 0;
+  overflow: hidden;
   background: var(--color-background);
-  color: var(--color-text);
-  caret-color: var(--color-accent-bright);
+}
+
+.markdown-source__highlight,
+.markdown-source__input {
+  position: absolute;
+  margin: 0;
+  padding: 22px 28px;
+  border: 0;
+  inset: 0;
   font-family: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, monospace;
   font-size: 14px;
   line-height: 1.65;
   tab-size: 2;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
-.markdown-editor__input:focus-visible {
+.markdown-source__highlight {
+  overflow: hidden;
+  color: var(--color-text);
+  pointer-events: none;
+}
+
+.markdown-source__input {
+  overflow: auto;
+  resize: none;
+  outline: 0;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--color-accent-bright);
+}
+
+.markdown-source__input::selection {
+  background: color-mix(in srgb, var(--color-accent) 42%, transparent);
+}
+
+.markdown-source__input:focus-visible {
   box-shadow: inset 0 0 0 1px var(--color-focus-ring);
+}
+
+.md-tok-mark,
+.md-tok-attr,
+.md-tok-rule {
+  color: var(--color-text-disabled);
+}
+
+.md-tok-heading {
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.md-tok-strong {
+  font-weight: 700;
+}
+
+.md-tok-em {
+  font-style: italic;
+}
+
+.md-tok-strike {
+  color: var(--color-text-muted);
+  text-decoration: line-through;
+}
+
+.md-tok-highlight,
+.md-tok-code,
+.md-tok-fence,
+.md-tok-link {
+  color: var(--color-accent-bright);
+}
+
+.md-tok-list,
+.md-tok-task {
+  color: var(--color-accent);
 }
 
 .markdown-editor__meta {
@@ -681,7 +743,7 @@
   min-width: 0;
 }
 
-.markdown-editor__body--split .markdown-editor__input {
+.markdown-editor__body--split .markdown-source {
   border-right: 1px solid var(--color-border);
 }
 
@@ -689,7 +751,7 @@
   min-height: 0;
   flex: 1;
   overflow: auto;
-  padding: 24px max(28px, calc((100% - 820px) / 2));
+  padding: 22px 28px;
   color: var(--color-text);
   font-size: 15px;
   line-height: 1.7;
