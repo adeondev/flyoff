@@ -1408,10 +1408,12 @@ export function App() {
         <ProjectContentPage
           node={projectNodes.get(target.nodeId)}
           nodeId={target.nodeId}
+          pageState={props.descriptor.pageState}
           pageType={target.pageType}
           runtime={projectPageRuntime}
           scrollTop={props.descriptor.scrollTop}
           onScrollChange={props.onScrollChange}
+          onStateChange={props.onStateChange}
           translate={translate}
         />
       );

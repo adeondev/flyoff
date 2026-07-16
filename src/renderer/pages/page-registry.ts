@@ -6,6 +6,10 @@ import homeIcon from '../../../public/images/icons/homepage/home.svg';
 import thisDeviceIcon from '../../../public/images/icons/homepage/this-device.svg';
 import updateIcon from '../../../public/images/icons/homepage/update-app.svg';
 import {
+  createEditorModeState,
+  readEditorMode,
+} from '../projects/editor-mode';
+import {
   INTERNAL_PAGE_IDS,
   type InternalPageId,
   type PageSessionState,
@@ -137,8 +141,8 @@ export const PROJECT_PAGE_REGISTRY = {
     targetType: 'project-content',
     retention: 'active-only',
     stateVersion: 1,
-    createInitialState: createEmptyState,
-    migrateState: migrateEmptyState,
+    createInitialState: () => createEditorModeState('edit'),
+    migrateState: (state) => createEditorModeState(readEditorMode(state)),
   },
 } as const satisfies Record<
   'project-overview' | 'project-content',

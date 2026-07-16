@@ -607,6 +607,8 @@
 }
 
 .markdown-source {
+  --md-gutter: 48px;
+
   position: relative;
   min-width: 0;
   min-height: 0;
@@ -639,11 +641,32 @@
 
 .markdown-source__input {
   overflow: auto;
+  padding-left: calc(28px + var(--md-gutter));
   resize: none;
   outline: 0;
   background: transparent;
   color: transparent;
   caret-color: var(--color-accent-bright);
+}
+
+/* One block per source line, so the number stays on the first visual row of a
+   wrapped line while the text keeps the same left edge as the textarea. */
+.md-line {
+  position: relative;
+  display: block;
+  min-height: 1.65em;
+  padding-left: var(--md-gutter);
+}
+
+.md-line::before {
+  content: attr(data-line);
+  position: absolute;
+  left: 0;
+  width: calc(var(--md-gutter) - 14px);
+  color: var(--color-text-disabled);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  user-select: none;
 }
 
 .markdown-source__input::selection {

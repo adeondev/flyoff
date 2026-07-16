@@ -630,6 +630,37 @@ describe('project workspace integration', () => {
     expect(screen.getByText('No tab open.')).toBeTruthy();
   });
 
+  it('switches the note view mode through page session state', async () => {
+    installProjectApi();
+    render(<App />);
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Open Project' }),
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Roadmap' }));
+    await screen.findByRole('textbox', { name: 'Markdown editor' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Reading' }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', { name: 'Reading' }).getAttribute(
+          'aria-pressed',
+        ),
+      ).toBe('true');
+    });
+    expect(
+      screen.queryByRole('textbox', { name: 'Markdown editor' }),
+    ).toBeNull();
+    expect(screen.getByRole('document', { name: 'Reading' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Split' }));
+    expect(
+      await screen.findByRole('textbox', { name: 'Markdown editor' }),
+    ).toBeTruthy();
+    expect(screen.getByRole('document', { name: 'Reading' })).toBeTruthy();
+  });
+
   it('switches project rail views between the tree and placeholders', async () => {
     installProjectApi();
     render(<App />);

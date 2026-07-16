@@ -30,8 +30,8 @@ export function SourceEditor({
   const highlightRef = useRef<HTMLPreElement>(null);
 
   // highlightSource escapes every character of the note; the only markup in the
-  // result is the token spans this module emits.
-  const html = useMemo(() => `${highlightSource(value)}\n`, [value]);
+  // result is the line and token spans this module emits.
+  const html = useMemo(() => highlightSource(value), [value]);
 
   useEffect(() => {
     const textarea = textareaRef.current;

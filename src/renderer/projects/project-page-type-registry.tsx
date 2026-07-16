@@ -3,10 +3,12 @@ import { useEffect, useState, type ComponentType } from 'react';
 import markdownPageIcon from '../../../public/images/icons/homepage/import-project.svg';
 import type {
   MarkdownDocument,
+  PageSessionState,
   ProjectPageNode,
   ProjectResult,
 } from '../../shared/contracts';
 import type { Translate } from '../pages/page-types';
+import { createEditorModeState, readEditorMode } from './editor-mode';
 import type { MarkdownDocumentController } from './markdown-document-controller';
 import { MarkdownEditor } from './MarkdownEditor';
 import { projectNodeDisplayName } from './project-node-name';
@@ -25,9 +27,11 @@ export interface ProjectPageRuntime {
 export interface ProjectPageComponentProps {
   node?: ProjectPageNode;
   nodeId: string;
+  pageState: PageSessionState;
   runtime: ProjectPageRuntime;
   scrollTop: number;
   onScrollChange: (scrollTop: number) => void;
+  onStateChange: (state: PageSessionState) => void;
   translate: Translate;
 }
 
@@ -63,6 +67,8 @@ function MarkdownProjectPage({
   node,
   nodeId,
   onScrollChange,
+  onStateChange,
+  pageState,
   runtime,
   scrollTop,
   translate,
@@ -137,6 +143,8 @@ function MarkdownProjectPage({
       autoFocus
       controller={controller}
       document={state.document}
+      mode={readEditorMode(pageState)}
+      onModeChange={(mode) => onStateChange(createEditorModeState(mode))}
       onScrollChange={onScrollChange}
       scrollTop={scrollTop}
       title={title}

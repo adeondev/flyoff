@@ -9,6 +9,7 @@ import {
 
 import type { MarkdownDocument } from '../../shared/contracts';
 import type { Translate } from '../pages/page-types';
+import type { EditorMode } from './editor-mode';
 import { MarkdownReadingView } from './MarkdownReadingView';
 import { SourceEditor } from './SourceEditor';
 import type {
@@ -16,9 +17,7 @@ import type {
   MarkdownBufferSnapshot,
 } from './markdown-document-controller';
 
-type EditorMode = 'edit' | 'reading' | 'split';
-
-const EDITOR_MODES: readonly {
+const MODE_OPTIONS: readonly {
   id: EditorMode;
   labelKey: Parameters<Translate>[0];
 }[] = [
@@ -36,10 +35,12 @@ export interface MarkdownEditorHandle {
 export interface MarkdownEditorProps {
   controller: MarkdownDocumentController;
   document: MarkdownDocument;
+  mode?: EditorMode;
   title?: string;
   translate: Translate;
   autoFocus?: boolean;
   onDirtyChange?: (dirty: boolean) => void;
+  onModeChange?: (mode: EditorMode) => void;
   onScrollChange?: (scrollTop: number) => void;
   scrollTop?: number;
 }
@@ -71,7 +72,9 @@ export const MarkdownEditor = forwardRef<
     autoFocus = false,
     controller,
     document,
+    mode = 'edit',
     onDirtyChange,
+    onModeChange,
     onScrollChange,
     scrollTop = 0,
     title,
@@ -80,7 +83,6 @@ export const MarkdownEditor = forwardRef<
   forwardedRef,
 ) {
   const [snapshot, setSnapshot] = useState(() => controller.open(document));
-  const [mode, setMode] = useState<EditorMode>('edit');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const nodeId = document.nodeId;
 
@@ -141,12 +143,12 @@ export const MarkdownEditor = forwardRef<
             className="markdown-editor__modes"
             role="group"
           >
-            {EDITOR_MODES.map((option) => (
+            {MODE_OPTIONS.map((option) => (
               <button
                 aria-pressed={mode === option.id}
                 className="markdown-editor__mode"
                 key={option.id}
-                onClick={() => setMode(option.id)}
+                onClick={() => onModeChange?.(option.id)}
                 type="button"
               >
                 {translate(option.labelKey)}

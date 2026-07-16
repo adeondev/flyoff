@@ -45,14 +45,24 @@ describe('markdown source highlighter', () => {
     expect(highlightSource('[x]{color=red}')).toContain('md-tok-attr');
   });
 
-  it('preserves the exact character count of the source text', () => {
-    const source = '# Hi **there**\n- [ ] task';
+  it('preserves every character of the source text', () => {
+    const source = '# Hi **there**\n\n- [ ] task\n`a < b & c`';
     const text = highlightSource(source)
       .replace(/<[^>]+>/g, '')
       .replace(/&lt;/g, '<')
       .replace(/&gt;/g, '>')
       .replace(/&amp;/g, '&');
 
-    expect(text).toBe(source);
+    // Line breaks come from the per-line blocks, not from text nodes.
+    expect(text).toBe(source.split('\n').join(''));
+  });
+
+  it('emits one numbered line block per source line', () => {
+    const source = 'one\n\nthree';
+    const html = highlightSource(source);
+
+    expect(html.match(/class="md-line"/g)).toHaveLength(3);
+    expect(html).toContain('data-line="1"');
+    expect(html).toContain('data-line="3"');
   });
 });
