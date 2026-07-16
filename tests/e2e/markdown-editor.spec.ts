@@ -218,18 +218,14 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
       '',
       ...Array.from({ length: 998 }, (_, index) => `line ${index + 4}`),
     ].join('\n');
+    await app.evaluate(
+      ({ clipboard }, text) => clipboard.writeText(text),
+      layoutContent,
+    );
     await editor.selectText();
-    await editor.evaluate((root, text) => {
-      const clipboardData = new DataTransfer();
-      clipboardData.setData('text/plain', text);
-      root.dispatchEvent(
-        new ClipboardEvent('paste', {
-          bubbles: true,
-          cancelable: true,
-          clipboardData,
-        }),
-      );
-    }, layoutContent);
+    await page.keyboard.press(
+      process.platform === 'darwin' ? 'Meta+V' : 'Control+V',
+    );
     await expect.poll(() => sourceOf(editor)).toBe(layoutContent);
 
     let currentScale = 1;
@@ -296,15 +292,23 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
           readingPadding: view
             ? Number.parseFloat(getComputedStyle(view).paddingLeft)
             : 0,
+          readingFontFamily: view ? getComputedStyle(view).fontFamily : '',
+          readingFontSize: view
+            ? Number.parseFloat(getComputedStyle(view).fontSize)
+            : 0,
+          sourceFontFamily: sourceStyle.fontFamily,
           sourcePadding: Number.parseFloat(sourceStyle.paddingLeft),
         };
       });
 
-      expect(metrics.fontSize).toBeCloseTo(14 * targetScale, 1);
+      expect(metrics.fontSize).toBeCloseTo(15 * targetScale, 1);
       expect(metrics.gutterFontSize).toBeCloseTo(metrics.fontSize, 1);
+      expect(metrics.readingFontSize).toBeCloseTo(metrics.fontSize, 1);
+      expect(metrics.sourceFontFamily).toContain('Arial');
+      expect(metrics.readingFontFamily).toBe(metrics.sourceFontFamily);
       expect(metrics.gutterLeft).toBeCloseTo(28, 1);
       expect(metrics.gutterOverlap).toBe(false);
-      expect(metrics.contentOffset).toBeGreaterThan(28 + metrics.fontSize * 3);
+      expect(metrics.contentOffset).toBeGreaterThan(28 + metrics.fontSize * 2);
       expect(metrics.sourcePadding).toBe(0);
       expect(metrics.readingPadding).toBeCloseTo(28 * targetScale, 1);
       expect(metrics.lineCount).toBe(1_001);

@@ -16,9 +16,31 @@ describe('markdown DOM renderer', () => {
 
     expect(container.querySelector('h1')?.textContent).toBe('Hi');
     expect(container.querySelector('strong')?.textContent).toBe('bold');
-    expect(container.querySelector('a')?.getAttribute('href')).toBe(
+    expect(container.querySelector('a')?.getAttribute('href')).toBeNull();
+    expect(container.querySelector('a')?.dataset.markdownExternalUrl).toBe(
       'https://a.dev',
     );
+    expect(
+      container.querySelector('h1')?.classList.contains(
+        'markdown-view__heading--divided',
+      ),
+    ).toBe(false);
+  });
+
+  it('marks only custom divided headings for the reading rule', () => {
+    const container = render('#-- Divided\n\n## Plain');
+
+    expect(
+      container.querySelector('h1')?.classList.contains(
+        'markdown-view__heading--divided',
+      ),
+    ).toBe(true);
+    expect(container.querySelector('h1')?.textContent).toBe('Divided');
+    expect(
+      container.querySelector('h2')?.classList.contains(
+        'markdown-view__heading--divided',
+      ),
+    ).toBe(false);
   });
 
   it('does not emit href for disallowed url schemes', () => {
@@ -26,6 +48,16 @@ describe('markdown DOM renderer', () => {
 
     expect(container.querySelector('a')?.hasAttribute('href')).toBe(false);
   });
+
+  it.each(['[relative](/note)', '[app](flyoff://app/note)', '[bad](not-a-url)'])(
+    'keeps non-external links inert: %s',
+    (source) => {
+      const anchor = render(source).querySelector('a')!;
+
+      expect(anchor.hasAttribute('href')).toBe(false);
+      expect(anchor.getAttribute('aria-disabled')).toBe('true');
+    },
+  );
 
   it('applies validated inline colors', () => {
     const container = render('[warn]{color=red}');

@@ -125,6 +125,18 @@ export interface TranslationCatalog {
     modeEdit: string;
     modeReading: string;
     modeSplit: string;
+    editorPosition: string;
+    line: string;
+    column: string;
+    selectedOne: string;
+    selectedMany: string;
+    linkRedirectTitle: string;
+    linkRedirectDescription: string;
+    linkDestination: string;
+    openLink: string;
+    linkOpenFailed: string;
+    dismissNotice: string;
+    notifications: string;
     saving: string;
     saved: string;
     unsaved: string;
@@ -307,6 +319,18 @@ export const ptBR = {
     modeEdit: 'Edição',
     modeReading: 'Leitura',
     modeSplit: 'Dividido',
+    editorPosition: 'Posição no documento',
+    line: 'Linha',
+    column: 'Coluna',
+    selectedOne: 'selecionado',
+    selectedMany: 'selecionados',
+    linkRedirectTitle: 'Abrir link externo?',
+    linkRedirectDescription: 'Você será redirecionado para:',
+    linkDestination: 'Destino',
+    openLink: 'Abrir',
+    linkOpenFailed: 'Não foi possível abrir o link.',
+    dismissNotice: 'Fechar aviso',
+    notifications: 'Notificações',
     saving: 'Salvando…',
     saved: 'Salvo',
     unsaved: 'Alterações não salvas',
@@ -482,6 +506,18 @@ export const enUS = {
     modeEdit: 'Edit',
     modeReading: 'Reading',
     modeSplit: 'Split',
+    editorPosition: 'Document position',
+    line: 'Line',
+    column: 'Column',
+    selectedOne: 'selected',
+    selectedMany: 'selected',
+    linkRedirectTitle: 'Open external link?',
+    linkRedirectDescription: 'You’ll be redirected to:',
+    linkDestination: 'Destination',
+    openLink: 'Open',
+    linkOpenFailed: 'The link could not be opened.',
+    dismissNotice: 'Dismiss notification',
+    notifications: 'Notifications',
     saving: 'Saving…',
     saved: 'Saved',
     unsaved: 'Unsaved changes',

@@ -20,6 +20,7 @@ import { initializeMainI18n } from './i18n';
 import {
   registerBootstrapHandler,
   createSystemTrashItem,
+  registerExternalLinkHandler,
   registerMenuCommandHandler,
   registerProjectHandlers,
   registerTabSessionHandlers,
@@ -91,6 +92,7 @@ let closeCoordinator: CloseCoordinator | undefined;
 let coreClient: NativeCoreClient | undefined;
 let mainWindow: BrowserWindow | undefined;
 let removeBootstrapHandler: (() => void) | undefined;
+let removeExternalLinkHandler: (() => void) | undefined;
 let removeMenuCommandHandler: (() => void) | undefined;
 let removeProjectHandlers: (() => void) | undefined;
 let removeTabSessionHandlers: (() => void) | undefined;
@@ -128,6 +130,8 @@ function cleanupApplication(): void {
   closeCoordinator = undefined;
   removeBootstrapHandler?.();
   removeBootstrapHandler = undefined;
+  removeExternalLinkHandler?.();
+  removeExternalLinkHandler = undefined;
   removeMenuCommandHandler?.();
   removeMenuCommandHandler = undefined;
   removeProjectHandlers?.();
@@ -278,6 +282,7 @@ async function startApplication(): Promise<void> {
     state,
     isAllowedUrl,
   );
+  removeExternalLinkHandler = registerExternalLinkHandler(isAllowedUrl);
 
   const applicationMenu = Menu.buildFromTemplate(
     createApplicationMenuTemplate({

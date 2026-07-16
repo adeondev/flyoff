@@ -35,9 +35,10 @@ import { TrashProjectNodeDialog } from './TrashProjectNodeDialog';
 function createTreeController(
   projectId: string,
   loadChildren: ProjectChildrenLoader,
+  onError?: (message: string) => void,
 ): ProjectTreeController {
   void projectId;
-  return new ProjectTreeController(loadChildren);
+  return new ProjectTreeController(loadChildren, onError);
 }
 
 const EMPTY_NODE_PATH: readonly string[] = [];
@@ -113,14 +114,13 @@ export const ProjectSidebar = forwardRef<
   translate,
 }: ProjectSidebarProps, forwardedRef) {
   const controller = useMemo(
-    () => createTreeController(project.projectId, loadChildren),
-    [loadChildren, project.projectId],
+    () => createTreeController(project.projectId, loadChildren, onError),
+    [loadChildren, onError, project.projectId],
   );
   const [edit, setEdit] = useState<ProjectTreeInlineEdit>();
   const [movingNode, setMovingNode] = useState<ProjectTreeNode>();
   const [trashingNode, setTrashingNode] = useState<ProjectTreeNode>();
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string>();
   const [instancePicker, setInstancePicker] = useState<{
     parentId: string | null;
     position: { x: number; y: number };
@@ -146,7 +146,6 @@ export const ProjectSidebar = forwardRef<
   }, [activeNodePath, controller]);
 
   function reportError(message: string): void {
-    setError(message);
     onError?.(message);
   }
 
@@ -160,7 +159,6 @@ export const ProjectSidebar = forwardRef<
       kind: ProjectTreeNode['kind'],
       pageType?: string,
     ): Promise<void> => {
-      setError(undefined);
       if (parentId) {
         await controller.setExpanded(parentId, true);
       }
@@ -206,7 +204,6 @@ export const ProjectSidebar = forwardRef<
       name,
     );
     setPending(true);
-    setError(undefined);
     try {
       if (edit.mode === 'create') {
         const result = await onCreateNode(
@@ -263,7 +260,6 @@ export const ProjectSidebar = forwardRef<
     }
 
     setPending(true);
-    setError(undefined);
     try {
       const result = await onMoveNode({
         nodeId: node.nodeId,
@@ -391,19 +387,20 @@ export const ProjectSidebar = forwardRef<
           </button>
         </div>
       </header>
-      {error ? (
-        <div className="project-sidebar__error" role="alert">
-          <span>{error}</span>
-          <button
-            aria-label={translate('projects.cancel')}
-            onClick={() => setError(undefined)}
-            type="button"
-          >
-            ×
-          </button>
-        </div>
-      ) : null}
-      <div className="project-sidebar__tree-scroll">
+      <div
+        className="project-sidebar__tree-scroll"
+        onContextMenu={(event) => {
+          if (event.target !== event.currentTarget) {
+            return;
+          }
+          event.preventDefault();
+          openInstancePicker(
+            null,
+            { x: event.clientX, y: event.clientY },
+            event.currentTarget,
+          );
+        }}
+      >
         <ProjectTree
           activeNodeId={activeNodeId}
           controller={controller}
@@ -437,6 +434,7 @@ export const ProjectSidebar = forwardRef<
           controller={controller}
           node={movingNode}
           onCancel={() => setMovingNode(undefined)}
+          onError={reportError}
           onMove={moveFromDialog}
           onMoved={(node) => {
             setMovingNode(undefined);

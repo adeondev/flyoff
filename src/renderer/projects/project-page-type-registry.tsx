@@ -24,6 +24,7 @@ export interface MarkdownPageRuntime {
 
 export interface ProjectPageRuntime {
   markdown: MarkdownPageRuntime;
+  onError?: (message: string) => void;
 }
 
 export interface ProjectPageComponentProps {
@@ -152,6 +153,7 @@ function MarkdownProjectPage({
       document={state.document}
       mode={readEditorMode(pageState)}
       onModeChange={(mode) => onStateChange(createEditorModeState(mode))}
+      onError={runtime.onError}
       onScrollChange={onScrollChange}
       scrollTop={scrollTop}
       title={title}

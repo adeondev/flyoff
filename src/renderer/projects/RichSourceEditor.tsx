@@ -7,6 +7,10 @@ import {
 
 import type { SourceEditTransaction } from './markdown-history';
 import {
+  normalizeSourceText,
+  sourceTextFromTransfer,
+} from './source-clipboard';
+import {
   readSelection,
   readSource,
   replaceRange,
@@ -41,10 +45,6 @@ function collapsedSelection(offset: number): SourceSelection {
   return { start: offset, end: offset, direction: 'none' };
 }
 
-function normalizedText(value: string): string {
-  return value.replace(/\r\n?/g, '\n');
-}
-
 export function RichSourceEditor({
   ariaLabel,
   autoFocus = false,
@@ -61,6 +61,8 @@ export function RichSourceEditor({
 }: RichSourceEditorProps) {
   const composingRef = useRef(false);
   const compositionTimerRef = useRef<number | undefined>(undefined);
+  const suppressedInputRef = useRef<string | undefined>(undefined);
+  const suppressedInputTimerRef = useRef<number | undefined>(undefined);
   const pendingRef = useRef<PendingInput | undefined>(undefined);
   const stateRef = useRef({ content: value, selection });
   const callbacksRef = useRef({
@@ -140,6 +142,17 @@ export function RichSourceEditor({
       );
     }
 
+    function suppressPairedInput(inputType: string): void {
+      if (suppressedInputTimerRef.current !== undefined) {
+        window.clearTimeout(suppressedInputTimerRef.current);
+      }
+      suppressedInputRef.current = inputType;
+      suppressedInputTimerRef.current = window.setTimeout(() => {
+        suppressedInputRef.current = undefined;
+        suppressedInputTimerRef.current = undefined;
+      }, 0);
+    }
+
     function finishNativeInput(inputType?: string): void {
       if (composingRef.current) {
         return;
@@ -187,11 +200,32 @@ export function RichSourceEditor({
         return;
       }
 
+      if (
+        event.inputType === 'insertFromPaste' ||
+        event.inputType === 'insertFromDrop'
+      ) {
+        event.preventDefault();
+        if (suppressedInputRef.current === event.inputType) {
+          return;
+        }
+
+        const inserted = event.dataTransfer
+          ? sourceTextFromTransfer(event.dataTransfer, editor.ownerDocument)
+          : normalizeSourceText(event.data ?? '');
+        if (inserted) {
+          commitReplacement(event.inputType, inserted);
+          suppressPairedInput(event.inputType);
+        }
+        return;
+      }
+
       const before = {
         content: readSource(editor),
         selection: readSelection(editor),
       };
-      const resolved = resolveSourceInput(before, event.inputType, event.data);
+      const data =
+        event.data === null ? null : normalizeSourceText(event.data);
+      const resolved = resolveSourceInput(before, event.inputType, data);
       if (resolved) {
         event.preventDefault();
         if (resolved.content === before.content) {
@@ -219,25 +253,49 @@ export function RichSourceEditor({
     }
 
     function handleInput(event: InputEvent): void {
+      if (suppressedInputRef.current === event.inputType) {
+        reconcileSource(editor, stateRef.current.content);
+        writeSelection(editor, stateRef.current.selection);
+        suppressedInputRef.current = undefined;
+        return;
+      }
       finishNativeInput(event.inputType);
     }
 
     function handlePaste(event: ClipboardEvent): void {
-      const text = event.clipboardData?.getData('text/plain');
-      if (text === undefined) {
+      if (!event.clipboardData) {
         return;
       }
       event.preventDefault();
-      commitReplacement('insertFromPaste', normalizedText(text));
+      if (suppressedInputRef.current === 'insertFromPaste') {
+        return;
+      }
+      const inserted = sourceTextFromTransfer(
+        event.clipboardData,
+        editor.ownerDocument,
+      );
+      if (inserted) {
+        commitReplacement('insertFromPaste', inserted);
+      }
+      suppressPairedInput('insertFromPaste');
     }
 
     function handleDrop(event: DragEvent): void {
-      const text = event.dataTransfer?.getData('text/plain');
-      if (text === undefined || text === '') {
+      if (!event.dataTransfer) {
         return;
       }
       event.preventDefault();
-      commitReplacement('insertFromDrop', normalizedText(text));
+      if (suppressedInputRef.current === 'insertFromDrop') {
+        return;
+      }
+      const inserted = sourceTextFromTransfer(
+        event.dataTransfer,
+        editor.ownerDocument,
+      );
+      if (inserted) {
+        commitReplacement('insertFromDrop', inserted);
+      }
+      suppressPairedInput('insertFromDrop');
     }
 
     function handleCut(event: ClipboardEvent): void {
@@ -282,6 +340,9 @@ export function RichSourceEditor({
       if (compositionTimerRef.current !== undefined) {
         window.clearTimeout(compositionTimerRef.current);
       }
+      if (suppressedInputTimerRef.current !== undefined) {
+        window.clearTimeout(suppressedInputTimerRef.current);
+      }
       composingRef.current = true;
       pendingRef.current = {
         before: {
@@ -294,9 +355,9 @@ export function RichSourceEditor({
     }
 
     function handleCompositionEnd(): void {
-      composingRef.current = false;
       compositionTimerRef.current = window.setTimeout(() => {
         compositionTimerRef.current = undefined;
+        composingRef.current = false;
         finishNativeInput('insertCompositionText');
       }, 0);
     }

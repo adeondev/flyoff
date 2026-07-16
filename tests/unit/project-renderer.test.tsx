@@ -13,7 +13,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { MarkdownEditor } from '../../src/renderer/projects/MarkdownEditor';
 import { MarkdownDocumentController } from '../../src/renderer/projects/markdown-document-controller';
-import { writeSelection } from '../../src/renderer/projects/source-caret';
+import {
+  readSelection,
+  writeSelection,
+} from '../../src/renderer/projects/source-caret';
 import { CreateProjectDialog } from '../../src/renderer/projects/CreateProjectDialog';
 import {
   projectNodeDisplayName,
@@ -274,6 +277,96 @@ describe('project sidebar', () => {
       ).getAttribute('data-parent-id'),
     ).toBe('root');
     expect(screen.queryByText('projects.empty')).toBeNull();
+  });
+
+  it('opens the root picker from the scrollable blank area', async () => {
+    const { container } = render(
+      <ProjectSidebar
+        loadChildren={vi.fn(async () => ({ ok: true as const, value: [] }))}
+        onCreateNode={vi.fn()}
+        onMoveNode={vi.fn()}
+        onOpenNode={vi.fn()}
+        onOpenOverview={vi.fn()}
+        onRenameNode={vi.fn()}
+        onTrashNode={vi.fn()}
+        project={project}
+        translate={translate}
+      />,
+    );
+
+    await screen.findByRole('tree', { name: 'projects.navigation' });
+    const scroll = container.querySelector('.project-sidebar__tree-scroll')!;
+    fireEvent.contextMenu(scroll, { clientX: 91, clientY: 143 });
+
+    expect(
+      (await screen.findByRole('dialog', {
+        name: 'projects.addInstance',
+      })).getAttribute('data-parent-id'),
+    ).toBe('root');
+  });
+
+  it('routes folder loading failures to the global notice host callback', async () => {
+    const onError = vi.fn();
+    render(
+      <ProjectSidebar
+        loadChildren={vi.fn(async () => ({
+          ok: false as const,
+          error: { code: 'io-error' as const, message: 'Folder unavailable' },
+        }))}
+        onCreateNode={vi.fn()}
+        onError={onError}
+        onMoveNode={vi.fn()}
+        onOpenNode={vi.fn()}
+        onOpenOverview={vi.fn()}
+        onRenameNode={vi.fn()}
+        onTrashNode={vi.fn()}
+        project={project}
+        translate={translate}
+      />,
+    );
+
+    await screen.findByRole('button', { name: 'projects.loadFailed' });
+    expect(onError).toHaveBeenCalledWith('Folder unavailable');
+  });
+
+  it('cancels F2 on outside blur and keeps context separate from active selection', async () => {
+    render(
+      <ProjectSidebar
+        activeNodeId={note.nodeId}
+        loadChildren={vi.fn(async () => ({ ok: true as const, value: [note] }))}
+        onCreateNode={vi.fn()}
+        onMoveNode={vi.fn()}
+        onOpenNode={vi.fn()}
+        onOpenOverview={vi.fn()}
+        onRenameNode={vi.fn()}
+        onTrashNode={vi.fn()}
+        project={project}
+        translate={translate}
+      />,
+    );
+
+    const node = await screen.findByRole('button', { name: 'Todo' });
+    const item = node.closest<HTMLElement>('[role="treeitem"]')!;
+    fireEvent.contextMenu(item, { clientX: 20, clientY: 20 });
+    expect(item.classList.contains('project-tree__item--active')).toBe(true);
+    expect(item.classList.contains('project-tree__item--context')).toBe(true);
+    fireEvent.keyDown(
+      screen.getByRole('menuitem', { name: 'projects.rename' }),
+      { key: 'Escape' },
+    );
+    await waitFor(() => {
+      expect(item.classList.contains('project-tree__item--context')).toBe(false);
+      expect(item.classList.contains('project-tree__item--active')).toBe(true);
+    });
+
+    item.focus();
+    fireEvent.keyDown(item, { key: 'F2' });
+    const input = screen.getByRole('textbox', { name: 'projects.name' });
+    fireEvent.blur(input, { relatedTarget: document.body });
+    expect(
+      screen.queryByRole('textbox', { name: 'projects.name' }),
+    ).toBeNull();
+    expect(screen.getByRole('button', { name: 'Todo' })).toBeTruthy();
   });
 
   it('moves a node onto a folder with drag and drop', async () => {
@@ -608,6 +701,194 @@ describe('Markdown editor', () => {
     expect(controller.getSnapshot(note.nodeId)?.content).toBe('==uau==');
     fireEvent.keyDown(editor, { key: 'z', ctrlKey: true, shiftKey: true });
     expect(controller.getSnapshot(note.nodeId)?.content).toBe('==uau==\n');
+  });
+
+  it('recovers line boundaries from HTML clipboard blocks without duplicate input', () => {
+    const original: MarkdownDocument = {
+      nodeId: note.nodeId,
+      content: '',
+      revision: '1'.repeat(64),
+    };
+    const controller = new MarkdownDocumentController({
+      reload: vi.fn(),
+      save: vi.fn(),
+    });
+    render(
+      <MarkdownEditor
+        controller={controller}
+        document={original}
+        translate={translate}
+      />,
+    );
+    const editor = screen.getByRole('textbox', {
+      name: 'projects.editorLabel',
+    });
+    fireEvent.paste(editor, {
+      clipboardData: {
+        getData: (format: string) =>
+          format === 'text/html'
+            ? '<div>one</div><div>two</div><p>three</p>'
+            : 'onetwothree',
+      },
+    });
+    fireEvent.input(editor, { inputType: 'insertFromPaste' });
+
+    expect(controller.getSnapshot(note.nodeId)?.content).toBe(
+      'one\ntwo\nthree',
+    );
+    expect(editor.querySelectorAll(':scope > .md-line')).toHaveLength(3);
+  });
+
+  it('keeps rapid source punctuation in exact caret order', () => {
+    const original: MarkdownDocument = {
+      nodeId: note.nodeId,
+      content: '',
+      revision: '1'.repeat(64),
+    };
+    const controller = new MarkdownDocumentController({
+      reload: vi.fn(),
+      save: vi.fn(),
+    });
+    render(
+      <MarkdownEditor
+        controller={controller}
+        document={original}
+        translate={translate}
+      />,
+    );
+    const editor = screen.getByRole('textbox', {
+      name: 'projects.editorLabel',
+    });
+    const source = '[text](https://x.dev)';
+
+    for (const character of source) {
+      fireEvent(
+        editor,
+        new InputEvent('beforeinput', {
+          bubbles: true,
+          cancelable: true,
+          data: character,
+          inputType: 'insertText',
+        }),
+      );
+    }
+
+    expect(controller.getSnapshot(note.nodeId)?.content).toBe(source);
+  });
+
+  it('reports grapheme line, column and selection status outside reading mode', () => {
+    const original: MarkdownDocument = {
+      nodeId: note.nodeId,
+      content: 'a\n😀x',
+      revision: '1'.repeat(64),
+    };
+    const controller = new MarkdownDocumentController({
+      reload: vi.fn(),
+      save: vi.fn(),
+    });
+    const { rerender } = render(
+      <MarkdownEditor
+        controller={controller}
+        document={original}
+        mode="edit"
+        translate={translate}
+      />,
+    );
+    const editor = screen.getByRole('textbox', {
+      name: 'projects.editorLabel',
+    });
+    writeSelection(editor, 2, original.content.length);
+    fireEvent(document, new Event('selectionchange'));
+
+    expect(
+      screen.getByLabelText('projects.editorPosition').textContent,
+    ).toContain('projects.line 2, projects.column 3');
+    expect(
+      screen.getByLabelText('projects.editorPosition').textContent,
+    ).toContain('2 projects.selectedMany');
+
+    rerender(
+      <MarkdownEditor
+        controller={controller}
+        document={original}
+        mode="reading"
+        translate={translate}
+      />,
+    );
+    expect(screen.queryByLabelText('projects.editorPosition')).toBeNull();
+
+    rerender(
+      <MarkdownEditor
+        controller={controller}
+        document={original}
+        mode="edit"
+        translate={translate}
+      />,
+    );
+    expect(
+      readSelection(
+        screen.getByRole('textbox', { name: 'projects.editorLabel' }),
+      ),
+    ).toMatchObject({ start: 2, end: original.content.length });
+  });
+
+  it('confirms external links before invoking the trusted bridge', async () => {
+    const openExternalLink = vi.fn(async () => ({ ok: true as const }));
+    Object.defineProperty(window, 'flyoff', {
+      configurable: true,
+      value: { openExternalLink },
+    });
+    const original: MarkdownDocument = {
+      nodeId: note.nodeId,
+      content: '[site](https://example.com)',
+      revision: '1'.repeat(64),
+    };
+    const controller = new MarkdownDocumentController({
+      reload: vi.fn(),
+      save: vi.fn(),
+    });
+    render(
+      <MarkdownEditor
+        controller={controller}
+        document={original}
+        mode="reading"
+        translate={translate}
+      />,
+    );
+
+    const link = screen.getByText('site');
+    fireEvent.click(link);
+    const dialog = screen.getByRole('dialog', {
+      name: 'projects.linkRedirectTitle',
+    });
+    expect(within(dialog).getByText('https://example.com')).toBeTruthy();
+    expect(openExternalLink).not.toHaveBeenCalled();
+    fireEvent.click(
+      within(dialog).getByRole('button', { name: 'projects.openLink' }),
+    );
+    await waitFor(() => {
+      expect(openExternalLink).toHaveBeenCalledWith({
+        url: 'https://example.com',
+      });
+    });
+    await waitFor(() => {
+      expect(
+        screen.queryByRole('dialog', {
+          name: 'projects.linkRedirectTitle',
+        }),
+      ).toBeNull();
+    });
+
+    fireEvent.click(link);
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await waitFor(() => {
+      expect(
+        screen.queryByRole('dialog', {
+          name: 'projects.linkRedirectTitle',
+        }),
+      ).toBeNull();
+      expect(document.activeElement).toBe(link);
+    });
   });
 
   it('removes consecutive empty lines with Backspace without moving the gutter', () => {

@@ -3,6 +3,10 @@ import type { ApplicationMenuCommand } from './menu';
 import type { RendererMenuCommand } from './menu';
 import type { CloseRequest, CloseResponse } from './close';
 import type {
+  OpenExternalLinkRequest,
+  OpenExternalLinkResult,
+} from './external-links';
+import type {
   TabSessionRestoreDecision,
   WorkspaceSessionSnapshot,
 } from './tab-session';
@@ -69,6 +73,9 @@ export interface FlyoffApi {
   saveUiState(state: WorkspaceLayoutState): Promise<void>;
   onCloseRequested(listener: (request: CloseRequest) => void): () => void;
   respondToCloseRequest(response: CloseResponse): Promise<void>;
+  openExternalLink(
+    request: OpenExternalLinkRequest,
+  ): Promise<OpenExternalLinkResult>;
   onRendererMenuCommand(
     listener: (command: RendererMenuCommand) => void,
   ): () => void;

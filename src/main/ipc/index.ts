@@ -1,4 +1,5 @@
 export * from './bootstrap';
+export * from './external-links';
 export * from './menu-commands';
 export * from './projects';
 export * from './tab-session';

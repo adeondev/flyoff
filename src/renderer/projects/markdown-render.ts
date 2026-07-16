@@ -5,9 +5,10 @@ import {
 } from '../../shared/markdown';
 
 const SCHEME = /^([a-z][a-z0-9+.-]*):/i;
-const ALLOWED_SCHEMES = /^(https?|mailto|flyoff)$/i;
+const ALLOWED_ASSET_SCHEMES = /^(https?|flyoff)$/i;
+const ALLOWED_EXTERNAL_SCHEMES = /^(https?|mailto)$/i;
 
-function safeUrl(url: string): string | null {
+function safeAssetUrl(url: string): string | null {
   const trimmed = url.trim();
   const scheme = SCHEME.exec(trimmed);
 
@@ -15,7 +16,23 @@ function safeUrl(url: string): string | null {
     return trimmed;
   }
 
-  return ALLOWED_SCHEMES.test(scheme[1]!) ? trimmed : null;
+  return ALLOWED_ASSET_SCHEMES.test(scheme[1]!) ? trimmed : null;
+}
+
+export function safeExternalUrl(url: string): string | null {
+  const trimmed = url.trim();
+  const scheme = SCHEME.exec(trimmed);
+
+  if (!scheme || !ALLOWED_EXTERNAL_SCHEMES.test(scheme[1]!)) {
+    return null;
+  }
+
+  try {
+    new URL(trimmed);
+    return trimmed;
+  } catch {
+    return null;
+  }
 }
 
 function renderInline(nodes: readonly InlineNode[], parent: Node): void {
@@ -59,11 +76,13 @@ function renderInline(nodes: readonly InlineNode[], parent: Node): void {
       }
       case 'link': {
         const element = document.createElement('a');
-        const url = safeUrl(node.url);
+        const url = safeExternalUrl(node.url);
         if (url) {
-          element.href = url;
-          element.target = '_blank';
-          element.rel = 'noopener noreferrer';
+          element.dataset.markdownExternalUrl = url;
+          element.setAttribute('role', 'link');
+          element.tabIndex = 0;
+        } else {
+          element.setAttribute('aria-disabled', 'true');
         }
         if (node.title) {
           element.title = node.title;
@@ -74,7 +93,7 @@ function renderInline(nodes: readonly InlineNode[], parent: Node): void {
       }
       case 'image': {
         const element = document.createElement('img');
-        const url = safeUrl(node.url);
+        const url = safeAssetUrl(node.url);
         if (url) {
           element.src = url;
         }
@@ -94,6 +113,9 @@ function renderBlocks(nodes: readonly BlockNode[], parent: Node): void {
     switch (node.type) {
       case 'heading': {
         const element = document.createElement(`h${node.depth}`);
+        if (node.divided) {
+          element.classList.add('markdown-view__heading--divided');
+        }
         renderInline(node.children, element);
         parent.appendChild(element);
         break;

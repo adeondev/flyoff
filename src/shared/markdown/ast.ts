@@ -8,6 +8,7 @@ export interface Root {
 export interface Heading {
   type: 'heading';
   depth: HeadingDepth;
+  divided: boolean;
   children: InlineNode[];
 }
 

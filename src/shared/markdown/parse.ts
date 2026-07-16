@@ -4,6 +4,7 @@ import { parseInline } from './inline';
 const BLANK = /^[ \t]*$/;
 const FENCE = /^ {0,3}(`{3,}|~{3,})[ \t]*([^`]*)$/;
 const ATX = /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*#*[ \t]*$/;
+const DIVIDED_ATX = /^ {0,3}(#{1,6})--[ \t]+(.*?)[ \t]*#*[ \t]*$/;
 const THEMATIC_BREAK = /^ {0,3}([-*_])[ \t]*(?:\1[ \t]*){2,}$/;
 const BLOCKQUOTE = /^ {0,3}>[ ]?(.*)$/;
 const LIST_ITEM = /^( {0,3})([-*+]|\d{1,9}[.)])([ \t]+)(.*)$/;
@@ -12,6 +13,7 @@ const TASK = /^\[([ xX])\][ \t]+(.*)$/;
 function isBlockStart(line: string): boolean {
   return (
     FENCE.test(line) ||
+    DIVIDED_ATX.test(line) ||
     ATX.test(line) ||
     THEMATIC_BREAK.test(line) ||
     BLOCKQUOTE.test(line) ||
@@ -98,11 +100,24 @@ export function parseBlocks(lines: readonly string[]): BlockNode[] {
       continue;
     }
 
+    const dividedAtx = DIVIDED_ATX.exec(line);
+    if (dividedAtx) {
+      blocks.push({
+        type: 'heading',
+        depth: dividedAtx[1]!.length as HeadingDepth,
+        divided: true,
+        children: parseInline(dividedAtx[2]!.trim()),
+      });
+      index += 1;
+      continue;
+    }
+
     const atx = ATX.exec(line);
     if (atx) {
       blocks.push({
         type: 'heading',
         depth: atx[1]!.length as HeadingDepth,
+        divided: false,
         children: parseInline((atx[2] ?? '').trim()),
       });
       index += 1;

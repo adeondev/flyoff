@@ -145,13 +145,34 @@ function InlineEditor({
   translate,
 }: InlineEditorProps) {
   const [value, setValue] = useState(initialValue);
+  const submittingRef = useRef(false);
+  const observedPendingRef = useRef(false);
+
+  useEffect(() => {
+    if (pending && submittingRef.current) {
+      observedPendingRef.current = true;
+    } else if (!pending && observedPendingRef.current) {
+      submittingRef.current = false;
+      observedPendingRef.current = false;
+    }
+  }, [pending]);
 
   return (
     <form
       className="project-tree__inline-editor"
+      onBlur={(event) => {
+        const next = event.relatedTarget;
+        if (
+          !submittingRef.current &&
+          (!(next instanceof Node) || !event.currentTarget.contains(next))
+        ) {
+          onCancel();
+        }
+      }}
       onSubmit={(event) => {
         event.preventDefault();
         if (value.trim()) {
+          submittingRef.current = true;
           onSubmit(value);
         }
       }}
@@ -455,6 +476,10 @@ export function ProjectTree({
                 aria-setsize={branch.nodes.length}
                 className={`project-tree__item${
                   activeNodeId === node.nodeId ? ' project-tree__item--active' : ''
+                }${
+                  contextMenu?.node.nodeId === node.nodeId
+                    ? ' project-tree__item--context'
+                    : ''
                 }${
                   dropTarget?.nodeId === node.nodeId
                     ? ` project-tree__item--drop-${dropTarget.edge}`

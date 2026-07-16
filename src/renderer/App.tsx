@@ -50,6 +50,8 @@ import {
 } from '../shared';
 import { CloseConfirmationDialog } from './components/dialog/CloseConfirmationDialog';
 import { SessionRestoreToast } from './components/dialog/SessionRestoreToast';
+import { ToastHost } from './components/feedback/ToastHost';
+import { useToastQueue } from './components/feedback/toast-state';
 import {
   MenuBar,
   type MenuBarItem,
@@ -277,9 +279,13 @@ export function App() {
   const [projectNodes, setProjectNodes] = useState<
     ReadonlyMap<string, ProjectTreeNode>
   >(() => new Map());
-  const [projectNotice, setProjectNotice] = useState<string>();
+  const { dismissToast, pushToast, toasts } = useToastQueue();
+  const notifyProjectError = useCallback(
+    (message: string): void => pushToast(message, 'error'),
+    [pushToast],
+  );
   const [documentController, setDocumentController] = useState(() =>
-    createMarkdownController(setProjectNotice),
+    createMarkdownController(notifyProjectError),
   );
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [restoreCandidate, setRestoreCandidate] =
@@ -382,10 +388,10 @@ export function App() {
 
   const replaceDocumentController = useCallback((): void => {
     documentControllerRef.current.dispose();
-    const next = createMarkdownController(setProjectNotice);
+    const next = createMarkdownController(notifyProjectError);
     documentControllerRef.current = next;
     setDocumentController(next);
-  }, []);
+  }, [notifyProjectError]);
 
   const setActiveProject = useCallback(
     (summary: ProjectSummary | null): void => {
@@ -523,7 +529,6 @@ export function App() {
           type: 'open-project-workspace',
           projectId: summary.projectId,
         });
-        setProjectNotice(undefined);
         return true;
       }),
     [dispatchUserAction, enqueueWorkspaceTransition, setActiveProject],
@@ -577,8 +582,9 @@ export function App() {
         controller: documentController,
         readDocument: readMarkdownDocument,
       },
+      onError: notifyProjectError,
     }),
-    [documentController, readMarkdownDocument],
+    [documentController, notifyProjectError, readMarkdownDocument],
   );
 
   const completeConsumedRestore = useCallback(
@@ -643,7 +649,7 @@ export function App() {
 
     const operation = getApi().openProject;
     if (!operation) {
-      setProjectNotice(translate('projects.operationFailed'));
+      notifyProjectError(translate('projects.operationFailed'));
       return;
     }
 
@@ -652,15 +658,21 @@ export function App() {
       if (result.ok) {
         if (!(await activateProject(result.value))) {
           await getApi().closeProject?.().catch(() => undefined);
-          setProjectNotice(translate('projects.operationFailed'));
+          notifyProjectError(translate('projects.operationFailed'));
         }
       } else if (result.error.code !== 'cancelled') {
-        setProjectNotice(result.error.message);
+        notifyProjectError(result.error.message);
       }
     } catch (error) {
-      setProjectNotice(String(error));
+      notifyProjectError(String(error));
     }
-  }, [activateProject, flushProjectDocuments, resolveRestoreCandidate, translate]);
+  }, [
+    activateProject,
+    flushProjectDocuments,
+    notifyProjectError,
+    resolveRestoreCandidate,
+    translate,
+  ]);
 
   const listProjectChildren = useCallback(
     async (request: Parameters<FlyoffApi['listProjectChildren']>[0]) => {
@@ -1052,7 +1064,7 @@ export function App() {
 
     const restore = getApi().restoreProject;
     if (!restore) {
-      setProjectNotice(translate('projects.projectUnavailable'));
+      notifyProjectError(translate('projects.projectUnavailable'));
       completeConsumedRestore({ ...candidate, project: null });
       return;
     }
@@ -1061,13 +1073,13 @@ export function App() {
     try {
       result = await restore({ projectId: projectSnapshot.projectId });
     } catch {
-      setProjectNotice(translate('projects.projectUnavailable'));
+      notifyProjectError(translate('projects.projectUnavailable'));
       completeConsumedRestore({ ...candidate, project: null });
       return;
     }
 
     if (!result.ok) {
-      setProjectNotice(translate('projects.projectUnavailable'));
+      notifyProjectError(translate('projects.projectUnavailable'));
       completeConsumedRestore({ ...candidate, project: null });
       return;
     }
@@ -1116,6 +1128,7 @@ export function App() {
   }, [
     cacheProjectNodes,
     completeConsumedRestore,
+    notifyProjectError,
     setActiveProject,
     translate,
   ]);
@@ -1622,7 +1635,7 @@ export function App() {
             loadChildren={listProjectChildren}
             onBeforeNodeChange={() => flushProjectDocuments()}
             onCreateNode={createProjectNode}
-            onError={setProjectNotice}
+            onError={notifyProjectError}
             onMoveNode={moveProjectNode}
             onNodeChanged={(node) => cacheProjectNodes([node])}
             onCloseProject={() => void closeProjectWorkspace()}
@@ -1752,18 +1765,12 @@ export function App() {
         open={createProjectOpen}
         translate={translate}
       />
-      {projectNotice ? (
-        <div className="project-notice" role="alert">
-          <span>{projectNotice}</span>
-          <button
-            aria-label={translate('projects.cancel')}
-            onClick={() => setProjectNotice(undefined)}
-            type="button"
-          >
-            &times;
-          </button>
-        </div>
-      ) : null}
+      <ToastHost
+        ariaLabel={translate('projects.notifications')}
+        closeLabel={translate('projects.dismissNotice')}
+        onDismiss={dismissToast}
+        toasts={toasts}
+      />
       {closeRequest ? (
         <CloseConfirmationDialog
           intent={closeRequest.intent}

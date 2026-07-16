@@ -117,5 +117,9 @@ export function reconcileSource(root: HTMLElement, source: string): void {
     }
   }
 
+  if (!hasCanonicalLines(root, next.length)) {
+    replaceAll(root, next);
+  }
+
   renderStates.set(root, { lines: next });
 }

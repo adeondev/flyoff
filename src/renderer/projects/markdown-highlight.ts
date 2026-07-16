@@ -172,6 +172,17 @@ function highlightInline(text: string): string {
 }
 
 function highlightLine(line: string): string {
+  const dividedHeading = /^(\s*(#{1,6})--\s+)(.*)$/.exec(line);
+  if (dividedHeading) {
+    return (
+      mark(dividedHeading[1]!) +
+      span(
+        `md-tok-heading md-tok-heading--divided md-tok-h${dividedHeading[2]!.length}`,
+        highlightInline(dividedHeading[3]!),
+      )
+    );
+  }
+
   const heading = /^(\s*(#{1,6})\s+)(.*)$/.exec(line);
   if (heading) {
     return (

@@ -12,7 +12,11 @@
   --color-accent: #b04fd4;
   --color-accent-hover: #962cdc;
   --color-accent-bright: #b862d9;
+  --color-accent-ink: #0d0a0e;
   --color-danger: #b62326;
   --color-danger-active: #c93d40;
   --color-focus-ring: #b04fd4;
+  --font-note: Arial, "Liberation Sans", "Helvetica Neue", sans-serif;
+  --font-code: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas,
+    monospace;
 }

@@ -4,6 +4,8 @@ import {
   isBootstrapState,
   isApplicationMenuCommand,
   isNativeCoreMessage,
+  isOpenExternalLinkRequest,
+  isOpenExternalLinkResult,
   isSpellcheckCapabilities,
   isUiLocale,
   isWindowControlAction,
@@ -139,6 +141,18 @@ describe('shared contract guards', () => {
     expect(isWindowControlAction('move')).toBe(false);
     expect(isWindowState({ maximized: true })).toBe(true);
     expect(isWindowState({ maximized: 'yes' })).toBe(false);
+  });
+
+  it('bounds external link requests and results', () => {
+    expect(isOpenExternalLinkRequest({ url: 'https://example.com' })).toBe(true);
+    expect(isOpenExternalLinkRequest({ url: '' })).toBe(false);
+    expect(isOpenExternalLinkRequest({ url: 'x'.repeat(4_097) })).toBe(false);
+    expect(isOpenExternalLinkRequest({ url: 4 })).toBe(false);
+    expect(isOpenExternalLinkResult({ ok: true })).toBe(true);
+    expect(
+      isOpenExternalLinkResult({ ok: false, error: 'unsupported-scheme' }),
+    ).toBe(true);
+    expect(isOpenExternalLinkResult({ ok: false, error: 'unknown' })).toBe(false);
   });
 
   it('validates native-core ready and error messages', () => {

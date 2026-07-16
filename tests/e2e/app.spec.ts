@@ -209,6 +209,7 @@ test.describe('Flyoff desktop shell', () => {
         onCloseRequestedType: typeof window.flyoff.onCloseRequested,
         respondToCloseRequestType:
           typeof window.flyoff.respondToCloseRequest,
+        openExternalLinkType: typeof window.flyoff.openExternalLink,
         onRendererMenuCommandType:
           typeof window.flyoff.onRendererMenuCommand,
         selectProjectCreateLocationType:
@@ -250,6 +251,7 @@ test.describe('Flyoff desktop shell', () => {
         'saveUiState',
         'onCloseRequested',
         'respondToCloseRequest',
+        'openExternalLink',
         'onRendererMenuCommand',
         'selectProjectCreateLocation',
         'createProject',
@@ -275,6 +277,7 @@ test.describe('Flyoff desktop shell', () => {
       saveTabSessionType: 'function',
       onCloseRequestedType: 'function',
       respondToCloseRequestType: 'function',
+      openExternalLinkType: 'function',
       onRendererMenuCommandType: 'function',
       selectProjectCreateLocationType: 'function',
       createProjectType: 'function',

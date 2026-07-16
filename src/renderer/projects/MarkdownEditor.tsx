@@ -6,6 +6,7 @@ import {
   useState,
   type KeyboardEvent,
 } from 'react';
+import { flushSync } from 'react-dom';
 
 import type { MarkdownDocument } from '../../shared/contracts';
 import type { Translate } from '../pages/page-types';
@@ -15,6 +16,7 @@ import { MarkdownReadingView } from './MarkdownReadingView';
 import { MarkdownToolbar } from './MarkdownToolbar';
 import { RichSourceEditor } from './RichSourceEditor';
 import { readSelection, writeSelection } from './source-caret';
+import { sourcePositionStatus } from './source-status';
 import type { SourceEditTransaction } from './markdown-history';
 import type {
   MarkdownDocumentController,
@@ -44,6 +46,7 @@ export interface MarkdownEditorProps {
   translate: Translate;
   autoFocus?: boolean;
   onDirtyChange?: (dirty: boolean) => void;
+  onError?: (message: string) => void;
   onModeChange?: (mode: EditorMode) => void;
   onScrollChange?: (scrollTop: number) => void;
   scrollTop?: number;
@@ -78,6 +81,7 @@ export const MarkdownEditor = forwardRef<
     document,
     mode = 'edit',
     onDirtyChange,
+    onError,
     onModeChange,
     onScrollChange,
     scrollTop = 0,
@@ -87,6 +91,7 @@ export const MarkdownEditor = forwardRef<
   forwardedRef,
 ) {
   const [snapshot, setSnapshot] = useState(() => controller.open(document));
+  const [liveSelection, setLiveSelection] = useState(snapshot.selection);
   const editorRef = useRef<HTMLDivElement>(null);
   const selectionRef = useRef(snapshot.selection);
   const nodeId = document.nodeId;
@@ -107,6 +112,7 @@ export const MarkdownEditor = forwardRef<
 
   useEffect(() => {
     selectionRef.current = snapshot.selection;
+    setLiveSelection(snapshot.selection);
   }, [snapshot.selection]);
 
   useEffect(() => {
@@ -201,11 +207,14 @@ export const MarkdownEditor = forwardRef<
   }
 
   function handleTransaction(transaction: SourceEditTransaction): void {
-    controller.commitEditorTransaction(nodeId, transaction);
+    flushSync(() => {
+      controller.commitEditorTransaction(nodeId, transaction);
+    });
   }
 
   const status = statusLabel(snapshot, translate);
   const busy = snapshot.status === 'saving' || snapshot.status === 'loading';
+  const position = sourcePositionStatus(snapshot.content, liveSelection);
 
   return (
     <main className="markdown-editor" aria-label={translate('projects.editorLabel')}>
@@ -267,11 +276,6 @@ export const MarkdownEditor = forwardRef<
           </div>
         </section>
       ) : null}
-      {snapshot.status === 'error' ? (
-        <p className="markdown-editor__error" role="alert">
-          {translate('projects.saveFailed')}
-        </p>
-      ) : null}
       {mode === 'reading' ? null : (
         <MarkdownToolbar onAction={handleToolbarAction} translate={translate} />
       )}
@@ -287,11 +291,12 @@ export const MarkdownEditor = forwardRef<
             onScroll={(scrollPosition) => onScrollChange?.(scrollPosition)}
             onSelectionChange={(next) => {
               selectionRef.current = next;
+              setLiveSelection(next);
               controller.setEditorSelection(nodeId, next);
             }}
             onTransaction={handleTransaction}
             onUndo={() => controller.undo(nodeId)}
-            selection={snapshot.selection}
+            selection={liveSelection}
             value={snapshot.content}
           />
         )}
@@ -299,9 +304,32 @@ export const MarkdownEditor = forwardRef<
           <MarkdownReadingView
             ariaLabel={translate('projects.readingView')}
             content={snapshot.content}
+            onError={onError}
+            translate={translate}
           />
         )}
       </div>
+      {mode === 'reading' ? null : (
+        <footer
+          aria-label={translate('projects.editorPosition')}
+          className="markdown-editor__position"
+        >
+          <span>
+            {translate('projects.line')} {position.line},{' '}
+            {translate('projects.column')} {position.column}
+          </span>
+          {position.selected > 0 ? (
+            <span>
+              {position.selected}{' '}
+              {translate(
+                position.selected === 1
+                  ? 'projects.selectedOne'
+                  : 'projects.selectedMany',
+              )}
+            </span>
+          ) : null}
+        </footer>
+      )}
     </main>
   );
 });

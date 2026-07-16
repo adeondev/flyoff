@@ -18,6 +18,14 @@ describe('markdown source highlighter', () => {
     expect(html).toContain('Title');
   });
 
+  it('marks custom divided headings without hiding their source marker', () => {
+    const html = highlightSource('###-- Divided');
+
+    expect(html).toContain('md-tok-heading--divided');
+    expect(html).toContain('###--');
+    expect(html).toContain('Divided');
+  });
+
   it('tokenises inline emphasis and code', () => {
     expect(highlightSource('**bold**')).toContain('md-tok-strong');
     expect(highlightSource('*it*')).toContain('md-tok-em');

@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron/renderer';
 
 import {
   BOOTSTRAP_STATE_CHANNEL,
+  OPEN_EXTERNAL_LINK_CHANNEL,
   CLOSE_REQUESTED_CHANNEL,
   CLOSE_RESPONSE_CHANNEL,
   GET_RESTORABLE_TAB_SESSION_CHANNEL,
@@ -53,6 +54,8 @@ import {
   isProjectTreeNode,
   isProjectTreeNodeList,
   isMarkdownDocument,
+  isOpenExternalLinkRequest,
+  isOpenExternalLinkResult,
   type CreateProjectRequest,
   type GetProjectNodeRequest,
   type RestoreProjectRequest,
@@ -63,6 +66,7 @@ import {
   type TrashProjectNodeRequest,
   type ReadMarkdownDocumentRequest,
   type SaveMarkdownDocumentRequest,
+  type OpenExternalLinkRequest,
 } from '../shared/contracts';
 
 function isNull(value: unknown): value is null {
@@ -194,6 +198,20 @@ const flyoffApi: FlyoffApi = Object.freeze({
     }
 
     await ipcRenderer.invoke(CLOSE_RESPONSE_CHANNEL, response);
+  },
+  async openExternalLink(request: OpenExternalLinkRequest) {
+    if (!isOpenExternalLinkRequest(request)) {
+      throw new TypeError('Invalid external link request.');
+    }
+
+    const result: unknown = await ipcRenderer.invoke(
+      OPEN_EXTERNAL_LINK_CHANNEL,
+      request,
+    );
+    if (!isOpenExternalLinkResult(result)) {
+      throw new Error('The main process returned an invalid link result.');
+    }
+    return result;
   },
   onRendererMenuCommand(
     listener: (command: RendererMenuCommand) => void,

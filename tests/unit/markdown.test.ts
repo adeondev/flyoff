@@ -7,9 +7,32 @@ describe('markdown block parser', () => {
     const root = parseMarkdown('# Title\n\n### Sub');
 
     expect(root.children).toEqual([
-      { type: 'heading', depth: 1, children: [{ type: 'text', value: 'Title' }] },
-      { type: 'heading', depth: 3, children: [{ type: 'text', value: 'Sub' }] },
+      {
+        type: 'heading',
+        depth: 1,
+        divided: false,
+        children: [{ type: 'text', value: 'Title' }],
+      },
+      {
+        type: 'heading',
+        depth: 3,
+        divided: false,
+        children: [{ type: 'text', value: 'Sub' }],
+      },
     ]);
+  });
+
+  it('only divides headings with the custom dash marker', () => {
+    const root = parseMarkdown(
+      '# Plain\n\n#-- Divided\n\n######-- Small\n\n#--missing-space',
+    );
+
+    expect(root.children.slice(0, 3)).toMatchObject([
+      { type: 'heading', depth: 1, divided: false },
+      { type: 'heading', depth: 1, divided: true },
+      { type: 'heading', depth: 6, divided: true },
+    ]);
+    expect(root.children[3]).toMatchObject({ type: 'paragraph' });
   });
 
   it('groups consecutive lines into a paragraph and splits on blank lines', () => {

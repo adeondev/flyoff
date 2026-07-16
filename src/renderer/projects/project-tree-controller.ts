@@ -27,7 +27,10 @@ export class ProjectTreeController {
   private readonly listeners = new Set<() => void>();
   private readonly pending = new Map<string, Promise<boolean>>();
 
-  constructor(private readonly loadChildren: ProjectChildrenLoader) {}
+  constructor(
+    private readonly loadChildren: ProjectChildrenLoader,
+    private readonly onError?: (message: string) => void,
+  ) {}
 
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
@@ -149,6 +152,7 @@ export class ProjectTreeController {
         nodes: result.value,
       });
     } else {
+      this.onError?.(result.error.message);
       this.branches.set(key, {
         status: 'error',
         nodes: this.branches.get(key)?.nodes ?? [],

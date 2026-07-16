@@ -97,6 +97,7 @@ export interface MoveProjectNodeDialogProps {
   node: ProjectTreeNode;
   translate: Translate;
   onCancel: () => void;
+  onError?: (message: string) => void;
   onMove: (
     request: MoveProjectNodeRequest,
   ) => Promise<ProjectResult<ProjectTreeNode>>;
@@ -107,6 +108,7 @@ export function MoveProjectNodeDialog({
   controller,
   node,
   onCancel,
+  onError,
   onMove,
   onMoved,
   translate,
@@ -116,7 +118,6 @@ export function MoveProjectNodeDialog({
     node.parentId,
   );
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string>();
 
   useEffect(() => controller.subscribe(renderVersion), [controller]);
   useEffect(() => {
@@ -130,17 +131,16 @@ export function MoveProjectNodeDialog({
     }
 
     setPending(true);
-    setError(undefined);
     try {
       const result = await onMove({ nodeId: node.nodeId, parentId: destination });
       if (result.ok) {
         await controller.refreshParents([node.parentId, destination]);
         onMoved(result.value);
       } else {
-        setError(result.error.message);
+        onError?.(result.error.message);
       }
     } catch (operationError) {
-      setError(String(operationError));
+      onError?.(String(operationError));
     } finally {
       setPending(false);
     }
@@ -179,11 +179,6 @@ export function MoveProjectNodeDialog({
             translate={translate}
           />
         </div>
-        {error ? (
-          <p className="project-dialog__error" role="alert">
-            {error}
-          </p>
-        ) : null}
         <div className="project-dialog__actions">
           <button disabled={pending} onClick={onCancel} type="button">
             {translate('projects.cancel')}
