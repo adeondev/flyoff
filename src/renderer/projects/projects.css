@@ -625,7 +625,7 @@
   border: 0;
   inset: 0;
   font-family: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas, monospace;
-  font-size: 14px;
+  font-size: calc(14px * var(--md-scale, 1));
   line-height: 1.65;
   tab-size: 2;
   white-space: pre-wrap;
@@ -671,10 +671,6 @@
 
 .markdown-source__input::selection {
   background: color-mix(in srgb, var(--color-accent) 42%, transparent);
-}
-
-.markdown-source__input:focus-visible {
-  box-shadow: inset 0 0 0 1px var(--color-focus-ring);
 }
 
 .md-tok-mark,
@@ -755,6 +751,39 @@
   box-shadow: inset 0 0 0 1px var(--color-focus-ring);
 }
 
+.markdown-toolbar {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 6px 18px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-titlebar);
+}
+
+.markdown-toolbar__button {
+  min-height: 26px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 4px;
+  outline: 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: default;
+}
+
+.markdown-toolbar__button:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.markdown-toolbar__button:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--color-focus-ring);
+}
+
 .markdown-editor__body {
   display: flex;
   min-height: 0;
@@ -770,19 +799,27 @@
   border-right: 1px solid var(--color-border);
 }
 
+/* Typography follows the rendered-markdown conventions GitHub uses: a 1.5 body
+   line-height with fixed block spacing, so headings do not inherit huge
+   em-based margins from their own font size. */
 .markdown-view {
   min-height: 0;
   flex: 1;
   overflow: auto;
   padding: 22px 28px;
   color: var(--color-text);
-  font-size: 15px;
-  line-height: 1.7;
+  font-size: calc(15px * var(--md-scale, 1));
+  line-height: 1.5;
   outline: 0;
+  word-wrap: break-word;
 }
 
-.markdown-view :first-child {
+.markdown-view > :first-child {
   margin-top: 0;
+}
+
+.markdown-view > :last-child {
+  margin-bottom: 0;
 }
 
 .markdown-view h1,
@@ -791,22 +828,41 @@
 .markdown-view h4,
 .markdown-view h5,
 .markdown-view h6 {
-  margin: 1.6em 0 0.6em;
+  margin: 24px 0 16px;
   color: var(--color-text);
   font-weight: 600;
-  line-height: 1.3;
+  line-height: 1.25;
+}
+
+.markdown-view h1,
+.markdown-view h2 {
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--color-border);
 }
 
 .markdown-view h1 {
-  font-size: 1.7em;
+  font-size: 2em;
 }
 
 .markdown-view h2 {
-  font-size: 1.4em;
+  font-size: 1.5em;
 }
 
 .markdown-view h3 {
-  font-size: 1.2em;
+  font-size: 1.25em;
+}
+
+.markdown-view h4 {
+  font-size: 1em;
+}
+
+.markdown-view h5 {
+  font-size: 0.875em;
+}
+
+.markdown-view h6 {
+  color: var(--color-text-muted);
+  font-size: 0.85em;
 }
 
 .markdown-view p,
@@ -814,7 +870,7 @@
 .markdown-view ol,
 .markdown-view blockquote,
 .markdown-view pre {
-  margin: 0 0 0.9em;
+  margin: 0 0 16px;
 }
 
 .markdown-view a {
@@ -827,24 +883,27 @@
 }
 
 .markdown-view code {
-  padding: 0.15em 0.35em;
-  border-radius: 4px;
+  padding: 0.2em 0.4em;
+  border-radius: 6px;
   background: var(--color-surface-active);
   font-family: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas,
     monospace;
-  font-size: 0.88em;
+  font-size: 85%;
 }
 
 .markdown-view pre {
-  padding: 12px 14px;
+  padding: 16px;
   overflow: auto;
   border-radius: 6px;
   background: var(--color-surface);
+  font-size: 85%;
+  line-height: 1.45;
 }
 
 .markdown-view pre code {
   padding: 0;
   background: none;
+  font-size: 100%;
 }
 
 .markdown-view mark {
@@ -855,23 +914,28 @@
 }
 
 .markdown-view blockquote {
-  padding: 0.2em 0 0.2em 1em;
-  border-left: 3px solid var(--color-border);
+  padding: 0 1em;
+  border-left: 0.25em solid var(--color-border);
   color: var(--color-text-muted);
 }
 
 .markdown-view ul,
 .markdown-view ol {
-  padding-left: 1.5em;
+  padding-left: 2em;
 }
 
-.markdown-view li {
-  margin: 0.2em 0;
+.markdown-view li + li {
+  margin-top: 0.25em;
+}
+
+.markdown-view li > ul,
+.markdown-view li > ol {
+  margin: 0.25em 0 0;
 }
 
 .markdown-view li.markdown-view__task {
   list-style: none;
-  margin-left: -1.3em;
+  margin-left: -1.4em;
 }
 
 .markdown-view li.markdown-view__task input {
@@ -879,9 +943,10 @@
 }
 
 .markdown-view hr {
-  margin: 1.4em 0;
+  height: 0.25em;
+  margin: 24px 0;
   border: 0;
-  border-top: 1px solid var(--color-border);
+  background: var(--color-border);
 }
 
 .markdown-view img {

@@ -6,6 +6,8 @@ import {
   type FlyoffPlatform,
 } from '../../shared/contracts';
 
+const ZOOM_STEP = 0.5;
+
 export function registerNavigationShortcuts(
   window: BrowserWindow,
   platform: FlyoffPlatform,
@@ -14,12 +16,19 @@ export function registerNavigationShortcuts(
   const handleBeforeInput = (event: Event, input: Input) => {
     const primary = platform === 'darwin' ? input.meta : input.control;
 
-    if (
-      input.type !== 'keyDown' ||
-      !primary ||
-      input.alt ||
-      input.key.toLowerCase() !== 'w'
-    ) {
+    if (input.type !== 'keyDown' || !primary || input.alt) {
+      return;
+    }
+
+    // The zoom-in menu item is bound to "=" because "+" needs Shift on most
+    // layouts. Cover the Shift and numpad spellings here.
+    if (input.key === '+') {
+      event.preventDefault();
+      webContents.setZoomLevel(webContents.getZoomLevel() + ZOOM_STEP);
+      return;
+    }
+
+    if (input.key.toLowerCase() !== 'w') {
       return;
     }
 

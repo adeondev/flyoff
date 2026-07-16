@@ -12,6 +12,7 @@ import flyoffLogo from '../../public/images/flyoff/flyoff-logo.svg';
 import markdownPageIcon from '../../public/images/icons/homepage/import-project.svg';
 import projectOverviewIcon from '../../public/images/icons/homepage/new-project.svg';
 import {
+  APPLICATION_MENU_COMMANDS,
   APPLICATION_MENU_DEFINITIONS,
   INTERNAL_PAGE_IDS,
   RENDERER_MENU_COMMANDS,
@@ -22,6 +23,8 @@ import {
   isRendererMenuCommand,
   ptBR,
   projectFailure,
+  RAIL_WIDTH_MAX,
+  RAIL_WIDTH_MIN,
   SIDEBAR_WIDTH_MAX,
   SIDEBAR_WIDTH_MIN,
   type ApplicationMenuEntryDefinition,
@@ -302,6 +305,7 @@ export function App() {
   const workspaceTransitionRef = useRef<Promise<void>>(Promise.resolve());
   const workspaceRef = useRef<HTMLDivElement>(null);
   const layout = useWorkspaceLayout();
+  const adjustNoteFontScale = layout.adjustNoteFontScale;
   const translate = translator.translate;
 
   const menus = useMemo(
@@ -1302,6 +1306,38 @@ export function App() {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [dispatchGuardedTabAction, platform]);
 
+  useEffect(() => {
+    // Ctrl+wheel zooms the whole window, except over a note, where it scales
+    // just that surface so long documents can be sized independently.
+    function handleWheel(event: WheelEvent): void {
+      if (!event.ctrlKey || event.deltaY === 0) {
+        return;
+      }
+
+      event.preventDefault();
+      const zoomIn = event.deltaY < 0;
+      const target = event.target;
+      const overNote =
+        target instanceof Element && target.closest('.markdown-editor');
+
+      if (overNote) {
+        adjustNoteFontScale(zoomIn ? 0.1 : -0.1);
+        return;
+      }
+
+      void getApi()
+        .executeMenuCommand?.(
+          zoomIn
+            ? APPLICATION_MENU_COMMANDS.zoomIn
+            : APPLICATION_MENU_COMMANDS.zoomOut,
+        )
+        .catch(() => undefined);
+    }
+
+    document.addEventListener('wheel', handleWheel, { passive: false });
+    return () => document.removeEventListener('wheel', handleWheel);
+  }, [adjustNoteFontScale]);
+
   useEffect(
     () => () => {
       documentControllerRef.current.dispose();
@@ -1484,7 +1520,13 @@ export function App() {
         data-collapsed={layout.collapsed || undefined}
         data-context={workspaceContext}
         ref={workspaceRef}
-        style={{ '--sidebar-width': `${layout.sidebarWidth}px` } as CSSProperties}
+        style={
+          {
+            '--sidebar-width': `${layout.sidebarWidth}px`,
+            '--rail-width': `${layout.railWidth}px`,
+            '--md-scale': String(layout.noteFontScale),
+          } as CSSProperties
+        }
       >
         {workspaceContext === 'home' ? (
           <GlobalSidebar
@@ -1592,6 +1634,19 @@ export function App() {
             translate={translate}
           />
         </div>
+        {workspaceContext === 'project' ? (
+          <PanelResizer
+            ariaLabel={translate('layout.resizeRail')}
+            className="flyoff-panel-resizer--rail"
+            cssVar="--rail-width"
+            max={RAIL_WIDTH_MAX}
+            min={RAIL_WIDTH_MIN}
+            onCommit={layout.setRailWidth}
+            onReset={layout.resetRailWidth}
+            target={workspaceRef}
+            value={layout.railWidth}
+          />
+        ) : null}
         {layout.collapsed ? null : (
           <PanelResizer
             ariaLabel={translate('layout.resizeSidebar')}

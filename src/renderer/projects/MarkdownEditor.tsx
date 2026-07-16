@@ -10,7 +10,9 @@ import {
 import type { MarkdownDocument } from '../../shared/contracts';
 import type { Translate } from '../pages/page-types';
 import type { EditorMode } from './editor-mode';
+import { applyMarkdownAction, type MarkdownAction } from './markdown-actions';
 import { MarkdownReadingView } from './MarkdownReadingView';
+import { MarkdownToolbar } from './MarkdownToolbar';
 import { SourceEditor } from './SourceEditor';
 import type {
   MarkdownDocumentController,
@@ -130,6 +132,26 @@ export const MarkdownEditor = forwardRef<
     }
   }
 
+  function handleToolbarAction(action: MarkdownAction): void {
+    const textarea = textareaRef.current;
+
+    if (!textarea) {
+      return;
+    }
+
+    const edit = applyMarkdownAction(
+      action,
+      snapshot.content,
+      textarea.selectionStart,
+      textarea.selectionEnd,
+    );
+    controller.update(nodeId, edit.value);
+    requestAnimationFrame(() => {
+      textarea.focus();
+      textarea.setSelectionRange(edit.selectionStart, edit.selectionEnd);
+    });
+  }
+
   const status = statusLabel(snapshot, translate);
   const busy = snapshot.status === 'saving' || snapshot.status === 'loading';
 
@@ -198,6 +220,9 @@ export const MarkdownEditor = forwardRef<
           {translate('projects.saveFailed')}
         </p>
       ) : null}
+      {mode === 'reading' ? null : (
+        <MarkdownToolbar onAction={handleToolbarAction} translate={translate} />
+      )}
       <div className={`markdown-editor__body markdown-editor__body--${mode}`}>
         {mode === 'reading' ? null : (
           <SourceEditor

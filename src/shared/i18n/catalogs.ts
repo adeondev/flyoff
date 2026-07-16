@@ -35,6 +35,7 @@ export interface TranslationCatalog {
     expandSidebar: string;
     collapseSidebar: string;
     resizeSidebar: string;
+    resizeRail: string;
   };
   rail: {
     navigation: string;
@@ -43,6 +44,20 @@ export interface TranslationCatalog {
     media: string;
     settings: string;
     comingSoon: string;
+  };
+  toolbar: {
+    label: string;
+    bold: string;
+    italic: string;
+    strike: string;
+    highlight: string;
+    code: string;
+    heading: string;
+    list: string;
+    task: string;
+    quote: string;
+    link: string;
+    divider: string;
   };
   home: {
     prompt: string;
@@ -190,6 +205,7 @@ export const ptBR = {
     expandSidebar: 'Expandir barra lateral',
     collapseSidebar: 'Recolher barra lateral',
     resizeSidebar: 'Redimensionar barra lateral',
+    resizeRail: 'Redimensionar barra de seções',
   },
   rail: {
     navigation: 'Seções do projeto',
@@ -198,6 +214,20 @@ export const ptBR = {
     media: 'Mídia',
     settings: 'Configurações',
     comingSoon: 'Em breve.',
+  },
+  toolbar: {
+    label: 'Ferramentas de markdown',
+    bold: 'Negrito',
+    italic: 'Itálico',
+    strike: 'Tachado',
+    highlight: 'Destaque',
+    code: 'Código',
+    heading: 'Título',
+    list: 'Lista',
+    task: 'Tarefa',
+    quote: 'Citação',
+    link: 'Link',
+    divider: 'Divisor',
   },
   home: {
     prompt: 'O que vai fazer hoje?',
@@ -340,6 +370,7 @@ export const enUS = {
     expandSidebar: 'Expand sidebar',
     collapseSidebar: 'Collapse sidebar',
     resizeSidebar: 'Resize sidebar',
+    resizeRail: 'Resize section bar',
   },
   rail: {
     navigation: 'Project sections',
@@ -348,6 +379,20 @@ export const enUS = {
     media: 'Media',
     settings: 'Settings',
     comingSoon: 'Coming soon.',
+  },
+  toolbar: {
+    label: 'Markdown tools',
+    bold: 'Bold',
+    italic: 'Italic',
+    strike: 'Strike',
+    highlight: 'Highlight',
+    code: 'Code',
+    heading: 'Heading',
+    list: 'List',
+    task: 'Task',
+    quote: 'Quote',
+    link: 'Link',
+    divider: 'Divider',
   },
   home: {
     prompt: 'What would you like to do today?',

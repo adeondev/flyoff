@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
+  clampNoteFontScale,
+  clampRailWidth,
   clampSidebarWidth,
   createDefaultWorkspaceLayoutState,
+  NOTE_FONT_SCALE_DEFAULT,
+  RAIL_WIDTH_DEFAULT,
   SIDEBAR_WIDTH_DEFAULT,
   type FlyoffApi,
   type WorkspaceLayoutState,
@@ -17,12 +21,18 @@ function getApi(): Partial<FlyoffApi> {
 export interface WorkspaceLayoutControls {
   collapsed: boolean;
   sidebarWidth: number;
+  railWidth: number;
   railViewId: string;
+  noteFontScale: number;
   ready: boolean;
   toggleCollapsed: () => void;
   setSidebarWidth: (width: number) => void;
   resetSidebarWidth: () => void;
+  setRailWidth: (width: number) => void;
+  resetRailWidth: () => void;
   setRailViewId: (railViewId: string) => void;
+  adjustNoteFontScale: (delta: number) => void;
+  resetNoteFontScale: () => void;
 }
 
 export function useWorkspaceLayout(): WorkspaceLayoutControls {
@@ -99,6 +109,36 @@ export function useWorkspaceLayout(): WorkspaceLayoutControls {
     setSidebarWidth(SIDEBAR_WIDTH_DEFAULT);
   }, [setSidebarWidth]);
 
+  const setRailWidth = useCallback(
+    (width: number) => {
+      const clamped = clampRailWidth(width);
+      if (clamped !== layoutRef.current.railWidth) {
+        apply({ railWidth: clamped });
+      }
+    },
+    [apply],
+  );
+
+  const resetRailWidth = useCallback(() => {
+    setRailWidth(RAIL_WIDTH_DEFAULT);
+  }, [setRailWidth]);
+
+  const adjustNoteFontScale = useCallback(
+    (delta: number) => {
+      const next = clampNoteFontScale(layoutRef.current.noteFontScale + delta);
+      if (next !== layoutRef.current.noteFontScale) {
+        apply({ noteFontScale: next });
+      }
+    },
+    [apply],
+  );
+
+  const resetNoteFontScale = useCallback(() => {
+    if (layoutRef.current.noteFontScale !== NOTE_FONT_SCALE_DEFAULT) {
+      apply({ noteFontScale: NOTE_FONT_SCALE_DEFAULT });
+    }
+  }, [apply]);
+
   const setRailViewId = useCallback(
     (railViewId: string) => {
       if (railViewId !== layoutRef.current.railViewId) {
@@ -111,11 +151,17 @@ export function useWorkspaceLayout(): WorkspaceLayoutControls {
   return {
     collapsed: layout.sidebarCollapsed,
     sidebarWidth: layout.sidebarWidth,
+    railWidth: layout.railWidth,
     railViewId: layout.railViewId,
+    noteFontScale: layout.noteFontScale,
     ready,
     toggleCollapsed,
     setSidebarWidth,
     resetSidebarWidth,
+    setRailWidth,
+    resetRailWidth,
     setRailViewId,
+    adjustNoteFontScale,
+    resetNoteFontScale,
   };
 }

@@ -14,6 +14,10 @@
   left: calc(var(--rail-width) + var(--sidebar-width));
 }
 
+.workspace[data-context='project'] .flyoff-panel-resizer--rail {
+  left: var(--rail-width);
+}
+
 .flyoff-panel-resizer::before {
   content: '';
   position: absolute;

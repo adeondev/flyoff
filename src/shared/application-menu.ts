@@ -178,7 +178,10 @@ export const APPLICATION_MENU_DEFINITIONS = [
         target: 'main',
         labelKey: 'menu.zoomIn',
         role: 'zoomIn',
-        shortcut: { accelerator: 'CommandOrControl+Plus', display: 'Ctrl++' },
+        // "Plus" only fires with Shift on most layouts; "=" is the key users
+        // actually press for zoom in. Shift+= and numpad + are handled by the
+        // window navigation shortcuts.
+        shortcut: { accelerator: 'CommandOrControl+=', display: 'Ctrl++' },
       },
       {
         kind: 'action',
