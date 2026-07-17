@@ -10,11 +10,14 @@ const child = spawn(
     '--smoke-test',
     '--remote-debugging-address=127.0.0.1',
     '--remote-debugging-port=0',
+    ...(process.platform === 'linux' && process.env.CI
+      ? ['--no-sandbox']
+      : []),
   ],
   {
-  env: process.env,
-  stdio: ['ignore', 'pipe', 'pipe'],
-  windowsHide: true,
+    env: process.env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
   },
 );
 

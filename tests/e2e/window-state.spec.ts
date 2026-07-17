@@ -66,11 +66,19 @@ test('restores normal bounds, maximized state and minimized state', async () => 
         }
 
         const workArea = screen.getPrimaryDisplay().workArea;
+        const width = Math.min(1_000, workArea.width);
+        const height = Math.min(680, workArea.height);
         const bounds = {
-          x: workArea.x + 40,
-          y: workArea.y + 40,
-          width: Math.min(1_000, workArea.width),
-          height: Math.min(680, workArea.height),
+          x: Math.min(
+            workArea.x + 40,
+            workArea.x + workArea.width - width,
+          ),
+          y: Math.min(
+            workArea.y + 40,
+            workArea.y + workArea.height - height,
+          ),
+          width,
+          height,
         };
 
         window.setBounds(bounds);

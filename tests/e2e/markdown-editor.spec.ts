@@ -72,10 +72,20 @@ async function stopApplication(app: ElectronApplication | undefined) {
   if (!app) {
     return;
   }
+
   const child = app.process();
   if (child.exitCode === null) {
+    const exited = new Promise<void>((resolve) => {
+      const timeout = setTimeout(resolve, 3_000);
+      child.once('exit', () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+    });
     terminateProcessTree(child);
+    await exited;
   }
+
   await app.close().catch(() => undefined);
 }
 
@@ -370,7 +380,17 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
     );
   } finally {
     await stopApplication(app);
-    await rm(userDataPath, { recursive: true, force: true });
-    await rm(projectParent, { recursive: true, force: true });
+    await rm(userDataPath, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
+    await rm(projectParent, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
   }
 });
