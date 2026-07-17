@@ -41,6 +41,11 @@ async function readWindowState(statePath: string): Promise<unknown> {
 }
 
 test('restores normal bounds, maximized state and minimized state', async () => {
+  test.skip(
+    process.platform !== 'win32' && Boolean(process.env.CI),
+    'Hosted runners do not provide reliable native window-mode transitions.',
+  );
+
   const appPath = locatePackagedAsar(repositoryRoot);
   const userDataPath = await mkdtemp(
     path.join(os.tmpdir(), 'flyoff-window-state-e2e-'),

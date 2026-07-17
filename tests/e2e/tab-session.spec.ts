@@ -192,6 +192,7 @@ test.describe('tab session restoration', () => {
 
       await expect(running.page.getByRole('status')).toBeVisible();
       await running.page
+        .getByRole('status')
         .getByRole('button', { name: labels.restore, exact: true })
         .click();
 

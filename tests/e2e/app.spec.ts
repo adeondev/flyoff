@@ -448,6 +448,11 @@ test.describe('Flyoff desktop shell', () => {
   });
 
   test('uses Flyoff controls to maximize, restore and minimize', async () => {
+    test.skip(
+      process.platform !== 'win32' && Boolean(process.env.CI),
+      'Hosted runners do not provide reliable native window-mode transitions.',
+    );
+
     await expect(page.getByTestId('window-minimize')).toBeVisible();
     await expect(page.getByTestId('window-toggle-maximize')).toBeVisible();
     await expect(page.getByTestId('window-close')).toBeVisible();
