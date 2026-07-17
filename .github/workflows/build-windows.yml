@@ -1,12 +1,16 @@
-name: Build Windows
+name: Release Windows
 
 on:
   workflow_dispatch:
   push:
-    branches: ['build/windows-installer']
+    tags: ['v*']
 
 permissions:
   contents: write
+
+concurrency:
+  group: release-windows-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   make:
@@ -26,32 +30,55 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Test the native core against Node.js
-        run: npm run test:native
+      - name: Verify source
+        run: npm run verify
 
-      # Every build shipped as 0.1.0, so Squirrel could not tell two builds
-      # apart and installed over itself. Give each build its own version.
       - name: Version this build
         shell: bash
-        run: npm version "0.1.${GITHUB_RUN_NUMBER}" --no-git-tag-version --allow-same-version
+        run: |
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="0.1.${GITHUB_RUN_NUMBER}"
+          fi
+          npm version "$version" --no-git-tag-version --allow-same-version
 
       - name: Make Windows distributables
         run: npm run make -- --platform=win32 --arch=x64
 
-      - name: Publish distributables to a GitHub Release
+      - name: Upload distributables
+        uses: actions/upload-artifact@v4
+        with:
+          name: flyoff-Windows-x64
+          path: |
+            out/make/**/*.exe
+            out/make/**/*.zip
+          if-no-files-found: error
+
+      - name: Publish GitHub release
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          tag="windows-build"
           mapfile -t files < <(find out/make -type f \( -name '*.exe' -o -name '*.zip' \))
           if [ "${#files[@]}" -eq 0 ]; then
             echo "No distributables found under out/make" >&2
             exit 1
           fi
-          printf 'Publishing: %s\n' "${files[@]}"
-          gh release delete "$tag" --yes --cleanup-tag 2>/dev/null || true
-          gh release create "$tag" "${files[@]}" \
-            --title "Flyoff — Windows x64" \
-            --notes "Automated Windows x64 build: Squirrel installer (Setup.exe) and portable zip. Commit ${GITHUB_SHA}." \
-            --prerelease
+
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag="windows-build-${GITHUB_RUN_NUMBER}"
+          fi
+
+          release_args=(--title "Flyoff ${tag} - Windows x64")
+          release_args+=(--notes "Windows x64 build from commit ${GITHUB_SHA}.")
+          if [ "$GITHUB_REF_TYPE" != "tag" ] || [[ "$tag" == *-* ]]; then
+            release_args+=(--prerelease)
+          fi
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "${files[@]}" --clobber
+          else
+            gh release create "$tag" "${files[@]}" "${release_args[@]}"
+          fi

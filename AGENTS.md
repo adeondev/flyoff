@@ -18,6 +18,20 @@ Todo trabalho realizado neste projeto deve seguir as diretrizes abaixo.
 
 * **Não abuse de títulos ou destaques escritos completamente em letras maiúsculas**, como `O QUE FAZER?`. Prefira formatos naturais, como `O que fazer?`, exceto quando o conteúdo for de extrema importância.
 
+### Resposta imediata e eficiência percebida
+
+* Toda interação deve fornecer resposta visual no mesmo frame. Operações assíncronas locais devem preservar o conteúdo estável e publicar o novo resultado de uma vez, sem estados intermediários que causem flick.
+
+* Microinterações devem durar entre 80 e 120 ms. Uma saída nunca pode ser mais lenta que a entrada correspondente e `prefers-reduced-motion` deve remover o movimento imediatamente.
+
+* Não use fades decorativos nem reduza a opacidade de controles inteiros durante entrada ou saída. Use apenas uma transição responsável pela mudança visual; não combine animações da própria ação com animações individuais de elementos vizinhos.
+
+* Loading transitório é proibido para operações locais rápidas. Quando a resposta visual do próprio controle já comunica a ação, mantenha a região estável e use `aria-busy` para comunicar a espera às tecnologias assistivas.
+
+* Controles somente com ícone devem ter `aria-label` e tooltip Flyoff. O atributo HTML nativo `title` é proibido no renderer; nomes acessíveis não podem depender de tooltip.
+
+* Tooltips Flyoff abrem após 800 ms no hover e imediatamente no foco. Devem fechar com `Escape`, permanecer abertos durante a transferência do ponteiro e respeitar os limites do viewport.
+
 ## Código e organização
 
 * Mantenha o código limpo, legível e livre de comentários desnecessários.
@@ -112,6 +126,6 @@ O Flyoff deve ser desenvolvido como um projeto profissional, escalável e colabo
 
 * O renderer não pode acessar o filesystem para persistir a sessão. Leitura, validação estrutural, gravação e confirmação de encerramento permanecem atrás da ponte segura do preload.
 
-* Abas podem usar transições curtas de tamanho, posição e opacidade, de até 120 ms, para abertura, fechamento e reorganização com aparência de navegador. Abertura e fechamento devem expandir ou recolher a largura da própria aba, permitindo que o layout reposicione as vizinhas sem animações individuais de “bump”. O arrasto deve responder diretamente ao ponteiro e todas essas transições devem desaparecer em `prefers-reduced-motion`. Popup de encerramento e aviso de restauração continuam limitados a opacidade de até 45 ms, sem movimento ou escala.
+* Abas podem usar transições de 80 a 100 ms para abertura, fechamento e reorganização com aparência de navegador. Abertura e fechamento devem expandir ou recolher somente a largura da própria aba, sem fade, transparência ou animações individuais de “bump” nas vizinhas. O arrasto deve responder diretamente ao ponteiro e todas essas transições devem desaparecer em `prefers-reduced-motion`. Popup de encerramento e aviso de restauração continuam limitados a opacidade de até 45 ms, sem movimento ou escala.
 
-* Todo código deve ser planejado e implementado com compatibilidade obrigatória entre as três plataformas suportadas: Windows, macOS e Linux.*
+* Todo código deve ser planejado e implementado com compatibilidade obrigatória entre as três plataformas suportadas: Windows, macOS e Linux.
