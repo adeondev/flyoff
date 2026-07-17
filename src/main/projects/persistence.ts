@@ -115,6 +115,10 @@ export async function readBoundedFile(
   let handle: Awaited<ReturnType<typeof open>> | undefined;
 
   try {
+    const containmentRoot =
+      options.containmentRoot === undefined
+        ? undefined
+        : await realpath(options.containmentRoot);
     const initialStats = await lstat(filePath, { bigint: true });
 
     if (initialStats.isSymbolicLink()) {
@@ -133,7 +137,7 @@ export async function readBoundedFile(
     assertSafeCanonicalPath(
       initialCanonicalPath,
       undefined,
-      options.containmentRoot,
+      containmentRoot,
       unsafePathMessage,
     );
 
@@ -174,7 +178,7 @@ export async function readBoundedFile(
     assertSafeCanonicalPath(
       currentCanonicalPath,
       initialCanonicalPath,
-      options.containmentRoot,
+      containmentRoot,
       unsafePathMessage,
     );
 

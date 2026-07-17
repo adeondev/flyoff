@@ -2,11 +2,13 @@ import { randomUUID } from 'node:crypto';
 import {
   appendFileSync,
   copyFileSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   renameSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import os from 'node:os';
@@ -98,6 +100,24 @@ afterEach(() => {
 });
 
 describe('bounded project reads', () => {
+  it('accepts files through a non-canonical containment root', async () => {
+    const parentPath = createTemporaryDirectory();
+    const canonicalRoot = path.join(parentPath, 'canonical');
+    const containmentRoot = path.join(parentPath, 'alias');
+    mkdirSync(canonicalRoot);
+    symlinkSync(
+      canonicalRoot,
+      containmentRoot,
+      process.platform === 'win32' ? 'junction' : 'dir',
+    );
+    const filePath = path.join(containmentRoot, 'bounded.bin');
+    writeFileSync(filePath, '1234');
+
+    await expect(
+      readBoundedFile(filePath, 4, { containmentRoot }),
+    ).resolves.toEqual(Buffer.from('1234'));
+  });
+
   it('accepts the exact limit and rejects growth between validation and open', async () => {
     const rootPath = createTemporaryDirectory();
     const filePath = path.join(rootPath, 'bounded.bin');
