@@ -17,6 +17,15 @@ export interface ProjectTreeBranch {
 
 const ROOT_BRANCH = '__flyoff_project_root__';
 
+export const PROJECT_TREE_EXPAND_LIMIT = 500;
+export const PROJECT_TREE_EXPAND_CONCURRENCY = 4;
+
+export interface ProjectTreeExpandResult {
+  expandedCount: number;
+  processedCount: number;
+  truncated: boolean;
+}
+
 function branchKey(parentId: string | null): string {
   return parentId ?? ROOT_BRANCH;
 }
@@ -64,6 +73,105 @@ export class ProjectTreeController {
 
   async toggle(nodeId: string): Promise<boolean> {
     return this.setExpanded(nodeId, !this.expanded.has(nodeId));
+  }
+
+  canExpandBranch(parentId: string | null): boolean {
+    if (parentId !== null && !this.expanded.has(parentId)) {
+      return true;
+    }
+    if (this.getBranch(parentId).status !== 'loaded') {
+      return true;
+    }
+
+    return this.branchFolderIds(parentId).some(
+      (nodeId) =>
+        !this.expanded.has(nodeId) ||
+        this.getBranch(nodeId).status !== 'loaded',
+    );
+  }
+
+  canCollapseBranch(parentId: string | null): boolean {
+    return this.branchFolderIds(parentId, parentId !== null).some((nodeId) =>
+      this.expanded.has(nodeId),
+    );
+  }
+
+  async expandBranch(
+    parentId: string | null,
+    limit = PROJECT_TREE_EXPAND_LIMIT,
+  ): Promise<ProjectTreeExpandResult> {
+    const queue: string[] = [];
+    const queued = new Set<string>();
+    const processed = new Set<string>();
+    let expandedCount = 0;
+
+    const enqueue = (nodeId: string): void => {
+      if (!queued.has(nodeId) && !processed.has(nodeId)) {
+        queued.add(nodeId);
+        queue.push(nodeId);
+      }
+    };
+
+    if (parentId === null) {
+      await this.load(null);
+      for (const node of this.getBranch(null).nodes) {
+        if (node.kind === 'folder') {
+          enqueue(node.nodeId);
+        }
+      }
+    } else {
+      enqueue(parentId);
+    }
+
+    while (queue.length > 0 && processed.size < limit) {
+      const available = Math.min(
+        PROJECT_TREE_EXPAND_CONCURRENCY,
+        limit - processed.size,
+      );
+      const batch = queue.splice(0, available);
+      let changed = false;
+
+      for (const nodeId of batch) {
+        queued.delete(nodeId);
+        processed.add(nodeId);
+        if (!this.expanded.has(nodeId)) {
+          this.expanded.add(nodeId);
+          expandedCount += 1;
+          changed = true;
+        }
+      }
+      if (changed) {
+        this.emit();
+      }
+
+      await Promise.all(batch.map((nodeId) => this.load(nodeId)));
+      for (const nodeId of batch) {
+        for (const node of this.getBranch(nodeId).nodes) {
+          if (node.kind === 'folder') {
+            enqueue(node.nodeId);
+          }
+        }
+      }
+    }
+
+    return {
+      expandedCount,
+      processedCount: processed.size,
+      truncated: queue.length > 0,
+    };
+  }
+
+  collapseBranch(parentId: string | null): number {
+    let collapsedCount = 0;
+    for (const nodeId of this.branchFolderIds(parentId, parentId !== null)) {
+      if (this.expanded.delete(nodeId)) {
+        collapsedCount += 1;
+      }
+    }
+    if (collapsedCount > 0) {
+      this.emit();
+    }
+    return collapsedCount;
   }
 
   async load(parentId: string | null, force = false): Promise<boolean> {
@@ -167,5 +275,30 @@ export class ProjectTreeController {
     for (const listener of this.listeners) {
       listener();
     }
+  }
+
+  private branchFolderIds(
+    parentId: string | null,
+    includeParent = false,
+  ): string[] {
+    const result: string[] = [];
+    const visited = new Set<string>();
+    const visit = (branchParentId: string | null): void => {
+      for (const node of this.getBranch(branchParentId).nodes) {
+        if (node.kind !== 'folder' || visited.has(node.nodeId)) {
+          continue;
+        }
+        visited.add(node.nodeId);
+        result.push(node.nodeId);
+        visit(node.nodeId);
+      }
+    };
+
+    if (includeParent && parentId !== null) {
+      visited.add(parentId);
+      result.push(parentId);
+    }
+    visit(parentId);
+    return result;
   }
 }

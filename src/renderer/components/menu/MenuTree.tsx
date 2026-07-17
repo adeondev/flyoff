@@ -404,6 +404,9 @@ function MenuSurface({
             aria-controls={hasSubmenu ? `${id}-${item.id}` : undefined}
             aria-expanded={hasSubmenu ? isSubmenuOpen : undefined}
             aria-haspopup={hasSubmenu ? 'menu' : undefined}
+            aria-keyshortcuts={
+              item.kind === 'action' ? item.shortcut : undefined
+            }
             className={`flyoff-menu__item${
               item.kind === 'action' && item.tone === 'danger'
                 ? ' flyoff-menu__item--danger'
@@ -434,10 +437,15 @@ function MenuSurface({
           >
             <span className="flyoff-menu__item-label">{item.label}</span>
             {item.kind === 'action' && item.shortcut ? (
-              <span className="flyoff-menu__shortcut">{item.shortcut}</span>
+              <span aria-hidden="true" className="flyoff-menu__shortcut">
+                {item.shortcut}
+              </span>
             ) : null}
             {hasSubmenu ? (
-              <span className="flyoff-menu__submenu-indicator">
+              <span
+                aria-hidden="true"
+                className="flyoff-menu__submenu-indicator"
+              >
                 <ChevronRight />
               </span>
             ) : null}

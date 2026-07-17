@@ -16,12 +16,19 @@ import type { Translate } from '../pages/page-types';
 import { createEditorModeState, readEditorMode } from './editor-mode';
 import type { MarkdownDocumentController } from './markdown-document-controller';
 import { MarkdownEditor } from './MarkdownEditor';
+import { MarkdownLockedView } from './MarkdownLockedView';
 import { projectNodeDisplayName } from './project-node-name';
 
 export interface MarkdownPageRuntime {
   controller: MarkdownDocumentController;
+  lockedNodeIds: ReadonlySet<string>;
+  onPasswordRequired: (nodeId: string) => void;
   readDocument: (
     nodeId: string,
+  ) => Promise<ProjectResult<MarkdownDocument>>;
+  unlockDocument: (
+    nodeId: string,
+    password: string,
   ) => Promise<ProjectResult<MarkdownDocument>>;
 }
 
@@ -31,6 +38,7 @@ export interface ProjectPageRuntime {
 }
 
 export interface ProjectPageComponentProps {
+  displayPath?: string;
   node?: ProjectPageNode;
   nodeId: string;
   pageState: PageSessionState;
@@ -54,13 +62,18 @@ export interface ProjectPageTypeDefinition {
 
 type MarkdownDocumentState =
   | { status: 'loading' }
+  | { status: 'locked' }
   | { status: 'ready'; document: MarkdownDocument }
   | { status: 'unavailable'; message?: string };
 
 function initialMarkdownState(
   controller: MarkdownDocumentController,
   nodeId: string,
+  locked: boolean,
 ): MarkdownDocumentState {
+  if (locked) {
+    return { status: 'locked' };
+  }
   const cached = controller.getSnapshot(nodeId);
   return cached
     ? {
@@ -68,6 +81,7 @@ function initialMarkdownState(
         document: {
           nodeId,
           content: cached.content,
+          readOnly: cached.readOnly,
           revision: cached.revision,
         },
       }
@@ -75,6 +89,7 @@ function initialMarkdownState(
 }
 
 function MarkdownProjectPage({
+  displayPath,
   node,
   nodeId,
   onScrollChange,
@@ -84,14 +99,21 @@ function MarkdownProjectPage({
   scrollTop,
   translate,
 }: ProjectPageComponentProps) {
-  const { controller, readDocument } = runtime.markdown;
+  const {
+    controller,
+    lockedNodeIds,
+    onPasswordRequired,
+    readDocument,
+    unlockDocument,
+  } = runtime.markdown;
+  const locked = lockedNodeIds.has(nodeId);
   const [state, setState] = useState<MarkdownDocumentState>(() =>
-    initialMarkdownState(controller, nodeId),
+    initialMarkdownState(controller, nodeId, locked),
   );
 
   useEffect(() => {
     let active = true;
-    if (!controller.getSnapshot(nodeId)) {
+    if (!locked && !controller.getSnapshot(nodeId)) {
       void readDocument(nodeId)
         .then((result) => {
           if (!active) {
@@ -99,6 +121,11 @@ function MarkdownProjectPage({
           }
 
           if (!result.ok) {
+            if (result.error.code === 'password-required') {
+              onPasswordRequired(nodeId);
+              setState({ status: 'locked' });
+              return;
+            }
             setState({
               status: 'unavailable',
               message: result.error.message,
@@ -120,17 +147,29 @@ function MarkdownProjectPage({
       active = false;
       controller.discardClean(nodeId);
     };
-  }, [controller, nodeId, readDocument]);
+  }, [controller, locked, nodeId, onPasswordRequired, readDocument]);
 
-  const title = node
-    ? projectNodeDisplayName(node)
-    : translate('projects.unavailable');
+  const title =
+    displayPath ??
+    (node
+      ? `/${projectNodeDisplayName(node)}`
+      : translate('projects.unavailable'));
 
   if (state.status === 'loading') {
     return (
       <main className="project-content-unavailable" role="status">
         <p>{translate('projects.loading')}</p>
       </main>
+    );
+  }
+
+  if (state.status === 'locked') {
+    return (
+      <MarkdownLockedView
+        onUnlock={(password) => unlockDocument(nodeId, password)}
+        title={title}
+        translate={translate}
+      />
     );
   }
 

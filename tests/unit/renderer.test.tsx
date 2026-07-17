@@ -97,9 +97,9 @@ describe('initial renderer', () => {
     await waitFor(() => {
       expect(screen.getByRole('menu')).toBeTruthy();
     });
-    fireEvent.click(
-      screen.getByRole('menuitem', { name: 'Close TabCtrl+W' }),
-    );
+    const closeTab = screen.getByRole('menuitem', { name: 'Close Tab' });
+    expect(closeTab.getAttribute('aria-keyshortcuts')).toBe('Ctrl+W');
+    fireEvent.click(closeTab);
     expect(executeMenuCommand).not.toHaveBeenCalledWith('file.closeWindow');
     expect(getBootstrapState).toHaveBeenCalledOnce();
   });

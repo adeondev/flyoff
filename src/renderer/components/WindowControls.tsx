@@ -1,4 +1,5 @@
 import type { WindowControlAction } from '../../shared/contracts';
+import { getTooltipTargetProps } from './tooltip';
 
 export interface WindowControlLabels {
   minimize: string;
@@ -65,9 +66,9 @@ export function WindowControls({
         className="window-controls__button"
         type="button"
         aria-label={labels.minimize}
-        title={labels.minimize}
         data-testid="window-minimize"
         onClick={() => onAction('minimize')}
+        {...getTooltipTargetProps(labels.minimize, 'bottom')}
       >
         <MinimizeIcon />
       </button>
@@ -75,9 +76,9 @@ export function WindowControls({
         className="window-controls__button"
         type="button"
         aria-label={maximizeLabel}
-        title={maximizeLabel}
         data-testid="window-toggle-maximize"
         onClick={() => onAction('toggle-maximize')}
+        {...getTooltipTargetProps(maximizeLabel, 'bottom')}
       >
         {maximized ? <RestoreIcon /> : <MaximizeIcon />}
       </button>
@@ -85,9 +86,9 @@ export function WindowControls({
         className="window-controls__button window-controls__button--close"
         type="button"
         aria-label={labels.close}
-        title={labels.close}
         data-testid="window-close"
         onClick={() => onAction('close')}
+        {...getTooltipTargetProps(labels.close, 'bottom')}
       >
         <CloseIcon />
       </button>

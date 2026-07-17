@@ -147,6 +147,18 @@ describe('ProjectService', () => {
         expect.objectContaining({ name: 'Documento' }),
       ]),
     });
+    await expect(service.resolvePath(2, { nodeId: null })).resolves.toEqual({
+      ok: true,
+      value: created.value.location,
+    });
+    if (note.ok) {
+      await expect(
+        service.resolvePath(2, { nodeId: note.value.nodeId }),
+      ).resolves.toEqual({
+        ok: true,
+        value: path.join(created.value.location, 'Documento.md'),
+      });
+    }
   });
 
   it('returns typed failures when no project is active', async () => {
@@ -155,6 +167,12 @@ describe('ProjectService', () => {
 
     expect(
       await service.getNode('missing', { nodeId: randomUUID() }),
+    ).toMatchObject({
+      ok: false,
+      error: { code: 'invalid-operation' },
+    });
+    expect(
+      await service.resolvePath('missing', { nodeId: null }),
     ).toMatchObject({
       ok: false,
       error: { code: 'invalid-operation' },

@@ -49,6 +49,19 @@ describe('markdown DOM renderer', () => {
     expect(container.querySelector('a')?.hasAttribute('href')).toBe(false);
   });
 
+  it('moves authored link and image titles to Flyoff tooltips', () => {
+    const container = render(
+      '[site](https://example.com "Link details") ![cover](https://example.com/cover.png "Image details")',
+    );
+    const link = container.querySelector('a')!;
+    const image = container.querySelector('img')!;
+
+    expect(link.dataset.flyoffTooltip).toBe('Link details');
+    expect(image.dataset.flyoffTooltip).toBe('Image details');
+    expect(link.hasAttribute('title')).toBe(false);
+    expect(image.hasAttribute('title')).toBe(false);
+  });
+
   it.each(['[relative](/note)', '[app](flyoff://app/note)', '[bad](not-a-url)'])(
     'keeps non-external links inert: %s',
     (source) => {

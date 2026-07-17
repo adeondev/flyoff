@@ -44,6 +44,7 @@ import {
   isCreateProjectNodeRequest,
   isRenameProjectNodeRequest,
   isMoveProjectNodeRequest,
+  isProjectPathRequest,
   isTrashProjectNodeRequest,
   isTrashProjectNodeOutcome,
   isReadMarkdownDocumentRequest,
@@ -54,6 +55,14 @@ import {
   isProjectTreeNode,
   isProjectTreeNodeList,
   isMarkdownDocument,
+  isProjectPageProperties,
+  isGetProjectPagePropertiesRequest,
+  isSetProjectPageReadOnlyRequest,
+  isProtectProjectPageRequest,
+  isChangeProjectPagePasswordRequest,
+  isRemoveProjectPagePasswordRequest,
+  isUnlockProjectPageRequest,
+  isLockProjectPageRequest,
   isOpenExternalLinkRequest,
   isOpenExternalLinkResult,
   type CreateProjectRequest,
@@ -63,9 +72,17 @@ import {
   type CreateProjectNodeRequest,
   type RenameProjectNodeRequest,
   type MoveProjectNodeRequest,
+  type ProjectPathRequest,
   type TrashProjectNodeRequest,
   type ReadMarkdownDocumentRequest,
   type SaveMarkdownDocumentRequest,
+  type GetProjectPagePropertiesRequest,
+  type SetProjectPageReadOnlyRequest,
+  type ProtectProjectPageRequest,
+  type ChangeProjectPagePasswordRequest,
+  type RemoveProjectPagePasswordRequest,
+  type UnlockProjectPageRequest,
+  type LockProjectPageRequest,
   type OpenExternalLinkRequest,
 } from '../shared/contracts';
 
@@ -388,6 +405,38 @@ const flyoffApi: FlyoffApi = Object.freeze({
 
     return result;
   },
+  async revealProjectPath(request: ProjectPathRequest) {
+    if (!isProjectPathRequest(request)) {
+      throw new TypeError('Invalid project path request.');
+    }
+
+    const result: unknown = await ipcRenderer.invoke(
+      PROJECT_IPC_CHANNELS.revealPath,
+      request,
+    );
+
+    if (!isProjectResult(result, isNull)) {
+      throw new Error('The main process returned an invalid path reveal result.');
+    }
+
+    return result;
+  },
+  async copyProjectPath(request: ProjectPathRequest) {
+    if (!isProjectPathRequest(request)) {
+      throw new TypeError('Invalid project path request.');
+    }
+
+    const result: unknown = await ipcRenderer.invoke(
+      PROJECT_IPC_CHANNELS.copyPath,
+      request,
+    );
+
+    if (!isProjectResult(result, isNull)) {
+      throw new Error('The main process returned an invalid path copy result.');
+    }
+
+    return result;
+  },
   async readMarkdownDocument(request: ReadMarkdownDocumentRequest) {
     if (!isReadMarkdownDocumentRequest(request)) {
       throw new TypeError('Invalid Markdown document request.');
@@ -418,6 +467,101 @@ const flyoffApi: FlyoffApi = Object.freeze({
       throw new Error('The main process returned an invalid Markdown document.');
     }
 
+    return result;
+  },
+  async getProjectPageProperties(request: GetProjectPagePropertiesRequest) {
+    if (!isGetProjectPagePropertiesRequest(request)) {
+      throw new TypeError('Invalid project page properties request.');
+    }
+    const result: unknown = await ipcRenderer.invoke(
+      PROJECT_IPC_CHANNELS.getPageProperties,
+      request,
+    );
+    if (!isProjectResult(result, isProjectPageProperties)) {
+      throw new Error('The main process returned invalid page properties.');
+    }
+    return result;
+  },
+  async setProjectPageReadOnly(request: SetProjectPageReadOnlyRequest) {
+    if (!isSetProjectPageReadOnlyRequest(request)) {
+      throw new TypeError('Invalid project page read-only request.');
+    }
+    const result: unknown = await ipcRenderer.invoke(
+      PROJECT_IPC_CHANNELS.setPageReadOnly,
+      request,
+    );
+    if (!isProjectResult(result, isProjectPageProperties)) {
+      throw new Error('The main process returned invalid page properties.');
+    }
+    return result;
+  },
+  async protectProjectPage(request: ProtectProjectPageRequest) {
+    if (!isProtectProjectPageRequest(request)) {
+      throw new TypeError('Invalid project page protection request.');
+    }
+    const result: unknown = await ipcRenderer.invoke(
+      PROJECT_IPC_CHANNELS.protectPage,
+      request,
+    );
+    if (!isProjectResult(result, isProjectPageProperties)) {
+      throw new Error('The main process returned invalid page properties.');
+    }
+    return result;
+  },
+  async changeProjectPagePassword(
+    request: ChangeProjectPagePasswordRequest,
+  ) {
+    if (!isChangeProjectPagePasswordRequest(request)) {
+      throw new TypeError('Invalid project page password change request.');
+    }
+    const result: unknown = await ipcRenderer.invoke(
+      PROJECT_IPC_CHANNELS.changePagePassword,
+      request,
+    );
+    if (!isProjectResult(result, isProjectPageProperties)) {
+      throw new Error('The main process returned invalid page properties.');
+    }
+    return result;
+  },
+  async removeProjectPagePassword(
+    request: RemoveProjectPagePasswordRequest,
+  ) {
+    if (!isRemoveProjectPagePasswordRequest(request)) {
+      throw new TypeError('Invalid project page password removal request.');
+    }
+    const result: unknown = await ipcRenderer.invoke(
+      PROJECT_IPC_CHANNELS.removePagePassword,
+      request,
+    );
+    if (!isProjectResult(result, isProjectPageProperties)) {
+      throw new Error('The main process returned invalid page properties.');
+    }
+    return result;
+  },
+  async unlockProjectPage(request: UnlockProjectPageRequest) {
+    if (!isUnlockProjectPageRequest(request)) {
+      throw new TypeError('Invalid project page unlock request.');
+    }
+    const result: unknown = await ipcRenderer.invoke(
+      PROJECT_IPC_CHANNELS.unlockPage,
+      request,
+    );
+    if (!isProjectResult(result, isMarkdownDocument)) {
+      throw new Error('The main process returned an invalid Markdown document.');
+    }
+    return result;
+  },
+  async lockProjectPage(request: LockProjectPageRequest) {
+    if (!isLockProjectPageRequest(request)) {
+      throw new TypeError('Invalid project page lock request.');
+    }
+    const result: unknown = await ipcRenderer.invoke(
+      PROJECT_IPC_CHANNELS.lockPage,
+      request,
+    );
+    if (!isProjectResult(result, isNull)) {
+      throw new Error('The main process returned an invalid page lock result.');
+    }
     return result;
   },
 });

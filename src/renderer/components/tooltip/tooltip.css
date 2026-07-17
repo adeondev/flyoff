@@ -1,0 +1,29 @@
+.flyoff-tooltip {
+  position: fixed;
+  z-index: var(--z-tooltip);
+  max-width: min(320px, calc(100vw - 16px));
+  padding: 6px 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  background: var(--color-surface-active);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  pointer-events: auto;
+  animation: flyoff-tooltip-enter var(--dur-tooltip) var(--ease-out) both;
+}
+
+@keyframes flyoff-tooltip-enter {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .flyoff-tooltip {
+    animation: none;
+  }
+}

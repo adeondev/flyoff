@@ -9,7 +9,9 @@ import { App } from './App';
 import './components/layout/layout.css';
 import './components/feedback/feedback.css';
 import './components/menu/menu.css';
+import './components/tooltip/tooltip.css';
 import './theme.css';
+import './components/dialog/dialog.css';
 import './styles.css';
 import './components/rail/rail.css';
 

@@ -58,7 +58,7 @@ describe('ProjectRepository', () => {
 
     expect(manifest).toMatchObject({
       format: 'flyoff-project',
-      formatVersion: 1,
+      formatVersion: 2,
       projectId: repository.summary.projectId,
       name: 'Meu Projeto',
     });
@@ -135,7 +135,7 @@ describe('ProjectRepository', () => {
     ]);
   });
 
-  it('migrates a v1 content index to v2 without changing node identities', async () => {
+  it('loads a v1 content index and persists v3 on the first mutation', async () => {
     const repository = await createRepository();
     const note = await repository.createMarkdownPage(null, 'Legado');
     const indexPath = path.join(
@@ -161,7 +161,14 @@ describe('ProjectRepository', () => {
     expect(
       (JSON.parse(readFileSync(indexPath, 'utf8')) as { formatVersion: number })
         .formatVersion,
-    ).toBe(2);
+    ).toBe(1);
+
+    const renamed = await reopened.renameNode(note.nodeId, 'Legado atualizado');
+    expect(renamed.nodeId).toBe(note.nodeId);
+    expect(
+      (JSON.parse(readFileSync(indexPath, 'utf8')) as { formatVersion: number })
+        .formatVersion,
+    ).toBe(3);
   });
 
   it('preserves indexed custom page types when their adapter is unavailable', async () => {

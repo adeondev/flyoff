@@ -85,7 +85,7 @@ function renderInline(nodes: readonly InlineNode[], parent: Node): void {
           element.setAttribute('aria-disabled', 'true');
         }
         if (node.title) {
-          element.title = node.title;
+          element.dataset.flyoffTooltip = node.title;
         }
         renderInline(node.children, element);
         parent.appendChild(element);
@@ -99,7 +99,7 @@ function renderInline(nodes: readonly InlineNode[], parent: Node): void {
         }
         element.alt = node.alt;
         if (node.title) {
-          element.title = node.title;
+          element.dataset.flyoffTooltip = node.title;
         }
         parent.appendChild(element);
         break;

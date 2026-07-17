@@ -4,25 +4,42 @@ import path from 'node:path';
 
 import {
   projectSuccess,
+  type ChangeProjectPagePasswordRequest,
   type CreateProjectNodeRequest,
   type CreateProjectRequest,
   type GetProjectNodeRequest,
+  type GetProjectPagePropertiesRequest,
   type ListProjectChildrenRequest,
   type MarkdownDocument,
+  type LockProjectPageRequest,
   type MoveProjectNodeRequest,
   type ProjectLocationSelection,
+  type ProjectPathRequest,
+  type ProjectPageProperties,
   type ProjectResult,
   type ProjectSummary,
   type ProjectTreeNode,
   type ReadMarkdownDocumentRequest,
+  type RemoveProjectPagePasswordRequest,
   type RenameProjectNodeRequest,
   type RestoreProjectRequest,
   type SaveMarkdownDocumentRequest,
+  type SetProjectPageReadOnlyRequest,
+  type ProtectProjectPageRequest,
   type TrashProjectNodeRequest,
   type TrashProjectNodeOutcome,
+  type UnlockProjectPageRequest,
 } from '../../shared/contracts/projects';
 import { ProjectOperationError, normalizeProjectError, projectErrorResult } from './errors';
 import type { ProjectCatalogStore } from './project-catalog-store';
+import {
+  EncryptedNoteKeySession,
+  type EncryptedNoteKeyScope,
+} from './encrypted-note-key-session';
+import type {
+  EncryptedNoteCryptoDependencies,
+  EncryptedNoteKey,
+} from './encrypted-note-crypto';
 import {
   ProjectRepository,
   type ProjectRepositoryOptions,
@@ -39,6 +56,7 @@ export interface ProjectServiceOptions {
   createId?: () => string;
   now?: () => Date;
   locationTokenTtlMs?: number;
+  encryptedNoteCrypto?: EncryptedNoteCryptoDependencies;
 }
 
 interface ActiveProject {
@@ -65,6 +83,8 @@ export class ProjectService {
   private readonly senderEpochs = new Map<ProjectSenderKey, number>();
   private readonly senderTransitions = new Map<ProjectSenderKey, Promise<void>>();
   private readonly transitioningSenders = new Set<ProjectSenderKey>();
+  private readonly noteKeys = new EncryptedNoteKeySession();
+  private disposed = false;
 
   constructor(options: ProjectServiceOptions) {
     this.catalogStore = options.catalogStore;
@@ -76,6 +96,7 @@ export class ProjectService {
       trashItem: options.trashItem,
       createId: this.createId,
       now: this.now,
+      encryptedNoteCrypto: options.encryptedNoteCrypto,
     };
   }
 
@@ -205,6 +226,9 @@ export class ProjectService {
     await this.transitionSender(senderKey, async () => {
       await this.waitForActiveProject(senderKey);
       const previousProjectId = this.activeProjects.get(senderKey)?.summary.projectId;
+      if (previousProjectId) {
+        this.noteKeys.removeProject(senderKey, previousProjectId);
+      }
       this.activeProjects.delete(senderKey);
 
       if (previousProjectId) {
@@ -279,37 +303,220 @@ export class ProjectService {
   ): Promise<ProjectResult<TrashProjectNodeOutcome>> {
     return this.withActiveProject(senderKey, async (repository) => {
       const nodeIds = await repository.trashNode(request.nodeId);
+      const removed = new Set(nodeIds);
+      for (const [clientId, active] of this.activeProjects) {
+        if (active.summary.projectId !== repository.summary.projectId) {
+          continue;
+        }
+        for (const nodeId of removed) {
+          this.noteKeys.remove(
+            this.keyScope(clientId, repository, nodeId),
+          );
+        }
+      }
       return { nodeIds };
     });
   }
 
-  readMarkdown(
+  resolvePath(
     senderKey: ProjectSenderKey,
-    request: ReadMarkdownDocumentRequest,
-  ): Promise<ProjectResult<MarkdownDocument>> {
+    request: ProjectPathRequest,
+  ): Promise<ProjectResult<string>> {
     return this.withActiveProject(senderKey, (repository) =>
-      repository.readMarkdown(request.nodeId),
+      repository.resolvePath(request.nodeId),
     );
   }
 
-  saveMarkdown(
+  async readMarkdown(
+    senderKey: ProjectSenderKey,
+    request: ReadMarkdownDocumentRequest,
+  ): Promise<ProjectResult<MarkdownDocument>> {
+    const result = await this.withActiveProject(senderKey, (repository) =>
+      repository.readMarkdown(
+        request.nodeId,
+        this.noteKeys.peek(this.keyScope(senderKey, repository, request.nodeId)),
+      ),
+    );
+    if (!result.ok && result.error.code === 'password-required') {
+      this.removeNoteKey(senderKey, request.nodeId);
+    }
+    return result;
+  }
+
+  async saveMarkdown(
     senderKey: ProjectSenderKey,
     request: SaveMarkdownDocumentRequest,
   ): Promise<ProjectResult<MarkdownDocument>> {
-    return this.withActiveProject(senderKey, (repository) =>
+    const result = await this.withActiveProject(senderKey, (repository) =>
       repository.saveMarkdown(
         request.nodeId,
         request.content,
         request.expectedRevision,
         request.force,
+        this.noteKeys.peek(this.keyScope(senderKey, repository, request.nodeId)),
       ),
     );
+    if (!result.ok && result.error.code === 'password-required') {
+      this.removeNoteKey(senderKey, request.nodeId);
+    }
+    return result;
+  }
+
+  async getPageProperties(
+    senderKey: ProjectSenderKey,
+    request: GetProjectPagePropertiesRequest,
+  ): Promise<ProjectResult<ProjectPageProperties>> {
+    const result = await this.withActiveProject(senderKey, (repository) =>
+      repository.getPageProperties(
+        request.nodeId,
+        this.noteKeys.peek(this.keyScope(senderKey, repository, request.nodeId)),
+      ),
+    );
+    if (
+      result.ok &&
+      (!result.value.passwordProtected || result.value.locked)
+    ) {
+      this.removeNoteKey(senderKey, request.nodeId);
+    }
+    return result;
+  }
+
+  async setPageReadOnly(
+    senderKey: ProjectSenderKey,
+    request: SetProjectPageReadOnlyRequest,
+  ): Promise<ProjectResult<ProjectPageProperties>> {
+    const result = await this.withActiveProject(senderKey, (repository) =>
+      repository.setPageReadOnly(
+        request.nodeId,
+        request.readOnly,
+        request.expectedRevision,
+        this.noteKeys.peek(this.keyScope(senderKey, repository, request.nodeId)),
+      ),
+    );
+    if (
+      result.ok &&
+      (!result.value.passwordProtected || result.value.locked)
+    ) {
+      this.removeNoteKey(senderKey, request.nodeId);
+    }
+    return result;
+  }
+
+  protectPage(
+    senderKey: ProjectSenderKey,
+    request: ProtectProjectPageRequest,
+  ): Promise<ProjectResult<ProjectPageProperties>> {
+    return this.withActiveProject(senderKey, async (repository) => {
+      const outcome = await repository.protectPage(
+        request.nodeId,
+        request.password,
+        request.expectedRevision,
+      );
+      this.noteKeys.removeNode(repository.summary.projectId, request.nodeId);
+      this.adoptNoteKey(
+        senderKey,
+        repository,
+        request.nodeId,
+        outcome.key,
+      );
+      return outcome.properties;
+    });
+  }
+
+  changePagePassword(
+    senderKey: ProjectSenderKey,
+    request: ChangeProjectPagePasswordRequest,
+  ): Promise<ProjectResult<ProjectPageProperties>> {
+    return this.withActiveProject(senderKey, async (repository) => {
+      const outcome = await repository.changePagePassword(
+        request.nodeId,
+        request.currentPassword,
+        request.newPassword,
+        request.expectedRevision,
+      );
+      this.noteKeys.removeNode(repository.summary.projectId, request.nodeId);
+      this.adoptNoteKey(
+        senderKey,
+        repository,
+        request.nodeId,
+        outcome.key,
+      );
+      return outcome.properties;
+    });
+  }
+
+  removePagePassword(
+    senderKey: ProjectSenderKey,
+    request: RemoveProjectPagePasswordRequest,
+  ): Promise<ProjectResult<ProjectPageProperties>> {
+    return this.withActiveProject(senderKey, async (repository) => {
+      const properties = await repository.removePagePassword(
+        request.nodeId,
+        request.password,
+        request.expectedRevision,
+      );
+      this.noteKeys.removeNode(repository.summary.projectId, request.nodeId);
+      return properties;
+    });
+  }
+
+  unlockPage(
+    senderKey: ProjectSenderKey,
+    request: UnlockProjectPageRequest,
+  ): Promise<ProjectResult<MarkdownDocument>> {
+    return this.withActiveProject(senderKey, async (repository) => {
+      const outcome = await repository.unlockPage(
+        request.nodeId,
+        request.password,
+      );
+      this.adoptNoteKey(
+        senderKey,
+        repository,
+        request.nodeId,
+        outcome.key,
+      );
+      return outcome.document;
+    });
+  }
+
+  lockPage(
+    senderKey: ProjectSenderKey,
+    request: LockProjectPageRequest,
+  ): Promise<ProjectResult<null>> {
+    return this.withActiveProject(senderKey, async (repository) => {
+      const node = await repository.getNode(request.nodeId);
+      if (node.kind !== 'page' || node.pageType !== 'markdown') {
+        throw new ProjectOperationError(
+          'invalid-operation',
+          'Only Markdown notes can be locked.',
+        );
+      }
+      this.noteKeys.remove(this.keyScope(senderKey, repository, request.nodeId));
+      return null;
+    });
+  }
+
+  dispose(): void {
+    if (this.disposed) {
+      return;
+    }
+
+    this.disposed = true;
+    this.noteKeys.clear();
+    this.activeProjects.clear();
+    this.repositories.clear();
+    this.locationTokens.clear();
+    this.projectQueues.clear();
+    this.senderEpochs.clear();
+    this.senderTransitions.clear();
+    this.transitioningSenders.clear();
   }
 
   disposeSender(senderKey: ProjectSenderKey): void {
     this.invalidateSenderActivation(senderKey);
     const projectId = this.activeProjects.get(senderKey)?.summary.projectId;
     this.activeProjects.delete(senderKey);
+    this.noteKeys.removeClient(senderKey);
 
     if (projectId) {
       this.releaseRepositoryIfUnused(projectId);
@@ -343,6 +550,9 @@ export class ProjectService {
       }
 
       const sharedRepository = existing ?? repository;
+      if (previousProjectId) {
+        this.noteKeys.removeProject(senderKey, previousProjectId);
+      }
       this.repositories.set(repository.summary.projectId, sharedRepository);
       this.activeProjects.set(senderKey, {
         repository: sharedRepository,
@@ -391,6 +601,45 @@ export class ProjectService {
         return projectErrorResult(error);
       }
     });
+  }
+
+  private keyScope(
+    senderKey: ProjectSenderKey,
+    repository: ProjectRepository,
+    nodeId: string,
+  ): EncryptedNoteKeyScope {
+    return {
+      clientId: senderKey,
+      projectId: repository.summary.projectId,
+      nodeId,
+    };
+  }
+
+  private adoptNoteKey(
+    senderKey: ProjectSenderKey,
+    repository: ProjectRepository,
+    nodeId: string,
+    key: EncryptedNoteKey,
+  ): void {
+    if (
+      this.disposed ||
+      this.activeProjects.get(senderKey)?.repository !== repository
+    ) {
+      key.destroy();
+      throw new ProjectOperationError(
+        'invalid-operation',
+        'The note unlock operation is no longer current for this window.',
+      );
+    }
+
+    this.noteKeys.store(this.keyScope(senderKey, repository, nodeId), key);
+  }
+
+  private removeNoteKey(senderKey: ProjectSenderKey, nodeId: string): void {
+    const repository = this.activeProjects.get(senderKey)?.repository;
+    if (repository) {
+      this.noteKeys.remove(this.keyScope(senderKey, repository, nodeId));
+    }
   }
 
   private enqueue<T>(projectId: string, operation: () => Promise<T>): Promise<T> {
@@ -495,7 +744,7 @@ export class ProjectService {
     senderKey: ProjectSenderKey,
     expectedEpoch: number,
   ): void {
-    if (this.senderEpochs.get(senderKey) !== expectedEpoch) {
+    if (this.disposed || this.senderEpochs.get(senderKey) !== expectedEpoch) {
       throw new ProjectOperationError(
         'invalid-operation',
         'The project opening operation is no longer current for this window.',

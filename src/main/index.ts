@@ -142,6 +142,8 @@ function cleanupApplication(): void {
   removeUiStateHandlers = undefined;
   removeWindowControlHandlers?.();
   removeWindowControlHandlers = undefined;
+  projectService?.dispose();
+  projectService = undefined;
   coreClient?.stop();
 }
 

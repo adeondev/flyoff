@@ -1,5 +1,6 @@
 import type { Translate } from '../../pages/page-types';
 import { MaskedIcon } from '../MaskedIcon';
+import { getTooltipTargetProps } from '../tooltip';
 import type { RailView } from './rail-views';
 
 export interface IconRailProps {
@@ -27,8 +28,8 @@ export function IconRail({
             className="icon-rail__button"
             key={view.id}
             onClick={() => onSelect(view.id)}
-            title={label}
             type="button"
+            {...getTooltipTargetProps(label, 'right')}
           >
             <MaskedIcon className="icon-rail__icon" icon={view.icon} />
           </button>

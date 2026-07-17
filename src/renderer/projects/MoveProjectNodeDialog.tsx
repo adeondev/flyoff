@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useState, type FormEvent } from 'react';
+import { useEffect, useId, useReducer, useState, type FormEvent } from 'react';
 
 import chevronRightIcon from '../../../public/images/icons/actions/chevron-right.svg';
 import folderOpenIcon from '../../../public/images/icons/instances/folder-open.svg';
@@ -9,8 +9,8 @@ import type {
   ProjectTreeNode,
 } from '../../shared/contracts';
 import { MaskedIcon } from '../components/MaskedIcon';
+import { Dialog } from '../components/dialog';
 import type { Translate } from '../pages/page-types';
-import { ProjectDialog } from './ProjectDialog';
 import { projectNodeDisplayName } from './project-node-name';
 import type { ProjectTreeController } from './project-tree-controller';
 
@@ -125,6 +125,7 @@ export function MoveProjectNodeDialog({
   onMoved,
   translate,
 }: MoveProjectNodeDialogProps) {
+  const formId = useId();
   const [, renderVersion] = useReducer((version: number) => version + 1, 0);
   const [destination, setDestination] = useState<string | null | undefined>(
     node.parentId,
@@ -159,13 +160,35 @@ export function MoveProjectNodeDialog({
   }
 
   return (
-    <ProjectDialog
+    <Dialog
       busy={pending}
+      closeLabel={translate('windowControls.close')}
       description={translate('projects.selectDestination')}
+      footerEnd={
+        <button
+          className="flyoff-dialog__button--primary"
+          disabled={
+            pending || destination === undefined || destination === node.parentId
+          }
+          form={formId}
+          type="submit"
+        >
+          {pending ? translate('projects.moving') : translate('projects.move')}
+        </button>
+      }
+      footerStart={
+        <button disabled={pending} onClick={onCancel} type="button">
+          {translate('projects.cancel')}
+        </button>
+      }
       onCancel={onCancel}
       title={translate('projects.moveTitle')}
     >
-      <form className="project-dialog__form" onSubmit={(event) => void submit(event)}>
+      <form
+        className="flyoff-dialog__form"
+        id={formId}
+        onSubmit={(event) => void submit(event)}
+      >
         <div
           aria-label={translate('projects.selectDestination')}
           className="project-folder-picker"
@@ -191,21 +214,7 @@ export function MoveProjectNodeDialog({
             translate={translate}
           />
         </div>
-        <div className="project-dialog__actions">
-          <button disabled={pending} onClick={onCancel} type="button">
-            {translate('projects.cancel')}
-          </button>
-          <button
-            className="project-dialog__primary"
-            disabled={
-              pending || destination === undefined || destination === node.parentId
-            }
-            type="submit"
-          >
-            {pending ? translate('projects.moving') : translate('projects.move')}
-          </button>
-        </div>
       </form>
-    </ProjectDialog>
+    </Dialog>
   );
 }

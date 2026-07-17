@@ -271,6 +271,29 @@ describe('tab workspace', () => {
     );
   });
 
+  it('dismisses the pending session popup with Escape', async () => {
+    const previous = createSession(['home', 'settings'], 'page:settings');
+    const bridge = installApi(previous);
+    render(<App />);
+
+    expect(
+      await screen.findByText('Restore tabs from your last session?'),
+    ).toBeTruthy();
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText('Restore tabs from your last session?'),
+      ).toBeNull(),
+    );
+    expect(bridge.api.resolveRestorableTabSession).toHaveBeenCalledWith(
+      'ignore',
+      expect.objectContaining({
+        home: expect.objectContaining({ activeTabId: 'page:home' }),
+      }),
+    );
+  });
+
   it('ignores the pending session after eight seconds', async () => {
     vi.useFakeTimers();
     const previous = createSession(['home', 'settings'], 'page:settings');

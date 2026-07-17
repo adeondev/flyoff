@@ -4,14 +4,29 @@ import { describe, expect, it } from 'vitest';
 
 import {
   MARKDOWN_DOCUMENT_MAX_BYTES,
+  PROJECT_FORMAT_LEGACY_VERSION,
+  PROJECT_FORMAT_VERSION,
+  PROJECT_PASSWORD_MAX_BYTES,
+  PROJECT_PASSWORD_MIN_LENGTH,
+  isChangeProjectPagePasswordRequest,
   isCreateProjectNodeRequest,
   isCreateProjectRequest,
+  isGetProjectPagePropertiesRequest,
+  isLockProjectPageRequest,
   isMarkdownDocument,
   isMoveProjectNodeRequest,
+  isNewProjectPassword,
+  isProjectPageProperties,
+  isProjectPassword,
+  isProjectPathRequest,
+  isProtectProjectPageRequest,
+  isRemoveProjectPagePasswordRequest,
   isProjectResult,
+  isSetProjectPageReadOnlyRequest,
   isProjectSummary,
   isSaveMarkdownDocumentRequest,
   isTrashProjectNodeOutcome,
+  isUnlockProjectPageRequest,
   projectFailure,
   projectSuccess,
 } from '../../src/shared/contracts/projects';
@@ -22,7 +37,7 @@ describe('project contracts', () => {
       projectId: randomUUID(),
       name: 'Flyoff',
       location: 'D:\\Projects\\Flyoff',
-      formatVersion: 1 as const,
+      formatVersion: PROJECT_FORMAT_LEGACY_VERSION,
     };
 
     expect(isProjectSummary(summary)).toBe(true);
@@ -39,6 +54,10 @@ describe('project contracts', () => {
         isProjectSummary,
       ),
     ).toBe(false);
+    expect(
+      isProjectSummary({ ...summary, formatVersion: PROJECT_FORMAT_VERSION }),
+    ).toBe(true);
+    expect(isProjectSummary({ ...summary, formatVersion: 3 })).toBe(false);
   });
 
   it('validates bounded requests without accepting malformed identifiers', () => {
@@ -102,6 +121,9 @@ describe('project contracts', () => {
         beforeNodeId: 'invalid',
       }),
     ).toBe(false);
+    expect(isProjectPathRequest({ nodeId: null })).toBe(true);
+    expect(isProjectPathRequest({ nodeId })).toBe(true);
+    expect(isProjectPathRequest({ nodeId: 'invalid' })).toBe(false);
     expect(
       isSaveMarkdownDocumentRequest({
         nodeId,
@@ -124,6 +146,126 @@ describe('project contracts', () => {
         nodeId: randomUUID(),
         content: 'é'.repeat(MARKDOWN_DOCUMENT_MAX_BYTES),
         revision: 'f'.repeat(64),
+        readOnly: false,
+      }),
+    ).toBe(false);
+  });
+
+  it('validates page properties as a complete, consistent value', () => {
+    const properties = {
+      nodeId: randomUUID(),
+      pageType: 'markdown' as const,
+      contentSizeBytes: 120,
+      diskSizeBytes: 340,
+      createdAt: '2026-07-15T12:00:00.000Z',
+      modifiedAt: '2026-07-16T12:00:00.000Z',
+      revision: 'a'.repeat(64),
+      readOnly: false,
+      passwordProtected: true,
+      locked: true,
+    };
+
+    expect(isProjectPageProperties(properties)).toBe(true);
+    expect(isProjectPageProperties({ ...properties, createdAt: null })).toBe(true);
+    expect(
+      isProjectPageProperties({ ...properties, pageType: 'checklist' }),
+    ).toBe(false);
+    expect(
+      isProjectPageProperties({ ...properties, diskSizeBytes: 119 }),
+    ).toBe(false);
+    expect(
+      isProjectPageProperties({
+        ...properties,
+        passwordProtected: false,
+        locked: true,
+      }),
+    ).toBe(false);
+    expect(
+      isProjectPageProperties({ ...properties, modifiedAt: '2026-07-16' }),
+    ).toBe(false);
+    expect(isProjectPageProperties({ ...properties, extra: true })).toBe(false);
+  });
+
+  it('enforces exact password bounds without normalizing user input', () => {
+    expect(PROJECT_PASSWORD_MIN_LENGTH).toBe(1);
+    expect(isNewProjectPassword('a')).toBe(true);
+    expect(isNewProjectPassword(' ')).toBe(true);
+    expect(isNewProjectPassword('\ud83d\udc9c')).toBe(true);
+    expect(
+      isNewProjectPassword('a'.repeat(PROJECT_PASSWORD_MIN_LENGTH - 1)),
+    ).toBe(false);
+    expect(isNewProjectPassword('é'.repeat(PROJECT_PASSWORD_MIN_LENGTH))).toBe(
+      true,
+    );
+    expect(isProjectPassword('é'.repeat(PROJECT_PASSWORD_MAX_BYTES / 2))).toBe(
+      true,
+    );
+    expect(
+      isProjectPassword('é'.repeat(PROJECT_PASSWORD_MAX_BYTES / 2 + 1)),
+    ).toBe(false);
+    expect(isProjectPassword('')).toBe(false);
+    expect(isNewProjectPassword('e\u0301')).toBe(true);
+    expect(isNewProjectPassword('\u00e9'.repeat(11))).toBe(true);
+    expect(isNewProjectPassword(`a\ud800`)).toBe(false);
+    expect(isNewProjectPassword(`a\udc00`)).toBe(false);
+    expect(isProjectPassword(`senha segura\ud801`)).toBe(false);
+    expect(isNewProjectPassword(`a\ud83d\udc9c`)).toBe(true);
+  });
+
+  it('rejects extra or malformed fields in page-security requests', () => {
+    const nodeId = randomUUID();
+    const expectedRevision = 'b'.repeat(64);
+    const password = 'correct horse battery staple';
+    const cases = [
+      [isGetProjectPagePropertiesRequest, { nodeId }],
+      [
+        isSetProjectPageReadOnlyRequest,
+        { nodeId, expectedRevision, readOnly: true },
+      ],
+      [isProtectProjectPageRequest, { nodeId, expectedRevision, password }],
+      [
+        isChangeProjectPagePasswordRequest,
+        {
+          nodeId,
+          expectedRevision,
+          currentPassword: 'old password',
+          newPassword: password,
+        },
+      ],
+      [
+        isRemoveProjectPagePasswordRequest,
+        { nodeId, expectedRevision, password: 'old password' },
+      ],
+      [isUnlockProjectPageRequest, { nodeId, password: 'old password' }],
+      [isLockProjectPageRequest, { nodeId }],
+    ] as const;
+
+    for (const [validator, request] of cases) {
+      expect(validator(request)).toBe(true);
+      expect(validator({ ...request, extra: true })).toBe(false);
+      expect(validator({ ...request, nodeId: 'invalid' })).toBe(false);
+    }
+
+    expect(
+      isSetProjectPageReadOnlyRequest({
+        nodeId,
+        expectedRevision: 'invalid',
+        readOnly: true,
+      }),
+    ).toBe(false);
+    expect(
+      isProtectProjectPageRequest({
+        nodeId,
+        expectedRevision,
+        password: '',
+      }),
+    ).toBe(false);
+    expect(
+      isChangeProjectPagePasswordRequest({
+        nodeId,
+        expectedRevision,
+        currentPassword: '',
+        newPassword: password,
       }),
     ).toBe(false);
   });

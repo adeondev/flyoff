@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useId, useState, type FormEvent } from 'react';
 
 import type {
   CreateProjectRequest,
@@ -7,7 +7,8 @@ import type {
   ProjectSummary,
 } from '../../shared/contracts';
 import type { Translate } from '../pages/page-types';
-import { ProjectDialog } from './ProjectDialog';
+import { Dialog } from '../components/dialog';
+import { getTooltipTargetProps } from '../components/tooltip';
 
 export interface CreateProjectDialogProps {
   open: boolean;
@@ -29,6 +30,7 @@ function CreateProjectDialogContent({
   onSelectLocation,
   translate,
 }: CreateProjectDialogContentProps) {
+  const formId = useId();
   const [name, setName] = useState('');
   const [selection, setSelection] = useState<ProjectLocationSelection>();
   const [pending, setPending] = useState(false);
@@ -84,12 +86,34 @@ function CreateProjectDialogContent({
   }
 
   return (
-    <ProjectDialog
+    <Dialog
       busy={pending}
+      closeLabel={translate('windowControls.close')}
+      footerEnd={
+        <button
+          className="flyoff-dialog__button--primary"
+          disabled={pending || !selection || !name.trim()}
+          form={formId}
+          type="submit"
+        >
+          {pending
+            ? translate('projects.creatingProject')
+            : translate('projects.create')}
+        </button>
+      }
+      footerStart={
+        <button disabled={pending} onClick={onCancel} type="button">
+          {translate('projects.cancel')}
+        </button>
+      }
       onCancel={onCancel}
       title={translate('projects.createProject')}
     >
-      <form className="project-dialog__form" onSubmit={(event) => void submit(event)}>
+      <form
+        className="flyoff-dialog__form"
+        id={formId}
+        onSubmit={(event) => void submit(event)}
+      >
         <label>
           <span>{translate('projects.projectName')}</span>
           <input
@@ -102,10 +126,10 @@ function CreateProjectDialogContent({
             value={name}
           />
         </label>
-        <div className="project-dialog__field">
+        <div className="flyoff-dialog__field">
           <span>{translate('projects.location')}</span>
-          <div className="project-dialog__location">
-            <output title={selection?.location}>
+          <div className="create-project-dialog__location">
+            <output {...getTooltipTargetProps(selection?.location)}>
               {selection?.location ?? translate('projects.locationNotSelected')}
             </output>
             <button
@@ -117,27 +141,14 @@ function CreateProjectDialogContent({
             </button>
           </div>
         </div>
-        {error ? (
-          <p className="project-dialog__error" role="alert">
-            {error}
-          </p>
-        ) : null}
-        <div className="project-dialog__actions">
-          <button disabled={pending} onClick={onCancel} type="button">
-            {translate('projects.cancel')}
-          </button>
-          <button
-            className="project-dialog__primary"
-            disabled={pending || !selection || !name.trim()}
-            type="submit"
-          >
-            {pending
-              ? translate('projects.creatingProject')
-              : translate('projects.create')}
-          </button>
-        </div>
+        <p
+          className="flyoff-dialog__error"
+          role={error ? 'alert' : undefined}
+        >
+          {error ?? ''}
+        </p>
       </form>
-    </ProjectDialog>
+    </Dialog>
   );
 }
 

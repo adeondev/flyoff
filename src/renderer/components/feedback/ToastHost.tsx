@@ -8,9 +8,10 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 
+import { getTooltipTargetProps } from '../tooltip';
 import type { ToastDescriptor } from './toast-state';
 
-const TOAST_EXIT_DURATION = 180;
+const TOAST_EXIT_DURATION = 45;
 
 export interface ToastHostProps {
   ariaLabel: string;
@@ -125,8 +126,13 @@ function ToastItem({
     >
       <span aria-hidden="true" className="toast__marker" />
       <p>{toast.message}</p>
-      <button aria-label={closeLabel} onClick={onDismiss} type="button">
-        <span aria-hidden="true">×</span>
+      <button
+        aria-label={closeLabel}
+        onClick={onDismiss}
+        type="button"
+        {...getTooltipTargetProps(closeLabel, 'left')}
+      >
+        <span aria-hidden="true">&times;</span>
       </button>
       <span aria-hidden="true" className="toast__progress" />
     </article>

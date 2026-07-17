@@ -62,6 +62,11 @@ describe('reusable dropdown menu', () => {
     const menu = await screen.findByRole('menu');
     expect(menu).toBeTruthy();
     expect(screen.getByText('Ctrl+O')).toBeTruthy();
+    expect(
+      screen.getByRole('menuitem', { name: 'Open' }).getAttribute(
+        'aria-keyshortcuts',
+      ),
+    ).toBe('Ctrl+O');
     expect(screen.getByRole('separator')).toBeTruthy();
 
     fireEvent.click(screen.getByRole('menuitem', { name: 'Disabled' }));
@@ -117,7 +122,7 @@ describe('menu bar', () => {
     const file = screen.getByRole('menuitem', { name: 'File' });
     fireEvent.keyDown(file, { key: 'ArrowDown' });
     await screen.findByRole('menu');
-    fireEvent.keyDown(screen.getByRole('menuitem', { name: 'OpenCtrl+O' }), {
+    fireEvent.keyDown(screen.getByRole('menuitem', { name: 'Open' }), {
       key: 'ArrowRight',
     });
 

@@ -92,7 +92,16 @@ export interface TranslationCatalog {
     comingSoon: string;
     moreActions: string;
     newNote: string;
+    newInstance: string;
     newFolder: string;
+    branchActions: string;
+    expandAll: string;
+    collapseAll: string;
+    expandLimitReached: string;
+    revealInExplorer: string;
+    revealInFinder: string;
+    revealInFileManager: string;
+    copyPath: string;
     rename: string;
     move: string;
     moveTo: string;
@@ -100,6 +109,7 @@ export interface TranslationCatalog {
     loading: string;
     loadFailed: string;
     operationFailed: string;
+    authenticationFailed: string;
     invalidName: string;
     projectName: string;
     location: string;
@@ -110,6 +120,43 @@ export interface TranslationCatalog {
     cancel: string;
     create: string;
     save: string;
+    properties: string;
+    readOnly: string;
+    propertiesTitle: string;
+    propertiesGeneral: string;
+    propertiesType: string;
+    propertiesMarkdownNote: string;
+    propertiesContentSize: string;
+    propertiesDiskSize: string;
+    propertiesCreated: string;
+    propertiesModified: string;
+    propertiesUnavailable: string;
+    propertiesRetry: string;
+    propertiesAttributes: string;
+    propertiesReadOnly: string;
+    propertiesReadOnlyHint: string;
+    propertiesProtection: string;
+    propertiesProtectionStatus: string;
+    propertiesNotProtected: string;
+    propertiesLocked: string;
+    propertiesUnlocked: string;
+    propertiesProtectionWarning: string;
+    propertiesDefinePassword: string;
+    propertiesChangePassword: string;
+    propertiesRemovePassword: string;
+    propertiesUnlock: string;
+    propertiesLockNow: string;
+    propertiesPassword: string;
+    showPassword: string;
+    hidePassword: string;
+    propertiesCurrentPassword: string;
+    propertiesNewPassword: string;
+    propertiesCurrentPasswordRequired: string;
+    propertiesPasswordRequirements: string;
+    propertiesRemoveWarning: string;
+    propertiesBack: string;
+    propertiesApply: string;
+    propertiesOk: string;
     deleteTitle: string;
     deleteFolderDescription: string;
     deletePageDescription: string;
@@ -284,7 +331,17 @@ export const ptBR = {
     comingSoon: 'Em breve',
     moreActions: 'Mais ações',
     newNote: 'Nova nota',
+    newInstance: 'Nova instância',
     newFolder: 'Nova pasta',
+    branchActions: 'Ações da pasta',
+    expandAll: 'Expandir tudo',
+    collapseAll: 'Colapsar tudo',
+    expandLimitReached:
+      'A expansão foi interrompida após 500 pastas para manter o Flyoff responsivo.',
+    revealInExplorer: 'Mostrar no Explorador de Arquivos',
+    revealInFinder: 'Mostrar no Finder',
+    revealInFileManager: 'Mostrar no gerenciador de arquivos',
+    copyPath: 'Copiar caminho',
     rename: 'Renomear',
     move: 'Mover',
     moveTo: 'Mover para…',
@@ -303,6 +360,48 @@ export const ptBR = {
     cancel: 'Cancelar',
     create: 'Criar',
     save: 'Salvar',
+    properties: 'Propriedades\u2026',
+    readOnly: 'Somente leitura',
+    propertiesTitle: 'Propriedades da nota',
+    propertiesGeneral: 'Geral',
+    propertiesType: 'Tipo',
+    propertiesMarkdownNote: 'Nota Markdown',
+    propertiesContentSize: 'Tamanho do conte\u00fado',
+    propertiesDiskSize: 'Tamanho no disco',
+    propertiesCreated: 'Criado',
+    propertiesModified: 'Modificado',
+    propertiesUnavailable: 'N\u00e3o dispon\u00edvel',
+    propertiesRetry: 'Tentar novamente',
+    propertiesAttributes: 'Atributos',
+    propertiesReadOnly: 'Somente leitura',
+    propertiesReadOnlyHint:
+      'Impede edi\u00e7\u00e3o no Flyoff; n\u00e3o altera as permiss\u00f5es do arquivo.',
+    propertiesProtection: 'Prote\u00e7\u00e3o',
+    propertiesProtectionStatus: 'Estado',
+    propertiesNotProtected: 'Sem senha',
+    propertiesLocked: 'Bloqueada',
+    propertiesUnlocked: 'Desbloqueada',
+    propertiesProtectionWarning:
+      'A criptografia protege o conte\u00fado no disco. N\u00e3o h\u00e1 recupera\u00e7\u00e3o de senha. Enquanto desbloqueados, texto e senha passam pela mem\u00f3ria; backups e vers\u00f5es anteriores n\u00e3o s\u00e3o apagados. Nome, caminho e metadados continuam vis\u00edveis.',
+    propertiesDefinePassword: 'Definir senha',
+    propertiesChangePassword: 'Alterar senha',
+    propertiesRemovePassword: 'Remover senha',
+    propertiesUnlock: 'Desbloquear',
+    propertiesLockNow: 'Bloquear agora',
+    propertiesPassword: 'Senha',
+    showPassword: 'Mostrar senha',
+    hidePassword: 'Ocultar senha',
+    propertiesCurrentPassword: 'Senha atual',
+    propertiesNewPassword: 'Nova senha',
+    propertiesCurrentPasswordRequired: 'Digite a senha atual.',
+    propertiesPasswordRequirements:
+      'Use pelo menos 1 caractere e no m\u00e1ximo 1024 bytes.',
+    authenticationFailed: 'Senha incorreta ou arquivo danificado.',
+    propertiesRemoveWarning:
+      'Ao remover a prote\u00e7\u00e3o, o conte\u00fado voltar\u00e1 a ser leg\u00edvel no arquivo Markdown.',
+    propertiesBack: 'Voltar',
+    propertiesApply: 'Aplicar',
+    propertiesOk: 'OK',
     deleteTitle: 'Mover para a lixeira?',
     deleteFolderDescription:
       'A pasta e todo o conteúdo dentro dela, incluindo arquivos ocultos pelo Flyoff, serão movidos para a lixeira.',
@@ -471,7 +570,17 @@ export const enUS = {
     comingSoon: 'Coming soon',
     moreActions: 'More actions',
     newNote: 'New note',
+    newInstance: 'New instance',
     newFolder: 'New folder',
+    branchActions: 'Folder actions',
+    expandAll: 'Expand all',
+    collapseAll: 'Collapse all',
+    expandLimitReached:
+      'Expansion stopped after 500 folders to keep Flyoff responsive.',
+    revealInExplorer: 'Show in File Explorer',
+    revealInFinder: 'Show in Finder',
+    revealInFileManager: 'Show in file manager',
+    copyPath: 'Copy path',
     rename: 'Rename',
     move: 'Move',
     moveTo: 'Move to…',
@@ -490,6 +599,48 @@ export const enUS = {
     cancel: 'Cancel',
     create: 'Create',
     save: 'Save',
+    properties: 'Properties\u2026',
+    readOnly: 'Read-only',
+    propertiesTitle: 'Note properties',
+    propertiesGeneral: 'General',
+    propertiesType: 'Type',
+    propertiesMarkdownNote: 'Markdown note',
+    propertiesContentSize: 'Content size',
+    propertiesDiskSize: 'Size on disk',
+    propertiesCreated: 'Created',
+    propertiesModified: 'Modified',
+    propertiesUnavailable: 'Not available',
+    propertiesRetry: 'Try again',
+    propertiesAttributes: 'Attributes',
+    propertiesReadOnly: 'Read-only',
+    propertiesReadOnlyHint:
+      'Prevents editing in Flyoff; it does not change file permissions.',
+    propertiesProtection: 'Protection',
+    propertiesProtectionStatus: 'Status',
+    propertiesNotProtected: 'No password',
+    propertiesLocked: 'Locked',
+    propertiesUnlocked: 'Unlocked',
+    propertiesProtectionWarning:
+      'Encryption protects content on disk. Passwords cannot be recovered. While unlocked, text and passwords pass through memory; backups and earlier versions are not erased. Names, paths, and metadata remain visible.',
+    propertiesDefinePassword: 'Set password',
+    propertiesChangePassword: 'Change password',
+    propertiesRemovePassword: 'Remove password',
+    propertiesUnlock: 'Unlock',
+    propertiesLockNow: 'Lock now',
+    propertiesPassword: 'Password',
+    showPassword: 'Show password',
+    hidePassword: 'Hide password',
+    propertiesCurrentPassword: 'Current password',
+    propertiesNewPassword: 'New password',
+    propertiesCurrentPasswordRequired: 'Enter the current password.',
+    propertiesPasswordRequirements:
+      'Use at least 1 character and no more than 1024 bytes.',
+    authenticationFailed: 'Incorrect password or damaged file.',
+    propertiesRemoveWarning:
+      'Removing protection makes the content readable in the Markdown file again.',
+    propertiesBack: 'Back',
+    propertiesApply: 'Apply',
+    propertiesOk: 'OK',
     deleteTitle: 'Move to trash?',
     deleteFolderDescription:
       'The folder and everything inside it, including files hidden by Flyoff, will be moved to the trash.',

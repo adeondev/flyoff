@@ -17,12 +17,22 @@
   --color-danger: #b62326;
   --color-danger-active: #c93d40;
   --color-focus-ring: #b04fd4;
+  --color-overlay: rgb(0 0 0 / 58%);
+  --shadow-overlay: 0 16px 44px rgb(0 0 0 / 32%);
+  --space-xs: 8px;
+  --space-sm: 12px;
+  --space-md: 16px;
+  --space-lg: 24px;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
-  --dur-micro: 140ms;
-  --dur-toast-enter: 280ms;
-  --dur-toast-exit: 180ms;
+  --dur-micro: 100ms;
+  --dur-overlay: 45ms;
+  --dur-tooltip: 100ms;
+  --dur-toast-enter: 45ms;
+  --dur-toast-exit: 45ms;
+  --z-modal: 10000;
+  --z-tooltip: 10010;
   --font-note: Arial, "Liberation Sans", "Helvetica Neue", sans-serif;
   --font-code: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas,
     monospace;

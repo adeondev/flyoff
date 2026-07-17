@@ -4,7 +4,34 @@
 > tomadas, o que está pronto e o que falta. Escrito para ser lido por um
 > humano **ou** por um assistente que vá continuar o trabalho em outra máquina.
 
-Última atualização: Lote 2 concluído e publicado.
+Última atualização: propriedades seguras, caminho lógico completo e tooltip Flyoff corrigida.
+
+---
+
+## Atualização — propriedades e proteção de notas
+
+- O cabeçalho da nota mostra o caminho lógico completo, sem extensão nem separadores dependentes do sistema operacional, e acompanha rename/move dos ancestrais carregados.
+- Notas Markdown oferecem `Propriedades…` no menu e por `Alt+Enter`, com metadados, tamanhos, datas, política de somente leitura e estado de proteção.
+- Somente leitura bloqueia edição e salvamento no renderer e no processo principal, inclusive em chamadas forjadas e saves forçados, sem alterar permissões físicas do arquivo.
+- A proteção usa envelope binário autenticado v1, AES-256-GCM, DEK aleatória por nota e KEK derivada com `scrypt` (`N=131072`, `r=8`, `p=1`). Escritas permanecem atômicas e revisões continuam sendo SHA-256 dos bytes reais.
+- Chaves ficam isoladas por janela, projeto e nota no processo principal. Lock, fechamento, troca de projeto, trash, destruição da janela e encerramento limpam as sessões correspondentes.
+- Manifesto v2 e índice v3 adicionam a barreira de compatibilidade e `attributes.readOnly`; manifesto v1 e índices v1/v2 continuam legíveis e migram na primeira mutação.
+- O fechamento de uma nota protegida congela mutações, faz flush, remove a chave e só então descarta texto/DOM/histórico. Se o flush ou lock falhar, o fechamento é cancelado.
+- A tooltip do botão `+` permanece suprimida depois do clique até hover e foco realmente saírem; fechar o seletor fora não devolve foco nem reabre a tooltip.
+
+---
+
+## Atualização — interações e árvore
+
+- Abas abrem e fecham em 90 ms, no fluxo, sem transparência e com a mesma curva `ease-out`; fechamentos consecutivos preservam a ordem visual.
+- `TooltipHost` autoral substitui os tooltips nativos do renderer. Ele diferencia hover, foco e transferência de ponteiro, fecha em ações ou mudanças de contexto e restaura `aria-describedby` sem deixar estado preso.
+- A toolbar Markdown usa somente ícones acessíveis, com `aria-label` e tooltip Flyoff.
+- A árvore não exibe loading transitório ao expandir pastas. Filhos entram atomicamente; pastas vazias permanecem vazias e erros mantêm retry.
+- Duplo clique não renomeia mais itens. Renomear continua disponível por `F2` e pelo menu contextual.
+- O menu de área vazia atua sobre o ramo clicado e oferece nova instância, nova pasta, expandir/colapsar tudo, revelar no gerenciador de arquivos e copiar caminho.
+- Expansão recursiva usa até quatro leituras simultâneas e para com segurança em 500 pastas, mantendo o resultado parcial.
+- Caminhos são resolvidos no processo principal; revelar e copiar passam por validação de sender e payload antes de usar APIs nativas.
+- `AGENTS.md` registra os limites globais de resposta, animação, ausência de flick e uso obrigatório da tooltip Flyoff em controles somente com ícone.
 
 ---
 
@@ -12,7 +39,7 @@
 
 Aplicativo de notas de desktop (estilo Basalt/Obsidian, porém mais completo e
 escalável). Interface em **modo escuro** com destaque **roxo**. Filosofia de UI:
-simples, direta, sem excesso de animação (ver `AGENTS (PLEASE READ IF YOU ARE AN AI).md`).
+simples, direta, sem excesso de animação (ver `AGENTS.md`).
 
 **Stack:**
 - **Electron 43** + **React 19** + **TypeScript** (Electron Forge + Webpack).

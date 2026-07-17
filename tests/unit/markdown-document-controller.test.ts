@@ -14,8 +14,12 @@ const nodeId = '9aa3eb57-dbc1-4a85-8b04-f0abaf6f2939';
 const firstRevision = 'a'.repeat(64);
 const secondRevision = 'b'.repeat(64);
 
-function document(content = '', revision = firstRevision): MarkdownDocument {
-  return { nodeId, content, revision };
+function document(
+  content = '',
+  revision = firstRevision,
+  readOnly = false,
+): MarkdownDocument {
+  return { nodeId, content, revision, readOnly };
 }
 
 function edit(
@@ -241,6 +245,37 @@ describe('MarkdownDocumentController', () => {
     expect(controller.getSnapshot(nodeId)?.dirty).toBe(true);
   });
 
+  it('removes preserved editor state and history when sensitive teardown follows a clean discard', async () => {
+    const save = vi.fn(async (request: SaveMarkdownDocumentRequest) => ({
+      ok: true as const,
+      value: document(request.content, secondRevision),
+    }));
+    const controller = new MarkdownDocumentController({
+      reload: vi.fn(),
+      save,
+    });
+    controller.open(document('one'));
+    controller.commitEditorTransaction(nodeId, edit('one', 'one!'));
+    controller.setEditorSelection(nodeId, {
+      start: 1,
+      end: 3,
+      direction: 'forward',
+    });
+
+    expect(await controller.save(nodeId)).toBe(true);
+    expect(controller.discardClean(nodeId)).toBe(true);
+    expect(controller.discardSensitive(nodeId)).toBe(true);
+
+    controller.open(document('one!', secondRevision));
+    expect(controller.getSnapshot(nodeId)?.selection).toEqual({
+      start: 0,
+      end: 0,
+      direction: 'none',
+    });
+    expect(controller.canUndo(nodeId)).toBe(false);
+    expect(controller.canRedo(nodeId)).toBe(false);
+  });
+
   it('resets history on external reload and clamps the saved selection', async () => {
     const reload = vi.fn(async () => ({
       ok: true as const,
@@ -289,5 +324,138 @@ describe('MarkdownDocumentController', () => {
     expect(await controller.overwrite(nodeId)).toBe(true);
     expect(controller.canUndo(nodeId)).toBe(true);
     expect(controller.undo(nodeId)?.content).toBe('one');
+  });
+
+  it('blocks every controller mutation and save for a read-only note', async () => {
+    const save = vi.fn();
+    const controller = new MarkdownDocumentController({
+      reload: vi.fn(),
+      save,
+    });
+    controller.open(document('one', firstRevision, true));
+
+    controller.update(nodeId, 'two');
+    controller.commitEditorTransaction(nodeId, edit('one', 'three'));
+
+    expect(controller.undo(nodeId)).toBeUndefined();
+    expect(controller.redo(nodeId)).toBeUndefined();
+    expect(controller.getSnapshot(nodeId)).toMatchObject({
+      content: 'one',
+      dirty: false,
+      readOnly: true,
+    });
+    expect(await controller.save(nodeId)).toBe(true);
+    expect(await controller.flush(nodeId)).toBe(true);
+    expect(save).not.toHaveBeenCalled();
+  });
+
+  it('preserves a dirty buffer and freezes it when the main process rejects it as read-only', async () => {
+    const controller = new MarkdownDocumentController({
+      reload: vi.fn(),
+      save: vi.fn(async () => ({
+        ok: false as const,
+        error: { code: 'read-only' as const, message: 'Read-only' },
+      })),
+    });
+    controller.open(document('one'));
+    controller.update(nodeId, 'mine');
+
+    expect(await controller.save(nodeId)).toBe(false);
+    expect(controller.getSnapshot(nodeId)).toMatchObject({
+      content: 'mine',
+      dirty: true,
+      readOnly: true,
+      status: 'error',
+    });
+
+    controller.update(nodeId, 'discarded');
+    expect(controller.getSnapshot(nodeId)?.content).toBe('mine');
+    expect(await controller.flush(nodeId)).toBe(false);
+  });
+
+  it('allows tree mutations to skip a dirty read-only draft while a full flush remains blocked', async () => {
+    const save = vi.fn();
+    const controller = new MarkdownDocumentController({
+      reload: vi.fn(),
+      save,
+    });
+    controller.open(document('one'));
+    controller.update(nodeId, 'local draft');
+    expect(controller.applyReadOnlyPolicy(nodeId, true)).toBe(true);
+
+    expect(await controller.flushForTreeMutation()).toBe(true);
+    expect(await controller.flushAll()).toBe(false);
+    expect(save).not.toHaveBeenCalled();
+    expect(controller.getSnapshot(nodeId)).toMatchObject({
+      content: 'local draft',
+      dirty: true,
+      readOnly: true,
+    });
+  });
+
+  it('discards selection and undo history only for sensitive teardown', () => {
+    const controller = new MarkdownDocumentController({
+      reload: vi.fn(),
+      save: vi.fn(),
+    });
+    controller.open(document('one'));
+    controller.commitEditorTransaction(nodeId, edit('one', 'one!'));
+    controller.undo(nodeId);
+
+    expect(controller.discardSensitive(nodeId)).toBe(true);
+    controller.open(document('one'));
+    expect(controller.canRedo(nodeId)).toBe(false);
+    expect(controller.canUndo(nodeId)).toBe(false);
+  });
+
+  it('freezes mutations while flushing and wipes the buffer after a secure lock', async () => {
+    let finishSave:
+      | ((result: { ok: true; value: MarkdownDocument }) => void)
+      | undefined;
+    const save = vi.fn(
+      () =>
+        new Promise<{ ok: true; value: MarkdownDocument }>((resolve) => {
+          finishSave = resolve;
+        }),
+    );
+    const controller = new MarkdownDocumentController({
+      reload: vi.fn(),
+      save,
+    });
+    controller.open(document('one'));
+    controller.commitEditorTransaction(nodeId, edit('one', 'two'));
+
+    expect(controller.setMutationLocked(nodeId, true)).toBe(true);
+    const flush = controller.flush(nodeId);
+    controller.update(nodeId, 'three');
+    controller.commitEditorTransaction(nodeId, edit('two', 'four'));
+    expect(controller.undo(nodeId)).toBeUndefined();
+    expect(controller.getSnapshot(nodeId)?.content).toBe('two');
+
+    finishSave?.({ ok: true, value: document('two', secondRevision) });
+    expect(await flush).toBe(true);
+    expect(save).toHaveBeenCalledWith({
+      nodeId,
+      content: 'two',
+      expectedRevision: firstRevision,
+    });
+    expect(controller.discardSensitive(nodeId)).toBe(true);
+    expect(controller.getSnapshot(nodeId)).toBeUndefined();
+    expect(controller.isMutationLocked(nodeId)).toBe(false);
+  });
+
+  it('wipes a dirty sensitive buffer without retaining history', () => {
+    const controller = new MarkdownDocumentController({
+      reload: vi.fn(),
+      save: vi.fn(),
+    });
+    controller.open(document('one'));
+    controller.commitEditorTransaction(nodeId, edit('one', 'secret'));
+
+    expect(controller.discardSensitive(nodeId)).toBe(true);
+    expect(controller.getSnapshot(nodeId)).toBeUndefined();
+    controller.open(document('disk'));
+    expect(controller.canUndo(nodeId)).toBe(false);
+    expect(controller.canRedo(nodeId)).toBe(false);
   });
 });

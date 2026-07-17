@@ -17,19 +17,28 @@ import type {
 } from './window-controls';
 import type {
   CreateProjectNodeRequest,
+  ChangeProjectPagePasswordRequest,
   CreateProjectRequest,
   GetProjectNodeRequest,
   ListProjectChildrenRequest,
   MarkdownDocument,
+  GetProjectPagePropertiesRequest,
+  LockProjectPageRequest,
   MoveProjectNodeRequest,
   ProjectLocationSelection,
+  ProjectPathRequest,
+  ProjectPageProperties,
   ProjectResult,
   ProjectSummary,
   ProjectTreeNode,
   ReadMarkdownDocumentRequest,
+  RemoveProjectPagePasswordRequest,
   RenameProjectNodeRequest,
   RestoreProjectRequest,
   SaveMarkdownDocumentRequest,
+  SetProjectPageReadOnlyRequest,
+  ProtectProjectPageRequest,
+  UnlockProjectPageRequest,
   TrashProjectNodeRequest,
   TrashProjectNodeOutcome,
 } from './projects';
@@ -108,12 +117,39 @@ export interface FlyoffApi {
   trashProjectNode(
     request: TrashProjectNodeRequest,
   ): Promise<ProjectResult<TrashProjectNodeOutcome>>;
+  revealProjectPath(
+    request: ProjectPathRequest,
+  ): Promise<ProjectResult<null>>;
+  copyProjectPath(
+    request: ProjectPathRequest,
+  ): Promise<ProjectResult<null>>;
   readMarkdownDocument(
     request: ReadMarkdownDocumentRequest,
   ): Promise<ProjectResult<MarkdownDocument>>;
   saveMarkdownDocument(
     request: SaveMarkdownDocumentRequest,
   ): Promise<ProjectResult<MarkdownDocument>>;
+  getProjectPageProperties(
+    request: GetProjectPagePropertiesRequest,
+  ): Promise<ProjectResult<ProjectPageProperties>>;
+  setProjectPageReadOnly(
+    request: SetProjectPageReadOnlyRequest,
+  ): Promise<ProjectResult<ProjectPageProperties>>;
+  protectProjectPage(
+    request: ProtectProjectPageRequest,
+  ): Promise<ProjectResult<ProjectPageProperties>>;
+  changeProjectPagePassword(
+    request: ChangeProjectPagePasswordRequest,
+  ): Promise<ProjectResult<ProjectPageProperties>>;
+  removeProjectPagePassword(
+    request: RemoveProjectPagePasswordRequest,
+  ): Promise<ProjectResult<ProjectPageProperties>>;
+  unlockProjectPage(
+    request: UnlockProjectPageRequest,
+  ): Promise<ProjectResult<MarkdownDocument>>;
+  lockProjectPage(
+    request: LockProjectPageRequest,
+  ): Promise<ProjectResult<null>>;
 }
 
 export function isBootstrapState(value: unknown): value is BootstrapState {

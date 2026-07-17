@@ -19,12 +19,14 @@ import {
 } from './source-caret';
 import { reconcileSource } from './source-renderer';
 import { resolveSourceInput } from './source-input';
+import { expandDoubleClickSelection } from './source-word-selection';
 
 export interface RichSourceEditorProps {
   ariaLabel: string;
   autoFocus?: boolean;
   editorRef: RefObject<HTMLDivElement | null>;
   nodeId: string;
+  readOnly?: boolean;
   selection: SourceSelection;
   value: string;
   onKeyDown?: (event: KeyboardEvent<HTMLDivElement>) => void;
@@ -50,6 +52,7 @@ export function RichSourceEditor({
   autoFocus = false,
   editorRef,
   nodeId,
+  readOnly = false,
   onKeyDown,
   onRedo,
   onScroll,
@@ -65,12 +68,21 @@ export function RichSourceEditor({
   const suppressedInputTimerRef = useRef<number | undefined>(undefined);
   const pendingRef = useRef<PendingInput | undefined>(undefined);
   const stateRef = useRef({ content: value, selection });
+  const readOnlyRef = useRef(readOnly);
   const callbacksRef = useRef({
     onRedo,
     onSelectionChange,
     onTransaction,
     onUndo,
   });
+
+  useEffect(() => {
+    readOnlyRef.current = readOnly;
+    if (readOnly) {
+      pendingRef.current = undefined;
+      composingRef.current = false;
+    }
+  }, [readOnly]);
 
   useEffect(() => {
     callbacksRef.current = {
@@ -186,6 +198,10 @@ export function RichSourceEditor({
     }
 
     function handleBeforeInput(event: InputEvent): void {
+      if (readOnlyRef.current) {
+        event.preventDefault();
+        return;
+      }
       if (event.inputType === 'historyUndo') {
         event.preventDefault();
         callbacksRef.current.onUndo();
@@ -253,6 +269,11 @@ export function RichSourceEditor({
     }
 
     function handleInput(event: InputEvent): void {
+      if (readOnlyRef.current) {
+        reconcileSource(editor, stateRef.current.content);
+        writeSelection(editor, stateRef.current.selection);
+        return;
+      }
       if (suppressedInputRef.current === event.inputType) {
         reconcileSource(editor, stateRef.current.content);
         writeSelection(editor, stateRef.current.selection);
@@ -263,6 +284,10 @@ export function RichSourceEditor({
     }
 
     function handlePaste(event: ClipboardEvent): void {
+      if (readOnlyRef.current) {
+        event.preventDefault();
+        return;
+      }
       if (!event.clipboardData) {
         return;
       }
@@ -281,6 +306,10 @@ export function RichSourceEditor({
     }
 
     function handleDrop(event: DragEvent): void {
+      if (readOnlyRef.current) {
+        event.preventDefault();
+        return;
+      }
       if (!event.dataTransfer) {
         return;
       }
@@ -299,6 +328,10 @@ export function RichSourceEditor({
     }
 
     function handleCut(event: ClipboardEvent): void {
+      if (readOnlyRef.current) {
+        event.preventDefault();
+        return;
+      }
       const before = {
         content: readSource(editor),
         selection: readSelection(editor),
@@ -336,7 +369,11 @@ export function RichSourceEditor({
       );
     }
 
-    function handleCompositionStart(): void {
+    function handleCompositionStart(event: CompositionEvent): void {
+      if (readOnlyRef.current) {
+        event.preventDefault();
+        return;
+      }
       if (compositionTimerRef.current !== undefined) {
         window.clearTimeout(compositionTimerRef.current);
       }
@@ -358,6 +395,12 @@ export function RichSourceEditor({
       compositionTimerRef.current = window.setTimeout(() => {
         compositionTimerRef.current = undefined;
         composingRef.current = false;
+        if (readOnlyRef.current) {
+          pendingRef.current = undefined;
+          reconcileSource(editor, stateRef.current.content);
+          writeSelection(editor, stateRef.current.selection);
+          return;
+        }
         finishNativeInput('insertCompositionText');
       }, 0);
     }
@@ -380,6 +423,26 @@ export function RichSourceEditor({
       callbacksRef.current.onSelectionChange(nextSelection);
     }
 
+    function handleDoubleClick(event: MouseEvent): void {
+      if (composingRef.current) {
+        return;
+      }
+      const content = readSource(editor);
+      const current = readSelection(editor);
+      const next = expandDoubleClickSelection(content, current);
+      if (
+        next.start === current.start &&
+        next.end === current.end &&
+        next.direction === current.direction
+      ) {
+        return;
+      }
+      event.preventDefault();
+      writeSelection(editor, next);
+      stateRef.current = { content, selection: next };
+      callbacksRef.current.onSelectionChange(next);
+    }
+
     editor.addEventListener('beforeinput', handleBeforeInput);
     editor.addEventListener('compositionstart', handleCompositionStart);
     editor.addEventListener('compositionend', handleCompositionEnd);
@@ -388,6 +451,7 @@ export function RichSourceEditor({
     editor.addEventListener('copy', handleCopy);
     editor.addEventListener('cut', handleCut);
     editor.addEventListener('drop', handleDrop);
+    editor.addEventListener('dblclick', handleDoubleClick);
     editor.ownerDocument.addEventListener(
       'selectionchange',
       handleSelectionChange,
@@ -405,6 +469,7 @@ export function RichSourceEditor({
       editor.removeEventListener('copy', handleCopy);
       editor.removeEventListener('cut', handleCut);
       editor.removeEventListener('drop', handleDrop);
+      editor.removeEventListener('dblclick', handleDoubleClick);
       editor.ownerDocument.removeEventListener(
         'selectionchange',
         handleSelectionChange,
@@ -423,8 +488,9 @@ export function RichSourceEditor({
       <div
         aria-label={ariaLabel}
         aria-multiline="true"
+        aria-readonly={readOnly}
         className="markdown-source__editor"
-        contentEditable="plaintext-only"
+        contentEditable={readOnly ? false : 'plaintext-only'}
         data-markdown-node-id={nodeId}
         onKeyDown={onKeyDown}
         onScroll={(event) => onScroll?.(event.currentTarget.scrollTop)}

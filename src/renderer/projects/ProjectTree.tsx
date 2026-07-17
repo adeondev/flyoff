@@ -13,7 +13,7 @@ import ellipsisIcon from '../../../public/images/icons/actions/ellipsis.svg';
 import fileIcon from '../../../public/images/icons/instances/file.svg';
 import folderOpenIcon from '../../../public/images/icons/instances/folder-open.svg';
 import folderIcon from '../../../public/images/icons/instances/folder.svg';
-import type { ProjectTreeNode } from '../../shared/contracts';
+import type { ProjectPageNode, ProjectTreeNode } from '../../shared/contracts';
 import { MaskedIcon } from '../components/MaskedIcon';
 import { ContextMenu, DropdownMenu, type MenuItem } from '../components/menu';
 import type { Translate } from '../pages/page-types';
@@ -43,7 +43,13 @@ export interface ProjectTreeProps {
     position: { x: number; y: number },
     restoreFocus?: HTMLElement | null,
   ) => void;
+  onRequestBranchMenu: (
+    parentId: string | null,
+    position: { x: number; y: number },
+    restoreFocus?: HTMLElement | null,
+  ) => void;
   onRequestMove: (node: ProjectTreeNode) => void;
+  onRequestProperties?: (node: ProjectPageNode) => void;
   onRequestRename: (node: ProjectTreeNode) => void;
   onRequestTrash: (node: ProjectTreeNode) => void;
   onSubmitEdit: (name: string) => void;
@@ -83,6 +89,7 @@ function collectVisibleNodes(
 function nodeMenuItems(
   node: ProjectTreeNode,
   translate: Translate,
+  propertiesAvailable: boolean,
 ): readonly MenuItem[] {
   return [
     ...(node.kind === 'folder'
@@ -112,6 +119,18 @@ function nodeMenuItems(
       label: translate('projects.trash'),
       tone: 'danger',
     },
+    ...(node.kind === 'page' && node.pageType === 'markdown'
+      ? ([
+          { id: 'properties-separator', kind: 'separator' },
+          {
+            id: 'properties',
+            kind: 'action',
+            label: translate('projects.properties'),
+            shortcut: 'Alt+Enter',
+            disabled: !propertiesAvailable,
+          },
+        ] satisfies MenuItem[])
+      : []),
   ];
 }
 
@@ -231,7 +250,9 @@ export function ProjectTree({
   onMoveNode,
   onOpenNode,
   onRequestAddInstance,
+  onRequestBranchMenu,
   onRequestMove,
+  onRequestProperties,
   onRequestRename,
   onRequestTrash,
   onSubmitEdit,
@@ -314,6 +335,18 @@ export function ProjectTree({
         event.preventDefault();
         onMoveNode(visible.node, visible.parentId, beforeNodeId);
       }
+      return;
+    }
+
+    if (
+      event.altKey &&
+      event.key === 'Enter' &&
+      visible.node.kind === 'page' &&
+      visible.node.pageType === 'markdown' &&
+      onRequestProperties
+    ) {
+      event.preventDefault();
+      onRequestProperties(visible.node);
       return;
     }
 
@@ -418,6 +451,11 @@ export function ProjectTree({
       case 'trash':
         onRequestTrash(node);
         return;
+      case 'properties':
+        if (node.kind === 'page' && node.pageType === 'markdown') {
+          onRequestProperties?.(node);
+        }
+        return;
       default:
         return;
     }
@@ -510,7 +548,6 @@ export function ProjectTree({
                     : ''
                 }`}
                 draggable={!renameEdit && !operationPending}
-                onDoubleClick={() => onRequestRename(node)}
                 onDragEnd={() => finishDrag()}
                 onDragOver={(event) => {
                   if (!draggedNodeId || draggedNodeId === node.nodeId) {
@@ -629,7 +666,11 @@ export function ProjectTree({
                 )}
                 {!renameEdit ? (
                   <DropdownMenu
-                    items={nodeMenuItems(node, translate)}
+                    items={nodeMenuItems(
+                      node,
+                      translate,
+                      Boolean(onRequestProperties),
+                    )}
                     onAction={(action) => handleMenuAction(node, action)}
                     trigger={(props) => (
                       <button
@@ -658,6 +699,11 @@ export function ProjectTree({
               </div>
               {node.kind === 'folder' && expanded ? (
                 <div
+                  aria-busy={
+                    controller.getBranch(node.nodeId).status === 'loading'
+                      ? true
+                      : undefined
+                  }
                   data-project-parent-id={node.nodeId}
                   onDragOver={(event) => {
                     if (event.target === event.currentTarget && draggedNodeId) {
@@ -701,7 +747,9 @@ export function ProjectTree({
             />
           </div>
         ) : null}
-        {branch.status === 'loading' && branch.nodes.length === 0 ? (
+        {parentId === null &&
+        branch.status === 'loading' &&
+        branch.nodes.length === 0 ? (
           <div className="project-tree__message" role="status">
             {translate('projects.loading')}
           </div>
@@ -721,6 +769,9 @@ export function ProjectTree({
 
   return (
     <div
+      aria-busy={
+        controller.getBranch(null).status === 'loading' ? true : undefined
+      }
       aria-label={translate('projects.navigation')}
       className={`project-tree${dropTarget?.nodeId === null ? ' project-tree--drop-root' : ''}`}
       onDragLeave={(event) => {
@@ -749,7 +800,7 @@ export function ProjectTree({
         const branch = (event.target as Element).closest<HTMLElement>(
           '[data-project-parent-id]',
         );
-        onRequestAddInstance(
+        onRequestBranchMenu(
           branch?.dataset.projectParentId || null,
           { x: event.clientX, y: event.clientY },
           event.currentTarget,
@@ -764,7 +815,11 @@ export function ProjectTree({
           ariaLabel={`${translate('projects.moreActions')}: ${projectNodeDisplayName(
             contextMenu.node,
           )}`}
-          items={nodeMenuItems(contextMenu.node, translate)}
+          items={nodeMenuItems(
+            contextMenu.node,
+            translate,
+            Boolean(onRequestProperties),
+          )}
           onAction={(action) => {
             handleMenuAction(contextMenu.node, action, {
               x: contextMenu.x,

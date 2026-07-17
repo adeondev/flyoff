@@ -4,7 +4,6 @@ import {
   realpath,
   rename,
   rm,
-  writeFile,
 } from 'node:fs/promises';
 import { constants, type BigIntStats } from 'node:fs';
 import path from 'node:path';
@@ -72,27 +71,32 @@ async function readHandleBounded(
 ): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let totalBytes = 0;
+  try {
+    while (totalBytes <= maximumBytes) {
+      const remaining = maximumBytes + 1 - totalBytes;
+      const buffer = Buffer.allocUnsafe(Math.min(READ_CHUNK_BYTES, remaining));
+      const { bytesRead } = await handle.read(buffer, 0, buffer.byteLength, null);
 
-  while (totalBytes <= maximumBytes) {
-    const remaining = maximumBytes + 1 - totalBytes;
-    const buffer = Buffer.allocUnsafe(Math.min(READ_CHUNK_BYTES, remaining));
-    const { bytesRead } = await handle.read(buffer, 0, buffer.byteLength, null);
+      if (bytesRead === 0) {
+        break;
+      }
 
-    if (bytesRead === 0) {
-      break;
+      chunks.push(
+        bytesRead === buffer.byteLength ? buffer : buffer.subarray(0, bytesRead),
+      );
+      totalBytes += bytesRead;
+
+      if (totalBytes > maximumBytes) {
+        throw new ProjectOperationError('size-exceeded', sizeExceededMessage);
+      }
     }
 
-    chunks.push(
-      bytesRead === buffer.byteLength ? buffer : buffer.subarray(0, bytesRead),
-    );
-    totalBytes += bytesRead;
-
-    if (totalBytes > maximumBytes) {
-      throw new ProjectOperationError('size-exceeded', sizeExceededMessage);
+    return Buffer.concat(chunks, totalBytes);
+  } finally {
+    for (const chunk of chunks) {
+      chunk.fill(0);
     }
   }
-
-  return Buffer.concat(chunks, totalBytes);
 }
 
 export async function readBoundedFile(
@@ -224,9 +228,10 @@ export async function writeJsonAtomically(
   value: unknown,
   maximumBytes: number,
 ): Promise<void> {
-  const serialized = `${JSON.stringify(value, null, 2)}\n`;
+  const serialized = Buffer.from(`${JSON.stringify(value, null, 2)}\n`, 'utf8');
 
-  if (Buffer.byteLength(serialized, 'utf8') > maximumBytes) {
+  if (serialized.byteLength > maximumBytes) {
+    serialized.fill(0);
     throw new ProjectOperationError(
       'size-exceeded',
       'Project metadata exceeds the supported size limit.',
@@ -237,12 +242,39 @@ export async function writeJsonAtomically(
     path.dirname(filePath),
     `.${path.basename(filePath)}.${process.pid}.${randomUUID()}.tmp`,
   );
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
 
   try {
-    await writeFile(temporaryPath, serialized, { encoding: 'utf8', flag: 'wx' });
+    handle = await open(temporaryPath, 'wx', 0o600);
+    await handle.writeFile(serialized);
+    await handle.sync();
+    await handle.close();
+    handle = undefined;
     await rename(temporaryPath, filePath);
+    await syncParentDirectoryBestEffort(path.dirname(filePath));
   } catch (error) {
-    await rm(temporaryPath, { force: true }).catch(() => undefined);
     throw normalizeProjectError(error);
+  } finally {
+    serialized.fill(0);
+    await handle?.close().catch(() => undefined);
+    await rm(temporaryPath, { force: true }).catch(() => undefined);
+  }
+}
+
+export async function syncParentDirectoryBestEffort(
+  directoryPath: string,
+): Promise<void> {
+  if (process.platform === 'win32') {
+    return;
+  }
+
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  try {
+    handle = await open(directoryPath, 'r');
+    await handle.sync();
+  } catch {
+    return;
+  } finally {
+    await handle?.close().catch(() => undefined);
   }
 }

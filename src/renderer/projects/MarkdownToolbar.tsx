@@ -10,6 +10,7 @@ import quoteIcon from '../../../public/images/icons/editor/quote.svg';
 import strikeIcon from '../../../public/images/icons/editor/strikethrough.svg';
 import taskIcon from '../../../public/images/icons/instances/checklist.svg';
 import { MaskedIcon } from '../components/MaskedIcon';
+import { getTooltipTargetProps } from '../components/tooltip';
 import type { Translate } from '../pages/page-types';
 import { MARKDOWN_ACTIONS, type MarkdownAction } from './markdown-actions';
 
@@ -42,11 +43,16 @@ const ACTION_ICONS: Record<MarkdownAction, string> = {
 };
 
 export interface MarkdownToolbarProps {
+  disabled?: boolean;
   translate: Translate;
   onAction: (action: MarkdownAction) => void;
 }
 
-export function MarkdownToolbar({ onAction, translate }: MarkdownToolbarProps) {
+export function MarkdownToolbar({
+  disabled = false,
+  onAction,
+  translate,
+}: MarkdownToolbarProps) {
   return (
     <div
       aria-label={translate('toolbar.label')}
@@ -58,17 +64,18 @@ export function MarkdownToolbar({ onAction, translate }: MarkdownToolbarProps) {
 
         return (
           <button
+            aria-label={label}
             className="markdown-toolbar__button"
+            disabled={disabled}
             key={action}
             onClick={() => onAction(action)}
-            title={label}
             type="button"
+            {...getTooltipTargetProps(label, 'bottom')}
           >
             <MaskedIcon
               className="markdown-toolbar__icon"
               icon={ACTION_ICONS[action]}
             />
-            {label}
           </button>
         );
       })}

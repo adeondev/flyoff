@@ -24,6 +24,7 @@ export interface MarkdownBufferSnapshot {
   nodeId: string;
   content: string;
   revision: string;
+  readOnly: boolean;
   dirty: boolean;
   status: MarkdownBufferStatus;
   selection: SourceSelection;
@@ -76,10 +77,11 @@ export class MarkdownDocumentController {
   private readonly buffers = new Map<string, MarkdownBufferEntry>();
   private readonly editorStates = new Map<string, SourceEditorState>();
   private readonly history = new MarkdownHistoryStore();
+  private readonly mutationLocks = new Set<string>();
   private readonly debounceMs: number;
   private readonly saveDocument: MarkdownDocumentControllerOptions['save'];
   private readonly reloadDocument: MarkdownDocumentControllerOptions['reload'];
-  private readonly onSaveError?: MarkdownDocumentControllerOptions['onSaveError'];
+  private onSaveError?: MarkdownDocumentControllerOptions['onSaveError'];
   private disposed = false;
 
   constructor({
@@ -101,7 +103,8 @@ export class MarkdownDocumentController {
       if (
         !existing.snapshot.dirty &&
         (existing.snapshot.revision !== document.revision ||
-          existing.snapshot.content !== document.content)
+          existing.snapshot.content !== document.content ||
+          existing.snapshot.readOnly !== document.readOnly)
       ) {
         this.replaceFromDocument(existing, document);
       }
@@ -114,6 +117,7 @@ export class MarkdownDocumentController {
         nodeId: document.nodeId,
         content: document.content,
         revision: document.revision,
+        readOnly: document.readOnly,
         dirty: false,
         status: 'saved',
         selection: emptySelection(),
@@ -142,6 +146,12 @@ export class MarkdownDocumentController {
     return this.buffers.get(nodeId)?.snapshot;
   }
 
+  setOnSaveError(
+    onSaveError?: MarkdownDocumentControllerOptions['onSaveError'],
+  ): void {
+    this.onSaveError = onSaveError;
+  }
+
   subscribe(nodeId: string, listener: () => void): () => void {
     const entry = this.getEntry(nodeId);
     entry.listeners.add(listener);
@@ -150,6 +160,9 @@ export class MarkdownDocumentController {
 
   update(nodeId: string, content: string): void {
     const entry = this.getEntry(nodeId);
+    if (entry.snapshot.readOnly || this.mutationLocks.has(nodeId)) {
+      return;
+    }
     this.history.reset(nodeId);
     this.updateContent(
       entry,
@@ -163,6 +176,9 @@ export class MarkdownDocumentController {
     transaction: SourceEditTransaction,
   ): void {
     const entry = this.getEntry(nodeId);
+    if (entry.snapshot.readOnly || this.mutationLocks.has(nodeId)) {
+      return;
+    }
     const after: SourceEditorState = {
       content: transaction.after.content,
       selection: clampSelection(
@@ -212,19 +228,39 @@ export class MarkdownDocumentController {
   }
 
   undo(nodeId: string): SourceEditorState | undefined {
+    if (
+      this.getEntry(nodeId).snapshot.readOnly ||
+      this.mutationLocks.has(nodeId)
+    ) {
+      return undefined;
+    }
     return this.applyHistory(nodeId, 'undo');
   }
 
   redo(nodeId: string): SourceEditorState | undefined {
+    if (
+      this.getEntry(nodeId).snapshot.readOnly ||
+      this.mutationLocks.has(nodeId)
+    ) {
+      return undefined;
+    }
     return this.applyHistory(nodeId, 'redo');
   }
 
   canUndo(nodeId: string): boolean {
-    return this.history.canUndo(nodeId);
+    return (
+      !this.getEntry(nodeId).snapshot.readOnly &&
+      !this.mutationLocks.has(nodeId) &&
+      this.history.canUndo(nodeId)
+    );
   }
 
   canRedo(nodeId: string): boolean {
-    return this.history.canRedo(nodeId);
+    return (
+      !this.getEntry(nodeId).snapshot.readOnly &&
+      !this.mutationLocks.has(nodeId) &&
+      this.history.canRedo(nodeId)
+    );
   }
 
   private updateContent(
@@ -232,6 +268,12 @@ export class MarkdownDocumentController {
     content: string,
     selection: SourceSelection,
   ): void {
+    if (
+      entry.snapshot.readOnly ||
+      this.mutationLocks.has(entry.snapshot.nodeId)
+    ) {
+      return;
+    }
     const blockedByConflict = entry.snapshot.status === 'conflict';
     const saveInProgress = Boolean(entry.savePromise);
     const dirty = blockedByConflict || content !== entry.savedContent;
@@ -262,6 +304,47 @@ export class MarkdownDocumentController {
 
   async save(nodeId: string): Promise<boolean> {
     return this.performSave(this.getEntry(nodeId), false);
+  }
+
+  adoptProperties(
+    nodeId: string,
+    properties: Pick<MarkdownDocument, 'readOnly' | 'revision'>,
+  ): boolean {
+    const entry = this.buffers.get(nodeId);
+    if (!entry || entry.snapshot.dirty || entry.savePromise) {
+      return false;
+    }
+    this.clearTimer(entry);
+    if (properties.readOnly) {
+      this.history.reset(nodeId);
+    }
+    this.setSnapshot(entry, {
+      ...entry.snapshot,
+      readOnly: properties.readOnly,
+      revision: properties.revision,
+      status: 'saved',
+      error: undefined,
+    });
+    return true;
+  }
+
+  applyReadOnlyPolicy(nodeId: string, readOnly: boolean): boolean {
+    const entry = this.buffers.get(nodeId);
+    if (!entry || entry.snapshot.readOnly === readOnly) {
+      return Boolean(entry);
+    }
+    this.clearTimer(entry);
+    if (readOnly) {
+      this.history.reset(nodeId);
+    }
+    this.setSnapshot(entry, {
+      ...entry.snapshot,
+      readOnly,
+    });
+    if (!readOnly && entry.snapshot.dirty && !entry.savePromise) {
+      this.scheduleSave(entry);
+    }
+    return true;
   }
 
   async overwrite(nodeId: string): Promise<boolean> {
@@ -331,8 +414,43 @@ export class MarkdownDocumentController {
     return results.every(Boolean);
   }
 
+  async flushForTreeMutation(): Promise<boolean> {
+    const results = await Promise.all(
+      [...this.buffers.entries()].map(([nodeId, entry]) =>
+        entry.snapshot.readOnly && entry.snapshot.dirty
+          ? Promise.resolve(true)
+          : this.flush(nodeId),
+      ),
+    );
+    return results.every(Boolean);
+  }
+
   isDirty(nodeId: string): boolean {
     return this.buffers.get(nodeId)?.snapshot.dirty ?? false;
+  }
+
+  isMutationLocked(nodeId: string): boolean {
+    return this.mutationLocks.has(nodeId);
+  }
+
+  setMutationLocked(nodeId: string, locked: boolean): boolean {
+    const entry = this.buffers.get(nodeId);
+    if (!entry) {
+      return false;
+    }
+    const changed = locked
+      ? !this.mutationLocks.has(nodeId)
+      : this.mutationLocks.has(nodeId);
+    if (!changed) {
+      return true;
+    }
+    if (locked) {
+      this.mutationLocks.add(nodeId);
+    } else {
+      this.mutationLocks.delete(nodeId);
+    }
+    this.setSnapshot(entry, { ...entry.snapshot });
+    return true;
   }
 
   discardClean(nodeId: string): boolean {
@@ -347,6 +465,19 @@ export class MarkdownDocumentController {
     return true;
   }
 
+  discardSensitive(nodeId: string): boolean {
+    const entry = this.buffers.get(nodeId);
+    if (entry) {
+      this.clearTimer(entry);
+      entry.listeners.clear();
+      this.buffers.delete(nodeId);
+    }
+    const editorStateRemoved = this.editorStates.delete(nodeId);
+    this.history.reset(nodeId);
+    const mutationLockRemoved = this.mutationLocks.delete(nodeId);
+    return Boolean(entry) || editorStateRemoved || mutationLockRemoved;
+  }
+
   dispose(): void {
     this.disposed = true;
     for (const entry of this.buffers.values()) {
@@ -356,6 +487,7 @@ export class MarkdownDocumentController {
     this.buffers.clear();
     this.editorStates.clear();
     this.history.clear();
+    this.mutationLocks.clear();
   }
 
   private getEntry(nodeId: string): MarkdownBufferEntry {
@@ -382,6 +514,10 @@ export class MarkdownDocumentController {
     force: boolean,
   ): Promise<boolean> {
     this.clearTimer(entry);
+
+    if (entry.snapshot.readOnly) {
+      return !entry.snapshot.dirty;
+    }
 
     if (entry.savePromise) {
       await entry.savePromise;
@@ -441,6 +577,7 @@ export class MarkdownDocumentController {
       nodeId: entry.snapshot.nodeId,
       content: entry.snapshot.content,
       revision: result.value.revision,
+      readOnly: result.value.readOnly,
       dirty: changedWhileSaving,
       status: changedWhileSaving ? 'dirty' : 'saved',
       selection: entry.snapshot.selection,
@@ -458,6 +595,7 @@ export class MarkdownDocumentController {
   ): void {
     this.setSnapshot(entry, {
       ...entry.snapshot,
+      readOnly: error.code === 'read-only' || entry.snapshot.readOnly,
       dirty: true,
       status: error.code === 'conflict' ? 'conflict' : 'error',
       error,
@@ -479,6 +617,7 @@ export class MarkdownDocumentController {
       nodeId: document.nodeId,
       content: document.content,
       revision: document.revision,
+      readOnly: document.readOnly,
       dirty: false,
       status: 'saved',
       selection,

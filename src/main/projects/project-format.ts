@@ -2,9 +2,11 @@ import path from 'node:path';
 
 import {
   PROJECT_FORMAT,
+  PROJECT_FORMAT_LEGACY_VERSION,
   PROJECT_FORMAT_VERSION,
   PROJECT_INDEX_FORMAT,
   PROJECT_INDEX_LEGACY_VERSION,
+  PROJECT_INDEX_PREVIOUS_VERSION,
   PROJECT_INDEX_VERSION,
   isProjectInstanceTypeId,
   type ProjectTreeNode,
@@ -14,7 +16,9 @@ import { getProjectPageStorageAdapter } from './project-storage-adapters';
 
 export interface ProjectManifest {
   format: typeof PROJECT_FORMAT;
-  formatVersion: typeof PROJECT_FORMAT_VERSION;
+  formatVersion:
+    | typeof PROJECT_FORMAT_LEGACY_VERSION
+    | typeof PROJECT_FORMAT_VERSION;
   projectId: string;
   name: string;
   createdAt: string;
@@ -35,6 +39,9 @@ export interface ContentIndexFolderEntry extends ContentIndexEntryBase {
 export interface ContentIndexPageEntry extends ContentIndexEntryBase {
   kind: 'page';
   pageType: string;
+  attributes?: {
+    readOnly?: true;
+  };
 }
 
 export type ContentIndexEntry =
@@ -79,7 +86,8 @@ export function isProjectManifest(value: unknown): value is ProjectManifest {
 
   return (
     value.format === PROJECT_FORMAT &&
-    value.formatVersion === PROJECT_FORMAT_VERSION &&
+    (value.formatVersion === PROJECT_FORMAT_LEGACY_VERSION ||
+      value.formatVersion === PROJECT_FORMAT_VERSION) &&
     isUuid(value.projectId) &&
     isPortableProjectName(value.name) &&
     isIsoDate(value.createdAt)
@@ -107,8 +115,12 @@ export function isSafeProjectLocator(value: unknown): value is string {
 
 function parseContentIndexEntry(
   value: unknown,
-  legacy: boolean,
+  version:
+    | typeof PROJECT_INDEX_LEGACY_VERSION
+    | typeof PROJECT_INDEX_PREVIOUS_VERSION
+    | typeof PROJECT_INDEX_VERSION,
 ): ContentIndexEntry | undefined {
+  const legacy = version === PROJECT_INDEX_LEGACY_VERSION;
   if (
     !isRecord(value) ||
     !isUuid(value.nodeId) ||
@@ -144,6 +156,20 @@ function parseContentIndexEntry(
         : undefined;
 
   if (value.kind === 'page' && pageType) {
+    if (
+      version === PROJECT_INDEX_VERSION &&
+      value.attributes !== undefined &&
+      (!isRecord(value.attributes) ||
+        Object.keys(value.attributes).some((key) => key !== 'readOnly') ||
+        (value.attributes.readOnly !== undefined &&
+          typeof value.attributes.readOnly !== 'boolean'))
+    ) {
+      return undefined;
+    }
+    const readOnly =
+      version === PROJECT_INDEX_VERSION &&
+      isRecord(value.attributes) &&
+      value.attributes.readOnly === true;
     return {
       nodeId: value.nodeId,
       parentId: value.parentId,
@@ -152,6 +178,7 @@ function parseContentIndexEntry(
       kind: 'page',
       pageType,
       ...(sortOrder === undefined ? {} : { sortOrder }),
+      ...(readOnly ? { attributes: { readOnly: true } } : {}),
     };
   }
 
@@ -210,13 +237,13 @@ export function parseProjectContentIndex(
   value: unknown,
   projectId: string,
 ): ParsedProjectContentIndex | undefined {
-  const legacy =
-    isRecord(value) &&
-    value.formatVersion === PROJECT_INDEX_LEGACY_VERSION;
+  const version = isRecord(value) ? value.formatVersion : undefined;
   if (
     !isRecord(value) ||
     value.format !== PROJECT_INDEX_FORMAT ||
-    (!legacy && value.formatVersion !== PROJECT_INDEX_VERSION) ||
+    (version !== PROJECT_INDEX_LEGACY_VERSION &&
+      version !== PROJECT_INDEX_PREVIOUS_VERSION &&
+      version !== PROJECT_INDEX_VERSION) ||
     value.projectId !== projectId ||
     !Array.isArray(value.entries)
   ) {
@@ -224,7 +251,13 @@ export function parseProjectContentIndex(
   }
 
   const entries = value.entries.map((entry) =>
-    parseContentIndexEntry(entry, legacy),
+    parseContentIndexEntry(
+      entry,
+      version as
+        | typeof PROJECT_INDEX_LEGACY_VERSION
+        | typeof PROJECT_INDEX_PREVIOUS_VERSION
+        | typeof PROJECT_INDEX_VERSION,
+    ),
   );
 
   if (entries.some((entry) => !entry)) {
@@ -252,7 +285,7 @@ export function parseProjectContentIndex(
       projectId,
       entries: parsedEntries,
     },
-    migrated: legacy,
+    migrated: version !== PROJECT_INDEX_VERSION,
   };
 }
 

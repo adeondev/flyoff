@@ -90,6 +90,34 @@ async function sourceOf(editor: ReturnType<Page['locator']>): Promise<string> {
   );
 }
 
+async function doubleClickSourceText(
+  page: Page,
+  editor: ReturnType<Page['locator']>,
+  target: string,
+): Promise<void> {
+  const point = await editor.evaluate((root, expected) => {
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    let node = walker.nextNode();
+    while (node) {
+      const parent = node.parentElement;
+      const index = node.textContent?.indexOf(expected) ?? -1;
+      if (index >= 0 && !parent?.closest('[data-md-gutter]')) {
+        parent?.closest('.md-line')?.scrollIntoView({ block: 'center' });
+        const middle = index + Math.floor(expected.length / 2);
+        const range = document.createRange();
+        range.setStart(node, middle);
+        range.setEnd(node, Math.min(middle + 1, node.textContent?.length ?? 0));
+        const rect = range.getBoundingClientRect();
+        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      }
+      node = walker.nextNode();
+    }
+    throw new Error(`Source text was not found: ${expected}`);
+  }, target);
+
+  await page.mouse.dblclick(point.x, point.y);
+}
+
 test('stabilizes Markdown editing, history, gutters and note zoom', async () => {
   test.setTimeout(90_000);
   const appPath = locatePackagedAsar(repositoryRoot);
@@ -161,12 +189,16 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
     await page.keyboard.press('Backspace');
     await expect.poll(() => sourceOf(editor)).toBe('a');
     await editor.selectText();
-    await page.keyboard.type('==uau==');
+    await page.keyboard.insertText('==uau==');
     await page.keyboard.press('Enter');
-    await page.keyboard.type('[text](https://x.dev)');
+    await page.keyboard.insertText('[text](https://x.dev)');
     const sample = '==uau==\n[text](https://x.dev)';
     await expect.poll(() => sourceOf(editor)).toBe(sample);
 
+    await doubleClickSourceText(page, editor, 'text');
+    await expect.poll(() => page.evaluate(() => getSelection()?.toString())).toBe(
+      'text',
+    );
     await page.getByRole('button', { name: labels.split }).click();
     const reading = page.getByRole('document', { name: labels.reading });
     await expect(reading.locator('mark')).toHaveText('uau');
@@ -332,6 +364,10 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
       process.platform === 'darwin' ? 'Meta+Shift+Z' : 'Control+Y',
     );
     await expect.poll(() => sourceOf(editor)).toBe(layoutContent);
+    await doubleClickSourceText(page, editor, '1000');
+    await expect.poll(() => page.evaluate(() => getSelection()?.toString())).toBe(
+      '1000',
+    );
   } finally {
     await stopApplication(app);
     await rm(userDataPath, { recursive: true, force: true });

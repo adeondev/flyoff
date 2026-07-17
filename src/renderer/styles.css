@@ -20,8 +20,14 @@ body,
   margin: 0;
 }
 
+html,
+body {
+  overflow-x: clip;
+}
+
 body {
   overflow: hidden;
+  overflow-x: clip;
   background: var(--color-background);
   color: var(--color-text);
 }
@@ -334,8 +340,8 @@ img {
   background: var(--color-surface);
   color: var(--color-text-muted);
   cursor: grab;
-  animation: page-tab-open var(--dur-micro) var(--ease-out);
-  transform-origin: left center;
+  overflow: hidden;
+  animation: page-tab-open var(--page-tab-motion-duration) var(--ease-out);
   transition:
     background-color var(--dur-micro) var(--ease-out),
     border-color var(--dur-micro) var(--ease-out),
@@ -407,14 +413,9 @@ img {
 }
 
 .page-tab--closing {
-  position: absolute;
-  z-index: 4;
   flex: none;
-  margin: 0;
-  overflow: hidden;
   pointer-events: none;
-  animation: page-tab-close var(--dur-micro) var(--ease-in) both;
-  transform-origin: left center;
+  animation: page-tab-close var(--page-tab-motion-duration) var(--ease-out) both;
 }
 
 .page-tab__trigger:focus-visible,
@@ -473,25 +474,25 @@ img {
 
 @keyframes page-tab-open {
   from {
-    opacity: 0;
-    transform: translateX(-10px) scale(0.9, 0.96);
-  }
-
-  to {
-    opacity: 1;
-    transform: translateX(0) scale(1);
+    width: 0;
+    min-width: 0;
+    max-width: 0;
+    flex-basis: 0;
+    margin-left: 0;
+    border-right-width: 0;
+    border-left-width: 0;
   }
 }
 
 @keyframes page-tab-close {
-  from {
-    opacity: 1;
-    transform: translateX(0) scale(1);
-  }
-
   to {
-    opacity: 0;
-    transform: translateX(-12px) scale(0.84, 0.94);
+    width: 0;
+    min-width: 0;
+    max-width: 0;
+    flex-basis: 0;
+    margin-left: 0;
+    border-right-width: 0;
+    border-left-width: 0;
   }
 }
 
@@ -675,49 +676,13 @@ img {
   font-size: 14px;
 }
 
-.close-dialog__backdrop {
-  position: fixed;
-  z-index: 10000;
-  inset: 0;
-  display: grid;
-  padding: 24px;
-  place-items: center;
-  background: rgb(0 0 0 / 58%);
-  animation: flyoff-opacity-in 45ms linear;
-  -webkit-app-region: no-drag;
-}
-
-.close-dialog {
-  width: min(100%, 420px);
-  padding: 24px;
-  border: 1px solid var(--color-border);
-  border-radius: 7px;
-  background: var(--color-surface);
-  color: var(--color-text);
-  box-shadow: 0 16px 44px rgb(0 0 0 / 32%);
-}
-
-.close-dialog h2 {
-  margin: 0;
-  font-size: 19px;
-  font-weight: 600;
-}
-
-.close-dialog p {
-  margin: 12px 0 24px;
-  color: var(--color-text-muted);
-  font-size: 14px;
-  line-height: 1.5;
-}
-
-.close-dialog__actions,
 .session-restore__actions {
   display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 8px;
 }
 
-.close-dialog button,
 .session-restore button {
   min-height: 36px;
   padding: 0 14px;
@@ -729,60 +694,50 @@ img {
   font: inherit;
   font-size: 13px;
   font-weight: 600;
+  white-space: nowrap;
 }
 
-.close-dialog button:hover,
 .session-restore button:hover {
   background: var(--color-surface-active);
 }
 
-.close-dialog button:disabled {
-  opacity: 0.62;
-  cursor: default;
-}
-
-.close-dialog button:disabled:hover {
-  background: var(--color-surface-hover);
-}
-
-.close-dialog button:focus-visible,
 .session-restore button:focus-visible {
   box-shadow: inset 0 0 0 1px var(--color-focus-ring);
 }
 
-.close-dialog .close-dialog__confirm,
 .session-restore .session-restore__primary {
+  min-width: 112px;
   background: var(--color-accent);
 }
 
-.close-dialog .close-dialog__confirm:hover,
 .session-restore .session-restore__primary:hover {
   background: var(--color-accent-hover);
-}
-
-.close-dialog .close-dialog__confirm:disabled:hover {
-  background: var(--color-accent);
 }
 
 .session-restore {
   position: fixed;
   z-index: 9000;
-  right: 16px;
+  left: 50%;
   bottom: 16px;
-  width: min(360px, calc(100vw - 32px));
-  padding: 16px;
+  display: grid;
+  width: min(620px, calc(100vw - 32px));
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 24px;
+  padding: 12px 12px 12px 16px;
   border: 1px solid var(--color-border);
   border-radius: 7px;
   background: var(--color-surface);
   box-shadow: 0 12px 34px rgb(0 0 0 / 28%);
   animation: flyoff-opacity-in 45ms linear;
+  transform: translateX(-50%);
   -webkit-app-region: no-drag;
 }
 
 .session-restore p {
-  margin: 0 0 14px;
+  margin: 0;
   color: var(--color-text);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 500;
 }
 
@@ -831,12 +786,19 @@ img {
     align-items: stretch;
     flex-direction: column;
   }
+
+  .session-restore {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .session-restore__actions button {
+    flex: 1;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .close-dialog__backdrop,
-  .session-restore,
-  .project-dialog__backdrop {
+  .session-restore {
     animation: none;
   }
 

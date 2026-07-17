@@ -9,6 +9,7 @@ import {
 } from './project-page-type-registry';
 
 export interface ProjectContentPageProps {
+  displayPath?: string;
   node?: ProjectTreeNode;
   nodeId: string;
   pageState: PageSessionState;
@@ -21,6 +22,7 @@ export interface ProjectContentPageProps {
 }
 
 export function ProjectContentPage({
+  displayPath,
   node,
   nodeId,
   pageState,
@@ -50,6 +52,12 @@ export function ProjectContentPage({
   const Page = definition.Page;
   return (
     <Page
+      displayPath={displayPath}
+      key={`${nodeId}:${
+        pageType === 'markdown' && runtime.markdown.lockedNodeIds.has(nodeId)
+          ? 'locked'
+          : 'open'
+      }`}
       node={node?.kind === 'page' ? node : undefined}
       nodeId={nodeId}
       pageState={pageState}

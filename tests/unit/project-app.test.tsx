@@ -19,6 +19,7 @@ import {
   type BootstrapState,
   type FlyoffApi,
   type MarkdownDocument,
+  type ProjectPageProperties,
   type ProjectSummary,
   type ProjectTreeNode,
   type RendererMenuCommand,
@@ -30,6 +31,8 @@ const noteId = 'ffbf978c-43d7-4135-a3ea-f6e4e3ec76fb';
 const folderId = 'f44fd7c7-e84d-4b31-8d23-c268c1be446d';
 const nestedFolderId = 'adb5e1f7-85e8-4236-9f26-abfc7d0fa425';
 const revision = '1'.repeat(64);
+const nextRevision = '2'.repeat(64);
+const finalRevision = '3'.repeat(64);
 
 const bootstrap: BootstrapState = {
   platform: 'win32',
@@ -60,7 +63,21 @@ const note: ProjectTreeNode = {
 const markdownDocument: MarkdownDocument = {
   nodeId: noteId,
   content: '# Roadmap',
+  readOnly: false,
   revision,
+};
+
+const noteProperties: ProjectPageProperties = {
+  nodeId: noteId,
+  pageType: 'markdown',
+  contentSizeBytes: 9,
+  diskSizeBytes: 9,
+  createdAt: '2026-01-02T03:04:05.000Z',
+  modifiedAt: '2026-02-03T04:05:06.000Z',
+  revision,
+  readOnly: false,
+  passwordProtected: false,
+  locked: false,
 };
 
 function failure(message = 'Unavailable') {
@@ -115,6 +132,39 @@ function installProjectApi(
         content: request.content,
       },
     })),
+    getProjectPageProperties: vi.fn(async () => ({
+      ok: true,
+      value: noteProperties,
+    })),
+    setProjectPageReadOnly: vi.fn(async (request) => ({
+      ok: true,
+      value: {
+        ...noteProperties,
+        readOnly: request.readOnly,
+        revision: nextRevision,
+      },
+    })),
+    protectProjectPage: vi.fn(async () => ({
+      ok: true,
+      value: {
+        ...noteProperties,
+        passwordProtected: true,
+        revision: nextRevision,
+      },
+    })),
+    changeProjectPagePassword: vi.fn(async () => ({
+      ok: true,
+      value: { ...noteProperties, passwordProtected: true },
+    })),
+    removeProjectPagePassword: vi.fn(async () => ({
+      ok: true,
+      value: noteProperties,
+    })),
+    unlockProjectPage: vi.fn(async () => ({
+      ok: true,
+      value: markdownDocument,
+    })),
+    lockProjectPage: vi.fn(async () => ({ ok: true, value: null })),
     ...overrides,
   };
 
@@ -196,6 +246,11 @@ describe('project workspace integration', () => {
       (await screen.findByRole('textbox', { name: 'Markdown editor' }))
         .textContent,
     ).toContain('# Roadmap');
+    const heading = screen.getByRole('heading', { name: '/Roadmap' });
+    expect(heading.getAttribute('data-flyoff-tooltip')).toBe('/Roadmap');
+    expect(heading.getAttribute('data-flyoff-tooltip-placement')).toBe(
+      'bottom',
+    );
 
     fireEvent.click(screen.getByRole('button', { name: 'Close project' }));
 
@@ -214,7 +269,7 @@ describe('project workspace integration', () => {
     expect(screen.getByRole('tab', { name: 'Home' })).toBeTruthy();
   });
 
-  it('closes note tabs immediately and recovers a later autosave failure', async () => {
+  it('cancels note close when a pending save fails and preserves the draft', async () => {
     let finishSave:
       | ((result: {
           ok: false;
@@ -230,7 +285,7 @@ describe('project workspace integration', () => {
           finishSave = resolve;
         }),
     );
-    installProjectApi({ saveMarkdownDocument });
+    const api = installProjectApi({ saveMarkdownDocument });
     render(<App />);
 
     fireEvent.click(
@@ -254,7 +309,8 @@ describe('project workspace integration', () => {
     fireEvent.click(
       screen.getByRole('button', { name: 'Close tab: Roadmap' }),
     );
-    expect(screen.queryByRole('tab', { name: 'Roadmap' })).toBeNull();
+    expect(screen.getByRole('tab', { name: 'Roadmap' })).toBeTruthy();
+    expect(api.lockProjectPage).not.toHaveBeenCalled();
 
     await act(async () => {
       finishSave?.({
@@ -268,6 +324,8 @@ describe('project workspace integration', () => {
     expect(screen.getByRole('alert').textContent).toContain(
       'Background save failed',
     );
+    expect(screen.getByRole('tab', { name: 'Roadmap' })).toBeTruthy();
+    expect(api.lockProjectPage).not.toHaveBeenCalled();
 
     fireEvent.click(screen.getByRole('button', { name: 'Roadmap' }));
     expect(
@@ -413,7 +471,10 @@ describe('project workspace integration', () => {
     );
     fireEvent.click(await screen.findByRole('button', { name: 'Roadmap' }));
     await screen.findByRole('textbox', { name: 'Markdown editor' });
-    fireEvent.doubleClick(screen.getByRole('button', { name: 'Roadmap' }));
+    const treeItem = screen
+      .getByRole('button', { name: 'Roadmap' })
+      .closest<HTMLElement>('[role="treeitem"]')!;
+    fireEvent.keyDown(treeItem, { key: 'F2' });
     const nameInput = screen.getByRole('textbox', { name: 'Name' });
     fireEvent.change(nameInput, { target: { value: 'Launch' } });
     fireEvent.submit(nameInput.closest('form')!);
@@ -424,6 +485,314 @@ describe('project workspace integration', () => {
         name: 'Launch',
       });
       expect(screen.getByRole('tab', { name: 'Launch' })).toBeTruthy();
+      expect(screen.getByRole('heading', { name: '/Launch' })).toBeTruthy();
+    });
+  });
+
+  it('updates an open note path after an ancestor rename', async () => {
+    const folder: ProjectTreeNode = {
+      nodeId: folderId,
+      parentId: null,
+      name: 'Notes',
+      kind: 'folder',
+    };
+    const nestedNote: ProjectTreeNode = { ...note, parentId: folderId };
+    const renameProjectNode = vi.fn(async () => ({
+      ok: true as const,
+      value: { ...folder, name: 'Archive' },
+    }));
+    installProjectApi({
+      listProjectChildren: vi.fn(async ({ parentId }) => ({
+        ok: true as const,
+        value: parentId === null ? [folder] : [nestedNote],
+      })),
+      renameProjectNode,
+    });
+    render(<App />);
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Open Project' }),
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Notes' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Roadmap' }));
+    await screen.findByRole('heading', { name: '/Notes/Roadmap' });
+
+    const folderItem = screen
+      .getByRole('button', { name: 'Notes' })
+      .closest<HTMLElement>('[role="treeitem"]')!;
+    fireEvent.keyDown(folderItem, { key: 'F2' });
+    const nameInput = screen.getByRole('textbox', { name: 'Name' });
+    fireEvent.change(nameInput, { target: { value: 'Archive' } });
+    fireEvent.submit(nameInput.closest('form')!);
+
+    await waitFor(() => {
+      expect(renameProjectNode).toHaveBeenCalledWith({
+        nodeId: folderId,
+        name: 'Archive',
+      });
+      expect(
+        screen.getByRole('heading', { name: '/Archive/Roadmap' }),
+      ).toBeTruthy();
+    });
+    expect(screen.getByRole('tab', { name: 'Roadmap' })).toBeTruthy();
+  });
+
+  it('opens properties immediately with Alt+Enter and applies read-only after flushing the current revision', async () => {
+    let finishProperties:
+      | ((result: { ok: true; value: ProjectPageProperties }) => void)
+      | undefined;
+    const getProjectPageProperties = vi.fn(
+      () =>
+        new Promise<{ ok: true; value: ProjectPageProperties }>((resolve) => {
+          finishProperties = resolve;
+        }),
+    );
+    const saveMarkdownDocument = vi.fn(async (request) => ({
+      ok: true as const,
+      value: {
+        ...markdownDocument,
+        content: request.content,
+        revision: nextRevision,
+      },
+    }));
+    const setProjectPageReadOnly = vi.fn(async (request) => ({
+      ok: true as const,
+      value: {
+        ...noteProperties,
+        readOnly: request.readOnly,
+        revision: finalRevision,
+      },
+    }));
+    installProjectApi({
+      getProjectPageProperties,
+      saveMarkdownDocument,
+      setProjectPageReadOnly,
+    });
+    render(<App />);
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Open Project' }),
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Roadmap' }));
+    const editor = await screen.findByRole('textbox', {
+      name: 'Markdown editor',
+    });
+    editor.textContent = '# Current draft';
+    fireEvent.input(editor, { inputType: 'insertText' });
+    fireEvent.keyDown(editor, { altKey: true, key: 'Enter' });
+
+    const dialog = screen.getByRole('dialog', { name: 'Note properties' });
+    expect(
+      dialog.querySelector('.project-page-properties')?.getAttribute(
+        'aria-busy',
+      ),
+    ).toBe('true');
+    expect(getProjectPageProperties).toHaveBeenCalledWith({ nodeId: noteId });
+
+    await act(async () => {
+      finishProperties?.({ ok: true, value: noteProperties });
+    });
+    const readOnly = within(dialog).getByRole('checkbox', {
+      name: /Read-only/,
+    });
+    fireEvent.click(readOnly);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Apply' }));
+
+    await waitFor(() => {
+      expect(saveMarkdownDocument).toHaveBeenCalledWith({
+        nodeId: noteId,
+        content: '# Current draft',
+        expectedRevision: revision,
+      });
+      expect(setProjectPageReadOnly).toHaveBeenCalledWith({
+        nodeId: noteId,
+        expectedRevision: nextRevision,
+        readOnly: true,
+      });
+      expect(editor.getAttribute('contenteditable')).toBe('false');
+    });
+    expect(
+      (screen.getByRole('button', { name: 'Bold' }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+  });
+
+  it('opens Markdown note properties from the final context-menu group', async () => {
+    const api = installProjectApi();
+    render(<App />);
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Open Project' }),
+    );
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'More actions: Roadmap' }),
+    );
+    fireEvent.click(
+      screen.getByRole('menuitem', { name: 'Properties…' }),
+    );
+
+    expect(
+      await screen.findByRole('dialog', { name: 'Note properties' }),
+    ).toBeTruthy();
+    expect(api.getProjectPageProperties).toHaveBeenCalledWith({
+      nodeId: noteId,
+    });
+  });
+
+  it('removes plaintext from the DOM while locking and restores the note after unlock', async () => {
+    const protectedProperties = {
+      ...noteProperties,
+      passwordProtected: true,
+      locked: false,
+    };
+    const lockProjectPage = vi.fn(async () => ({
+      ok: true as const,
+      value: null,
+    }));
+    const unlockProjectPage = vi.fn(async () => ({
+      ok: true as const,
+      value: markdownDocument,
+    }));
+    installProjectApi({
+      getProjectPageProperties: vi.fn(async () => ({
+        ok: true as const,
+        value: protectedProperties,
+      })),
+      lockProjectPage,
+      unlockProjectPage,
+    });
+    render(<App />);
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Open Project' }),
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Roadmap' }));
+    const editor = await screen.findByRole('textbox', {
+      name: 'Markdown editor',
+    });
+    fireEvent.keyDown(editor, { altKey: true, key: 'Enter' });
+    const dialog = await screen.findByRole('dialog', {
+      name: 'Note properties',
+    });
+    await within(dialog).findByRole('button', { name: 'Lock now' });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Lock now' }));
+
+    await waitFor(() => {
+      expect(lockProjectPage).toHaveBeenCalledWith({ nodeId: noteId });
+      expect(
+        screen.queryByRole('textbox', { name: 'Markdown editor' }),
+      ).toBeNull();
+      expect(document.body.textContent).not.toContain('# Roadmap');
+    });
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Unlock' }));
+    fireEvent.change(
+      within(dialog).getByLabelText('Password'),
+      { target: { value: 'correct horse battery staple' } },
+    );
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Unlock' }));
+
+    expect(
+      (await screen.findByRole('textbox', { name: 'Markdown editor' }))
+        .textContent,
+    ).toContain('# Roadmap');
+    expect(unlockProjectPage).toHaveBeenCalledWith({
+      nodeId: noteId,
+      password: 'correct horse battery staple',
+    });
+  });
+
+  it('preserves a dirty buffer when autosave discovers that a note requires a password', async () => {
+    const saveMarkdownDocument = vi.fn(async () => ({
+      ok: false as const,
+      error: {
+        code: 'password-required' as const,
+        message: 'Password required',
+      },
+    }));
+    const unlockProjectPage = vi.fn(async () => ({
+      ok: true as const,
+      value: markdownDocument,
+    }));
+    installProjectApi({ saveMarkdownDocument, unlockProjectPage });
+    render(<App />);
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Open Project' }),
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Roadmap' }));
+    const editor = await screen.findByRole('textbox', {
+      name: 'Markdown editor',
+    });
+    editor.textContent = '# Unsaved secret';
+    fireEvent.input(editor, { inputType: 'insertText' });
+    fireEvent.keyDown(editor, { ctrlKey: true, key: 's' });
+
+    const password = await screen.findByLabelText('Password');
+    expect(document.body.textContent).not.toContain('# Unsaved secret');
+    fireEvent.click(screen.getByRole('button', { name: 'Close tab: Roadmap' }));
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: 'Roadmap' })).toBeTruthy();
+      expect(screen.getByLabelText('Password')).toBeTruthy();
+    });
+    fireEvent.change(password, {
+      target: { value: 'correct horse battery staple' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Unlock' }));
+
+    expect(
+      (await screen.findByRole('textbox', { name: 'Markdown editor' }))
+        .textContent,
+    ).toContain('# Unsaved secret');
+  });
+
+  it('cancels closing an unlocked protected tab when locking fails', async () => {
+    let failLock = true;
+    const lockProjectPage = vi.fn(async () =>
+      failLock
+        ? {
+            ok: false as const,
+            error: { code: 'io-error' as const, message: 'Lock failed' },
+          }
+        : { ok: true as const, value: null },
+    );
+    installProjectApi({
+      readMarkdownDocument: vi.fn(async () => ({
+        ok: false as const,
+        error: {
+          code: 'password-required' as const,
+          message: 'Password required',
+        },
+      })),
+      lockProjectPage,
+    });
+    render(<App />);
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Open Project' }),
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Roadmap' }));
+    fireEvent.change(await screen.findByLabelText('Password'), {
+      target: { value: 'correct horse battery staple' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Unlock' }));
+    await screen.findByRole('textbox', { name: 'Markdown editor' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close tab: Roadmap' }));
+    await waitFor(() => expect(lockProjectPage).toHaveBeenCalledOnce());
+    expect(screen.getByRole('tab', { name: 'Roadmap' })).toBeTruthy();
+    expect(
+      screen.getByRole('textbox', { name: 'Markdown editor' }).getAttribute(
+        'contenteditable',
+      ),
+    ).not.toBe('false');
+
+    failLock = false;
+    fireEvent.click(screen.getByRole('button', { name: 'Close tab: Roadmap' }));
+    await waitFor(() => {
+      expect(lockProjectPage).toHaveBeenCalledTimes(2);
+      expect(screen.queryByRole('tab', { name: 'Roadmap' })).toBeNull();
+      expect(document.body.textContent).not.toContain('# Roadmap');
     });
   });
 
@@ -448,6 +817,10 @@ describe('project workspace integration', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Notes' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Roadmap' }));
     await screen.findByRole('textbox', { name: 'Markdown editor' });
+    expect(
+      screen.getByRole('heading', { name: '/Notes/Roadmap' }),
+    ).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Roadmap' })).toBeTruthy();
 
     fireEvent.click(screen.getByRole('tab', { name: project.name }));
     fireEvent.click(screen.getByRole('tab', { name: 'Roadmap' }));

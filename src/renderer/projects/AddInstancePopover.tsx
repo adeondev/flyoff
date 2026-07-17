@@ -20,12 +20,17 @@ export interface AddInstanceChoice {
   pageType?: string;
 }
 
+export type AddInstancePopoverCloseReason =
+  | 'outside-pointer'
+  | 'escape'
+  | 'selection';
+
 export interface AddInstancePopoverProps {
   parentId: string | null;
   position: { x: number; y: number };
   restoreFocus?: HTMLElement | null;
   translate: Translate;
-  onClose: () => void;
+  onClose: (reason: AddInstancePopoverCloseReason) => void;
   onSelect: (choice: AddInstanceChoice) => void;
 }
 
@@ -40,8 +45,8 @@ interface InstanceOption extends AddInstanceChoice {
 const PAGE_TYPE_ORDER = ['markdown', 'checklist', 'kanban', 'gallery'];
 
 function positionStyle(position: { x: number; y: number }): CSSProperties {
-  const width = 288;
-  const height = 360;
+  const width = 352;
+  const height = 408;
   const gap = 8;
   return {
     left: Math.max(gap, Math.min(position.x, window.innerWidth - width - gap)),
@@ -112,20 +117,57 @@ export function AddInstancePopover({
     ? activeId
     : filtered.find(({ disabled }) => !disabled)?.id ?? '';
 
-  const closeAndRestoreFocus = useCallback((): void => {
-    onClose();
-    requestAnimationFrame(() => restoreFocus?.focus());
-  }, [onClose, restoreFocus]);
+  const close = useCallback(
+    (reason: AddInstancePopoverCloseReason): void => {
+      if (
+        reason !== 'escape' &&
+        document.activeElement instanceof HTMLElement &&
+        document.activeElement
+          .closest('.add-instance-popover')
+          ?.getAttribute('aria-labelledby') === titleId
+      ) {
+        document.activeElement.blur();
+      }
+
+      onClose(reason);
+      if (reason !== 'escape') {
+        return;
+      }
+
+      requestAnimationFrame(() => {
+        if (restoreFocus?.isConnected) {
+          restoreFocus.focus({ preventScroll: true });
+        }
+      });
+    },
+    [onClose, restoreFocus, titleId],
+  );
+
+  const select = useCallback((choice: AddInstanceChoice): void => {
+    close('selection');
+    onSelect(choice);
+  }, [close, onSelect]);
 
   useEffect(() => {
     const handlePointerDown = (event: PointerEvent): void => {
       if (!rootRef.current?.contains(event.target as Node)) {
-        closeAndRestoreFocus();
+        close('outside-pointer');
       }
     };
+    const handleEscape = (event: globalThis.KeyboardEvent): void => {
+      if (event.key !== 'Escape') {
+        return;
+      }
+      event.preventDefault();
+      close('escape');
+    };
     window.addEventListener('pointerdown', handlePointerDown, true);
-    return () => window.removeEventListener('pointerdown', handlePointerDown, true);
-  }, [closeAndRestoreFocus]);
+    window.addEventListener('keydown', handleEscape);
+    return () => {
+      window.removeEventListener('pointerdown', handlePointerDown, true);
+      window.removeEventListener('keydown', handleEscape);
+    };
+  }, [close]);
 
   function moveActive(offset: number): void {
     const enabled = filtered.filter(({ disabled }) => !disabled);
@@ -141,11 +183,6 @@ export function AddInstancePopover({
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
-    if (event.key === 'Escape') {
-      event.preventDefault();
-      closeAndRestoreFocus();
-      return;
-    }
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
       moveActive(event.key === 'ArrowDown' ? 1 : -1);
@@ -157,7 +194,7 @@ export function AddInstancePopover({
       );
       if (option) {
         event.preventDefault();
-        onSelect({ kind: option.kind, pageType: option.pageType });
+        select({ kind: option.kind, pageType: option.pageType });
       }
     }
   }
@@ -209,7 +246,7 @@ export function AddInstancePopover({
               key={option.id}
               id={`${optionsId}-${option.id}`}
               onClick={() =>
-                onSelect({ kind: option.kind, pageType: option.pageType })
+                select({ kind: option.kind, pageType: option.pageType })
               }
               onMouseEnter={() => {
                 if (!option.disabled) {

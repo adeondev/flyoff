@@ -1,7 +1,7 @@
 .toast-host {
   position: fixed;
+  top: 16px;
   right: 16px;
-  bottom: 16px;
   z-index: 8500;
   display: flex;
   width: min(380px, calc(100% - 32px));
@@ -16,7 +16,7 @@
   position: relative;
   display: grid;
   min-height: 48px;
-  grid-template-columns: 10px minmax(0, 1fr) 28px;
+  grid-template-columns: 3px minmax(0, 1fr) 28px;
   align-items: center;
   gap: 10px;
   padding: 10px 10px 12px 12px;
@@ -29,8 +29,7 @@
   font-size: 13px;
   line-height: 1.4;
   pointer-events: auto;
-  animation: toast-enter var(--dur-toast-enter) var(--ease-out) both;
-  transform-origin: right center;
+  animation: toast-enter var(--dur-toast-enter) linear both;
 }
 
 .toast--error {
@@ -38,7 +37,7 @@
 }
 
 .toast--exiting {
-  animation: toast-exit var(--dur-toast-exit) var(--ease-in) both;
+  animation: toast-exit var(--dur-toast-exit) linear both;
 }
 
 .toast:focus-visible,
@@ -48,9 +47,9 @@
 }
 
 .toast__marker {
-  width: 8px;
-  height: 8px;
-  border-radius: 2px;
+  width: 3px;
+  height: 28px;
+  border-radius: 1px;
   background: var(--toast-marker);
 }
 
@@ -98,21 +97,13 @@
 
 @keyframes toast-enter {
   from {
-    transform: translateX(calc(100% + 18px)) scale(0.86, 0.94);
-  }
-
-  to {
-    transform: translateX(0) scale(1);
+    opacity: 0;
   }
 }
 
 @keyframes toast-exit {
-  from {
-    transform: translateX(0) scale(1);
-  }
-
   to {
-    transform: translateX(calc(100% + 18px)) scale(0.9, 0.96);
+    opacity: 0;
   }
 }
 
@@ -123,25 +114,12 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .toast {
-    animation: toast-enter-reduced 100ms linear both;
-    transform: none;
-  }
-
+  .toast,
   .toast--exiting {
-    animation: toast-exit-reduced 80ms linear both;
-    transform: none;
+    animation: none;
   }
-}
 
-@keyframes toast-enter-reduced {
-  from {
-    opacity: 0;
-  }
-}
-
-@keyframes toast-exit-reduced {
-  to {
-    opacity: 0;
+  .toast__progress {
+    display: none;
   }
 }

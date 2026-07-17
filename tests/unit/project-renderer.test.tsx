@@ -15,6 +15,7 @@ import { MarkdownEditor } from '../../src/renderer/projects/MarkdownEditor';
 import { MarkdownDocumentController } from '../../src/renderer/projects/markdown-document-controller';
 import {
   readSelection,
+  readSource,
   writeSelection,
 } from '../../src/renderer/projects/source-caret';
 import { CreateProjectDialog } from '../../src/renderer/projects/CreateProjectDialog';
@@ -57,6 +58,26 @@ const nestedNote: ProjectTreeNode = {
   kind: 'page',
   pageType: 'markdown',
 };
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
+}
+
+function successfulSave() {
+  return vi.fn(async (request: { content: string; nodeId: string }) => ({
+    ok: true as const,
+    value: {
+      content: request.content,
+      nodeId: request.nodeId,
+      readOnly: false,
+      revision: '2'.repeat(64),
+    },
+  }));
+}
 
 afterEach(() => {
   cleanup();
@@ -123,6 +144,102 @@ describe('project sidebar', () => {
       });
       expect(onOpenNode).toHaveBeenCalledWith(created);
     });
+  });
+
+  it('keeps an empty expanded folder stable while its children load', async () => {
+    const nestedLoad = deferred<{
+      ok: true;
+      value: readonly ProjectTreeNode[];
+    }>();
+    const loadChildren = vi.fn(({ parentId }: { parentId: string | null }) =>
+      parentId === null
+        ? Promise.resolve({ ok: true as const, value: [folder] })
+        : nestedLoad.promise,
+    );
+    const { container } = render(
+      <ProjectSidebar
+        loadChildren={loadChildren}
+        onCreateNode={vi.fn()}
+        onMoveNode={vi.fn()}
+        onOpenNode={vi.fn()}
+        onOpenOverview={vi.fn()}
+        onRenameNode={vi.fn()}
+        onTrashNode={vi.fn()}
+        project={project}
+        translate={translate}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Docs' }));
+    const group = container.querySelector<HTMLElement>(
+      `[data-project-parent-id="${folder.nodeId}"]`,
+    );
+    expect(group?.getAttribute('aria-busy')).toBe('true');
+    expect(screen.queryByText('projects.loading')).toBeNull();
+
+    await act(async () => {
+      nestedLoad.resolve({ ok: true, value: [] });
+      await nestedLoad.promise;
+    });
+
+    expect(group?.hasAttribute('aria-busy')).toBe(false);
+    expect(group?.children).toHaveLength(0);
+    expect(screen.queryByText('projects.loading')).toBeNull();
+  });
+
+  it('publishes all loaded folder children in one render', async () => {
+    const secondNestedNote: ProjectTreeNode = {
+      ...nestedNote,
+      nodeId: '68eb7d8e-d121-4827-b0bc-742852cad53c',
+      name: 'Decisions',
+    };
+    const nestedLoad = deferred<{
+      ok: true;
+      value: readonly ProjectTreeNode[];
+    }>();
+    const loadChildren = vi.fn(({ parentId }: { parentId: string | null }) =>
+      parentId === null
+        ? Promise.resolve({ ok: true as const, value: [folder] })
+        : nestedLoad.promise,
+    );
+    const { container } = render(
+      <ProjectSidebar
+        loadChildren={loadChildren}
+        onCreateNode={vi.fn()}
+        onMoveNode={vi.fn()}
+        onOpenNode={vi.fn()}
+        onOpenOverview={vi.fn()}
+        onRenameNode={vi.fn()}
+        onTrashNode={vi.fn()}
+        project={project}
+        translate={translate}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Docs' }));
+    const group = container.querySelector<HTMLElement>(
+      `[data-project-parent-id="${folder.nodeId}"]`,
+    );
+    expect(group?.querySelectorAll('[role="treeitem"]')).toHaveLength(0);
+    expect(screen.queryByText('projects.loading')).toBeNull();
+
+    await act(async () => {
+      nestedLoad.resolve({
+        ok: true,
+        value: [nestedNote, secondNestedNote],
+      });
+      await nestedLoad.promise;
+    });
+
+    expect(
+      [...(group?.querySelectorAll('[role="treeitem"]') ?? [])].map(
+        (item) => item.textContent,
+      ),
+    ).toEqual([
+      expect.stringContaining('Plan'),
+      expect.stringContaining('Decisions'),
+    ]);
+    expect(group?.hasAttribute('aria-busy')).toBe(false);
   });
 
   it('moves through the accessible dialog and confirms trash explicitly', async () => {
@@ -226,6 +343,35 @@ describe('project sidebar', () => {
     expect(onOpenNode).not.toHaveBeenCalled();
   });
 
+  it('never starts rename from repeated pointer clicks', async () => {
+    render(
+      <ProjectSidebar
+        loadChildren={vi.fn(async ({ parentId }) => ({
+          ok: true as const,
+          value: parentId === null ? [folder] : [],
+        }))}
+        onCreateNode={vi.fn()}
+        onMoveNode={vi.fn()}
+        onOpenNode={vi.fn()}
+        onOpenOverview={vi.fn()}
+        onRenameNode={vi.fn()}
+        onTrashNode={vi.fn()}
+        project={project}
+        translate={translate}
+      />,
+    );
+
+    const folderButton = await screen.findByRole('button', { name: 'Docs' });
+    const treeItem = folderButton.closest<HTMLElement>('[role="treeitem"]')!;
+    fireEvent.click(folderButton);
+    fireEvent.click(folderButton);
+    fireEvent.doubleClick(treeItem);
+    expect(screen.queryByRole('textbox', { name: 'projects.name' })).toBeNull();
+
+    fireEvent.keyDown(treeItem, { key: 'F2' });
+    expect(screen.getByRole('textbox', { name: 'projects.name' })).toBeTruthy();
+  });
+
   it('reuses the searchable instance picker from folders and empty space', async () => {
     render(
       <ProjectSidebar
@@ -271,6 +417,10 @@ describe('project sidebar', () => {
 
     const tree = screen.getByRole('tree', { name: 'projects.navigation' });
     fireEvent.contextMenu(tree, { clientX: 80, clientY: 120 });
+    expect(screen.queryByRole('dialog', { name: 'projects.addInstance' })).toBeNull();
+    fireEvent.click(
+      await screen.findByRole('menuitem', { name: 'projects.newInstance' }),
+    );
     expect(
       (
         await screen.findByRole('dialog', { name: 'projects.addInstance' })
@@ -279,7 +429,7 @@ describe('project sidebar', () => {
     expect(screen.queryByText('projects.empty')).toBeNull();
   });
 
-  it('opens the root picker from the scrollable blank area', async () => {
+  it('opens root actions from the scrollable blank area without acting on left click', async () => {
     const { container } = render(
       <ProjectSidebar
         loadChildren={vi.fn(async () => ({ ok: true as const, value: [] }))}
@@ -296,13 +446,138 @@ describe('project sidebar', () => {
 
     await screen.findByRole('tree', { name: 'projects.navigation' });
     const scroll = container.querySelector('.project-sidebar__tree-scroll')!;
-    fireEvent.contextMenu(scroll, { clientX: 91, clientY: 143 });
+    fireEvent.click(scroll);
+    expect(screen.queryByRole('menu')).toBeNull();
+    expect(screen.queryByRole('dialog')).toBeNull();
 
+    fireEvent.contextMenu(scroll, { clientX: 91, clientY: 143 });
     expect(
-      (await screen.findByRole('dialog', {
-        name: 'projects.addInstance',
-      })).getAttribute('data-parent-id'),
+      await screen.findByRole('menu', { name: 'projects.branchActions' }),
+    ).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole('menuitem', { name: 'projects.newInstance' }),
+    );
+    expect(
+      screen
+        .getByRole('dialog', { name: 'projects.addInstance' })
+        .getAttribute('data-parent-id'),
     ).toBe('root');
+  });
+
+  it('targets the nested branch for creation and native path actions', async () => {
+    const onCopyPath = vi.fn(async () => ({ ok: true as const, value: null }));
+    const onRevealPath = vi.fn(async () => ({ ok: true as const, value: null }));
+    const onCreateNode = vi.fn(async ({ name }: { name: string }) => ({
+      ok: true as const,
+      value: {
+        kind: 'folder' as const,
+        name,
+        nodeId: 'a61c9a34-c1d1-4e1c-acd4-8402170b2b68',
+        parentId: folder.nodeId,
+      },
+    }));
+    const { container } = render(
+      <ProjectSidebar
+        loadChildren={vi.fn(async ({ parentId }) => ({
+          ok: true as const,
+          value: parentId === null ? [folder] : [],
+        }))}
+        onCopyPath={onCopyPath}
+        onCreateNode={onCreateNode}
+        onMoveNode={vi.fn()}
+        onOpenNode={vi.fn()}
+        onOpenOverview={vi.fn()}
+        onRenameNode={vi.fn()}
+        onRevealPath={onRevealPath}
+        onTrashNode={vi.fn()}
+        platform="win32"
+        project={project}
+        translate={translate}
+      />,
+    );
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Docs' }));
+    const group = container.querySelector<HTMLElement>(
+      `[data-project-parent-id="${folder.nodeId}"]`,
+    )!;
+    await waitFor(() => expect(group.hasAttribute('aria-busy')).toBe(false));
+    fireEvent.contextMenu(group, { clientX: 40, clientY: 80 });
+    expect(
+      screen
+        .getByRole('menuitem', { name: 'projects.expandAll' })
+        .getAttribute('aria-disabled'),
+    ).toBe('true');
+    expect(
+      screen
+        .getByRole('menuitem', { name: 'projects.collapseAll' })
+        .hasAttribute('aria-disabled'),
+    ).toBe(false);
+
+    fireEvent.click(screen.getByRole('menuitem', { name: 'projects.copyPath' }));
+    await waitFor(() =>
+      expect(onCopyPath).toHaveBeenCalledWith({ nodeId: folder.nodeId }),
+    );
+
+    fireEvent.contextMenu(group, { clientX: 40, clientY: 80 });
+    fireEvent.click(
+      screen.getByRole('menuitem', { name: 'projects.revealInExplorer' }),
+    );
+    await waitFor(() =>
+      expect(onRevealPath).toHaveBeenCalledWith({ nodeId: folder.nodeId }),
+    );
+
+    fireEvent.contextMenu(group, { clientX: 40, clientY: 80 });
+    fireEvent.click(
+      screen.getByRole('menuitem', { name: 'projects.newFolder' }),
+    );
+    const nameInput = await screen.findByRole('textbox', {
+      name: 'projects.name',
+    });
+    fireEvent.change(nameInput, { target: { value: 'Archive' } });
+    fireEvent.submit(nameInput.closest('form')!);
+    await waitFor(() =>
+      expect(onCreateNode).toHaveBeenCalledWith({
+        kind: 'folder',
+        name: 'Archive',
+        parentId: folder.nodeId,
+      }),
+    );
+  });
+
+  it('expands and collapses the root branch from its context menu', async () => {
+    render(
+      <ProjectSidebar
+        loadChildren={vi.fn(async ({ parentId }) => ({
+          ok: true as const,
+          value: parentId === null ? [folder] : [nestedNote],
+        }))}
+        onCreateNode={vi.fn()}
+        onMoveNode={vi.fn()}
+        onOpenNode={vi.fn()}
+        onOpenOverview={vi.fn()}
+        onRenameNode={vi.fn()}
+        onTrashNode={vi.fn()}
+        project={project}
+        translate={translate}
+      />,
+    );
+
+    const tree = await screen.findByRole('tree', {
+      name: 'projects.navigation',
+    });
+    fireEvent.contextMenu(tree, { clientX: 30, clientY: 60 });
+    fireEvent.click(
+      screen.getByRole('menuitem', { name: 'projects.expandAll' }),
+    );
+    expect(await screen.findByRole('button', { name: 'Plan' })).toBeTruthy();
+
+    fireEvent.contextMenu(tree, { clientX: 30, clientY: 60 });
+    fireEvent.click(
+      screen.getByRole('menuitem', { name: 'projects.collapseAll' }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Plan' })).toBeNull(),
+    );
   });
 
   it('routes folder loading failures to the global notice host callback', async () => {
@@ -561,6 +836,7 @@ describe('Markdown editor', () => {
     const original: MarkdownDocument = {
       nodeId: note.nodeId,
       content: '# Todo',
+      readOnly: false,
       revision: firstRevision,
     };
     const save = vi
@@ -615,12 +891,143 @@ describe('Markdown editor', () => {
     });
   });
 
+  it('keeps read-only notes selectable and readable while blocking every edit route', () => {
+    vi.useFakeTimers();
+    const original: MarkdownDocument = {
+      nodeId: note.nodeId,
+      content: 'Visible text',
+      readOnly: true,
+      revision: '1'.repeat(64),
+    };
+    const saveDocument = vi.fn();
+    const controller = new MarkdownDocumentController({
+      reload: vi.fn(),
+      save: saveDocument,
+    });
+    const undo = vi.spyOn(controller, 'undo');
+    const redo = vi.spyOn(controller, 'redo');
+    const save = vi.spyOn(controller, 'save');
+    const commit = vi.spyOn(controller, 'commitEditorTransaction');
+
+    render(
+      <MarkdownEditor
+        controller={controller}
+        document={original}
+        mode="split"
+        translate={translate}
+      />,
+    );
+
+    const editor = screen.getByRole('textbox', {
+      name: 'projects.editorLabel',
+    });
+    expect(editor.getAttribute('contenteditable')).toBe('false');
+    expect(editor.getAttribute('aria-readonly')).toBe('true');
+    expect(
+      within(screen.getByRole('toolbar'))
+        .getAllByRole<HTMLButtonElement>('button')
+        .every((button) => button.disabled),
+    ).toBe(true);
+
+    const beforeInput = new InputEvent('beforeinput', {
+      bubbles: true,
+      cancelable: true,
+      data: '!',
+      inputType: 'insertText',
+    });
+    fireEvent(editor, beforeInput);
+    expect(beforeInput.defaultPrevented).toBe(true);
+
+    editor.textContent = 'Injected input';
+    fireEvent.input(editor, { inputType: 'insertText' });
+    expect(readSource(editor)).toBe(original.content);
+
+    const pasteData = { getData: vi.fn(() => 'Pasted') };
+    expect(fireEvent.paste(editor, { clipboardData: pasteData })).toBe(false);
+    expect(pasteData.getData).not.toHaveBeenCalled();
+
+    const dropData = { getData: vi.fn(() => 'Dropped') };
+    expect(fireEvent.drop(editor, { dataTransfer: dropData })).toBe(false);
+    expect(dropData.getData).not.toHaveBeenCalled();
+
+    writeSelection(editor, 0, 7);
+    fireEvent(document, new Event('selectionchange'));
+    expect(controller.getSnapshot(note.nodeId)?.selection).toMatchObject({
+      start: 0,
+      end: 7,
+    });
+
+    const cutSetData = vi.fn();
+    expect(
+      fireEvent.cut(editor, { clipboardData: { setData: cutSetData } }),
+    ).toBe(false);
+    expect(cutSetData).not.toHaveBeenCalled();
+    expect(readSource(editor)).toBe(original.content);
+
+    const copySetData = vi.fn();
+    expect(
+      fireEvent.copy(editor, { clipboardData: { setData: copySetData } }),
+    ).toBe(false);
+    expect(copySetData).toHaveBeenCalledWith('text/plain', 'Visible');
+
+    const compositionStart = new CompositionEvent('compositionstart', {
+      bubbles: true,
+      cancelable: true,
+      data: '字',
+    });
+    fireEvent(editor, compositionStart);
+    expect(compositionStart.defaultPrevented).toBe(true);
+    editor.textContent = 'Injected composition';
+    fireEvent.compositionEnd(editor, { data: '字' });
+    act(() => vi.runOnlyPendingTimers());
+    expect(readSource(editor)).toBe(original.content);
+
+    fireEvent.keyDown(editor, { ctrlKey: true, key: 'z' });
+    fireEvent.keyDown(editor, { ctrlKey: true, key: 'z', shiftKey: true });
+    fireEvent.keyDown(editor, { ctrlKey: true, key: 'y' });
+    fireEvent.keyDown(editor, { ctrlKey: true, key: 's' });
+    fireEvent(
+      editor,
+      new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'historyUndo',
+      }),
+    );
+    fireEvent(
+      editor,
+      new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'historyRedo',
+      }),
+    );
+    fireEvent.click(
+      within(screen.getByRole('toolbar')).getAllByRole('button')[0]!,
+    );
+
+    expect(undo).not.toHaveBeenCalled();
+    expect(redo).not.toHaveBeenCalled();
+    expect(save).not.toHaveBeenCalled();
+    expect(commit).not.toHaveBeenCalled();
+    expect(saveDocument).not.toHaveBeenCalled();
+    expect(controller.getSnapshot(note.nodeId)).toMatchObject({
+      content: original.content,
+      dirty: false,
+      readOnly: true,
+    });
+    expect(document.querySelector('.markdown-view')?.textContent).toContain(
+      original.content,
+    );
+  });
+
   it('restores and reports the source scroll position', () => {
     const original: MarkdownDocument = {
       nodeId: note.nodeId,
       content: Array.from({ length: 100 }, (_, index) => `Line ${index}`).join(
         '\n',
       ),
+      readOnly: false,
       revision: '1'.repeat(64),
     };
     const controller = new MarkdownDocumentController({
@@ -651,11 +1058,12 @@ describe('Markdown editor', () => {
     const original: MarkdownDocument = {
       nodeId: note.nodeId,
       content: '==uau==',
+      readOnly: false,
       revision: '1'.repeat(64),
     };
     const controller = new MarkdownDocumentController({
       reload: vi.fn(),
-      save: vi.fn(),
+      save: successfulSave(),
     });
     render(
       <MarkdownEditor
@@ -707,11 +1115,12 @@ describe('Markdown editor', () => {
     const original: MarkdownDocument = {
       nodeId: note.nodeId,
       content: '',
+      readOnly: false,
       revision: '1'.repeat(64),
     };
     const controller = new MarkdownDocumentController({
       reload: vi.fn(),
-      save: vi.fn(),
+      save: successfulSave(),
     });
     render(
       <MarkdownEditor
@@ -743,11 +1152,12 @@ describe('Markdown editor', () => {
     const original: MarkdownDocument = {
       nodeId: note.nodeId,
       content: '',
+      readOnly: false,
       revision: '1'.repeat(64),
     };
     const controller = new MarkdownDocumentController({
       reload: vi.fn(),
-      save: vi.fn(),
+      save: successfulSave(),
     });
     render(
       <MarkdownEditor
@@ -780,11 +1190,12 @@ describe('Markdown editor', () => {
     const original: MarkdownDocument = {
       nodeId: note.nodeId,
       content: 'a\n😀x',
+      readOnly: false,
       revision: '1'.repeat(64),
     };
     const controller = new MarkdownDocumentController({
       reload: vi.fn(),
-      save: vi.fn(),
+      save: successfulSave(),
     });
     const { rerender } = render(
       <MarkdownEditor
@@ -832,6 +1243,44 @@ describe('Markdown editor', () => {
     ).toMatchObject({ start: 2, end: original.content.length });
   });
 
+  it('expands double-click selection across highlighted words and numbers', () => {
+    const content = '**informação42** 2026-07-16';
+    const original: MarkdownDocument = {
+      nodeId: note.nodeId,
+      content,
+      readOnly: false,
+      revision: '1'.repeat(64),
+    };
+    const controller = new MarkdownDocumentController({
+      reload: vi.fn(),
+      save: successfulSave(),
+    });
+    render(
+      <MarkdownEditor
+        controller={controller}
+        document={original}
+        translate={translate}
+      />,
+    );
+    const editor = screen.getByRole('textbox', {
+      name: 'projects.editorLabel',
+    });
+    const wordStart = content.indexOf('informação42');
+    writeSelection(editor, wordStart + 3, wordStart + 6);
+    fireEvent.doubleClick(editor);
+    let selected = readSelection(editor);
+    expect(content.slice(selected.start, selected.end)).toBe('informação42');
+
+    const dateStart = content.indexOf('2026-07-16');
+    writeSelection(editor, dateStart + 5, dateStart + 7);
+    fireEvent.doubleClick(editor);
+    selected = readSelection(editor);
+    expect(content.slice(selected.start, selected.end)).toBe('2026-07-16');
+    expect(controller.getSnapshot(note.nodeId)?.selection).toMatchObject(
+      selected,
+    );
+  });
+
   it('confirms external links before invoking the trusted bridge', async () => {
     const openExternalLink = vi.fn(async () => ({ ok: true as const }));
     Object.defineProperty(window, 'flyoff', {
@@ -841,11 +1290,12 @@ describe('Markdown editor', () => {
     const original: MarkdownDocument = {
       nodeId: note.nodeId,
       content: '[site](https://example.com)',
+      readOnly: false,
       revision: '1'.repeat(64),
     };
     const controller = new MarkdownDocumentController({
       reload: vi.fn(),
-      save: vi.fn(),
+      save: successfulSave(),
     });
     render(
       <MarkdownEditor
@@ -895,11 +1345,12 @@ describe('Markdown editor', () => {
     const original: MarkdownDocument = {
       nodeId: note.nodeId,
       content: 'a',
+      readOnly: false,
       revision: '1'.repeat(64),
     };
     const controller = new MarkdownDocumentController({
       reload: vi.fn(),
-      save: vi.fn(),
+      save: successfulSave(),
     });
     render(
       <MarkdownEditor
@@ -946,11 +1397,12 @@ describe('Markdown editor', () => {
     const original: MarkdownDocument = {
       nodeId: note.nodeId,
       content: 'a',
+      readOnly: false,
       revision: '1'.repeat(64),
     };
     const controller = new MarkdownDocumentController({
       reload: vi.fn(),
-      save: vi.fn(),
+      save: successfulSave(),
     });
     render(
       <MarkdownEditor

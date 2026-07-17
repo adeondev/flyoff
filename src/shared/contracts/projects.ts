@@ -1,12 +1,16 @@
 export const PROJECT_FORMAT = 'flyoff-project' as const;
-export const PROJECT_FORMAT_VERSION = 1 as const;
+export const PROJECT_FORMAT_VERSION = 2 as const;
+export const PROJECT_FORMAT_LEGACY_VERSION = 1 as const;
 export const PROJECT_INDEX_FORMAT = 'flyoff-content-index' as const;
-export const PROJECT_INDEX_VERSION = 2 as const;
+export const PROJECT_INDEX_VERSION = 3 as const;
 export const PROJECT_INDEX_LEGACY_VERSION = 1 as const;
+export const PROJECT_INDEX_PREVIOUS_VERSION = 2 as const;
 
 export const PROJECT_MANIFEST_MAX_BYTES = 64 * 1024;
 export const PROJECT_INDEX_MAX_BYTES = 32 * 1024 * 1024;
 export const MARKDOWN_DOCUMENT_MAX_BYTES = 8 * 1024 * 1024;
+export const PROJECT_PASSWORD_MAX_BYTES = 1_024;
+export const PROJECT_PASSWORD_MIN_LENGTH = 1;
 export const PROJECT_NAME_MAX_LENGTH = 100;
 export const PROJECT_INSTANCE_TYPE_MAX_LENGTH = 128;
 
@@ -22,8 +26,17 @@ export const PROJECT_IPC_CHANNELS = {
   renameNode: 'flyoff:projects:nodes:rename',
   moveNode: 'flyoff:projects:nodes:move',
   trashNode: 'flyoff:projects:nodes:trash',
+  revealPath: 'flyoff:projects:path:reveal',
+  copyPath: 'flyoff:projects:path:copy',
   readMarkdown: 'flyoff:projects:markdown:read',
   saveMarkdown: 'flyoff:projects:markdown:save',
+  getPageProperties: 'flyoff:projects:pages:properties:get',
+  setPageReadOnly: 'flyoff:projects:pages:read-only:set',
+  protectPage: 'flyoff:projects:pages:protection:enable',
+  changePagePassword: 'flyoff:projects:pages:protection:change-password',
+  removePagePassword: 'flyoff:projects:pages:protection:disable',
+  unlockPage: 'flyoff:projects:pages:protection:unlock',
+  lockPage: 'flyoff:projects:pages:protection:lock',
 } as const;
 
 export type ProjectErrorCode =
@@ -35,6 +48,9 @@ export type ProjectErrorCode =
   | 'permission-denied'
   | 'not-found'
   | 'conflict'
+  | 'password-required'
+  | 'authentication-failed'
+  | 'read-only'
   | 'size-exceeded'
   | 'invalid-operation'
   | 'unsafe-path'
@@ -54,7 +70,9 @@ export interface ProjectSummary {
   projectId: string;
   name: string;
   location: string;
-  formatVersion: typeof PROJECT_FORMAT_VERSION;
+  formatVersion:
+    | typeof PROJECT_FORMAT_LEGACY_VERSION
+    | typeof PROJECT_FORMAT_VERSION;
 }
 
 interface ProjectTreeNodeBase {
@@ -78,6 +96,20 @@ export interface MarkdownDocument {
   nodeId: string;
   content: string;
   revision: string;
+  readOnly: boolean;
+}
+
+export interface ProjectPageProperties {
+  nodeId: string;
+  pageType: 'markdown';
+  contentSizeBytes: number;
+  diskSizeBytes: number;
+  createdAt: string | null;
+  modifiedAt: string;
+  revision: string;
+  readOnly: boolean;
+  passwordProtected: boolean;
+  locked: boolean;
 }
 
 export interface ProjectLocationSelection {
@@ -127,6 +159,10 @@ export interface TrashProjectNodeRequest {
   nodeId: string;
 }
 
+export interface ProjectPathRequest {
+  nodeId: string | null;
+}
+
 export interface TrashProjectNodeOutcome {
   nodeIds: readonly string[];
 }
@@ -142,6 +178,44 @@ export interface SaveMarkdownDocumentRequest {
   force?: boolean;
 }
 
+export interface GetProjectPagePropertiesRequest {
+  nodeId: string;
+}
+
+export interface SetProjectPageReadOnlyRequest {
+  nodeId: string;
+  expectedRevision: string;
+  readOnly: boolean;
+}
+
+export interface ProtectProjectPageRequest {
+  nodeId: string;
+  expectedRevision: string;
+  password: string;
+}
+
+export interface ChangeProjectPagePasswordRequest {
+  nodeId: string;
+  expectedRevision: string;
+  currentPassword: string;
+  newPassword: string;
+}
+
+export interface RemoveProjectPagePasswordRequest {
+  nodeId: string;
+  expectedRevision: string;
+  password: string;
+}
+
+export interface UnlockProjectPageRequest {
+  nodeId: string;
+  password: string;
+}
+
+export interface LockProjectPageRequest {
+  nodeId: string;
+}
+
 const projectErrorCodes = new Set<string>([
   'cancelled',
   'invalid-name',
@@ -151,6 +225,9 @@ const projectErrorCodes = new Set<string>([
   'permission-denied',
   'not-found',
   'conflict',
+  'password-required',
+  'authentication-failed',
+  'read-only',
   'size-exceeded',
   'invalid-operation',
   'unsafe-path',
@@ -165,6 +242,66 @@ const reservedDosName = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function hasExactKeys(
+  value: Record<string, unknown>,
+  keys: readonly string[],
+): boolean {
+  const actual = Object.keys(value);
+  return (
+    actual.length === keys.length &&
+    keys.every((key) => Object.hasOwn(value, key))
+  );
+}
+
+function utf8Length(value: string): number {
+  return new TextEncoder().encode(value).byteLength;
+}
+
+function isWellFormedUnicode(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
+      if (index + 1 >= value.length) {
+        return false;
+      }
+      const next = value.charCodeAt(index + 1);
+      if (next < 0xdc00 || next > 0xdfff) {
+        return false;
+      }
+      index += 1;
+    } else if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function isIsoTimestamp(value: unknown): value is string {
+  if (typeof value !== 'string') {
+    return false;
+  }
+
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === value;
+}
+
+export function isProjectPassword(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= PROJECT_PASSWORD_MAX_BYTES &&
+    isWellFormedUnicode(value) &&
+    utf8Length(value) <= PROJECT_PASSWORD_MAX_BYTES
+  );
+}
+
+export function isNewProjectPassword(value: unknown): value is string {
+  return (
+    isProjectPassword(value) &&
+    Array.from(value).length >= PROJECT_PASSWORD_MIN_LENGTH
+  );
 }
 
 export function isProjectIdentifier(value: unknown): value is string {
@@ -260,7 +397,8 @@ export function isProjectSummary(value: unknown): value is ProjectSummary {
     isPortableProjectName(value.name) &&
     typeof value.location === 'string' &&
     value.location.length > 0 &&
-    value.formatVersion === PROJECT_FORMAT_VERSION
+    (value.formatVersion === PROJECT_FORMAT_LEGACY_VERSION ||
+      value.formatVersion === PROJECT_FORMAT_VERSION)
   );
 }
 
@@ -296,7 +434,49 @@ export function isMarkdownDocument(
     value.content.length <= MARKDOWN_DOCUMENT_MAX_BYTES &&
     new TextEncoder().encode(value.content).byteLength <=
       MARKDOWN_DOCUMENT_MAX_BYTES &&
-    isMarkdownRevision(value.revision)
+    isMarkdownRevision(value.revision) &&
+    typeof value.readOnly === 'boolean'
+  );
+}
+
+export function isProjectPageProperties(
+  value: unknown,
+): value is ProjectPageProperties {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, [
+      'nodeId',
+      'pageType',
+      'contentSizeBytes',
+      'diskSizeBytes',
+      'createdAt',
+      'modifiedAt',
+      'revision',
+      'readOnly',
+      'passwordProtected',
+      'locked',
+    ])
+  ) {
+    return false;
+  }
+
+  return (
+    isProjectIdentifier(value.nodeId) &&
+    value.pageType === 'markdown' &&
+    typeof value.contentSizeBytes === 'number' &&
+    Number.isSafeInteger(value.contentSizeBytes) &&
+    value.contentSizeBytes >= 0 &&
+    value.contentSizeBytes <= MARKDOWN_DOCUMENT_MAX_BYTES &&
+    typeof value.diskSizeBytes === 'number' &&
+    Number.isSafeInteger(value.diskSizeBytes) &&
+    value.diskSizeBytes >= value.contentSizeBytes &&
+    (value.createdAt === null || isIsoTimestamp(value.createdAt)) &&
+    isIsoTimestamp(value.modifiedAt) &&
+    isMarkdownRevision(value.revision) &&
+    typeof value.readOnly === 'boolean' &&
+    typeof value.passwordProtected === 'boolean' &&
+    typeof value.locked === 'boolean' &&
+    (!value.locked || value.passwordProtected)
   );
 }
 
@@ -391,6 +571,15 @@ export function isTrashProjectNodeRequest(
   return isRecord(value) && isProjectIdentifier(value.nodeId);
 }
 
+export function isProjectPathRequest(
+  value: unknown,
+): value is ProjectPathRequest {
+  return (
+    isRecord(value) &&
+    (value.nodeId === null || isProjectIdentifier(value.nodeId))
+  );
+}
+
 export function isTrashProjectNodeOutcome(
   value: unknown,
 ): value is TrashProjectNodeOutcome {
@@ -425,6 +614,91 @@ export function isSaveMarkdownDocumentRequest(
       MARKDOWN_DOCUMENT_MAX_BYTES &&
     isMarkdownRevision(value.expectedRevision) &&
     (value.force === undefined || typeof value.force === 'boolean')
+  );
+}
+
+export function isGetProjectPagePropertiesRequest(
+  value: unknown,
+): value is GetProjectPagePropertiesRequest {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ['nodeId']) &&
+    isProjectIdentifier(value.nodeId)
+  );
+}
+
+export function isSetProjectPageReadOnlyRequest(
+  value: unknown,
+): value is SetProjectPageReadOnlyRequest {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ['nodeId', 'expectedRevision', 'readOnly']) &&
+    isProjectIdentifier(value.nodeId) &&
+    isMarkdownRevision(value.expectedRevision) &&
+    typeof value.readOnly === 'boolean'
+  );
+}
+
+export function isProtectProjectPageRequest(
+  value: unknown,
+): value is ProtectProjectPageRequest {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ['nodeId', 'expectedRevision', 'password']) &&
+    isProjectIdentifier(value.nodeId) &&
+    isMarkdownRevision(value.expectedRevision) &&
+    isNewProjectPassword(value.password)
+  );
+}
+
+export function isChangeProjectPagePasswordRequest(
+  value: unknown,
+): value is ChangeProjectPagePasswordRequest {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, [
+      'nodeId',
+      'expectedRevision',
+      'currentPassword',
+      'newPassword',
+    ]) &&
+    isProjectIdentifier(value.nodeId) &&
+    isMarkdownRevision(value.expectedRevision) &&
+    isProjectPassword(value.currentPassword) &&
+    isNewProjectPassword(value.newPassword)
+  );
+}
+
+export function isRemoveProjectPagePasswordRequest(
+  value: unknown,
+): value is RemoveProjectPagePasswordRequest {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ['nodeId', 'expectedRevision', 'password']) &&
+    isProjectIdentifier(value.nodeId) &&
+    isMarkdownRevision(value.expectedRevision) &&
+    isProjectPassword(value.password)
+  );
+}
+
+export function isUnlockProjectPageRequest(
+  value: unknown,
+): value is UnlockProjectPageRequest {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ['nodeId', 'password']) &&
+    isProjectIdentifier(value.nodeId) &&
+    isProjectPassword(value.password)
+  );
+}
+
+export function isLockProjectPageRequest(
+  value: unknown,
+): value is LockProjectPageRequest {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ['nodeId']) &&
+    isProjectIdentifier(value.nodeId)
   );
 }
 

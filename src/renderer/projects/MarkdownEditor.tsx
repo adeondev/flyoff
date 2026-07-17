@@ -13,6 +13,7 @@ import readingModeIcon from '../../../public/images/icons/editor/preview.svg';
 import splitModeIcon from '../../../public/images/icons/actions/sidebar-toggle.svg';
 import type { MarkdownDocument } from '../../shared/contracts';
 import { MaskedIcon } from '../components/MaskedIcon';
+import { getTooltipTargetProps } from '../components/tooltip';
 import type { Translate } from '../pages/page-types';
 import type { EditorMode } from './editor-mode';
 import { applyMarkdownAction, type MarkdownAction } from './markdown-actions';
@@ -61,6 +62,9 @@ function statusLabel(
   snapshot: MarkdownBufferSnapshot,
   translate: Translate,
 ): string {
+  if (snapshot.readOnly) {
+    return translate('projects.readOnly');
+  }
   switch (snapshot.status) {
     case 'saving':
     case 'loading':
@@ -100,6 +104,8 @@ export const MarkdownEditor = forwardRef<
   const editorRef = useRef<HTMLDivElement>(null);
   const selectionRef = useRef(snapshot.selection);
   const nodeId = document.nodeId;
+  const editingDisabled =
+    snapshot.readOnly || controller.isMutationLocked(nodeId);
 
   useEffect(() => {
     setSnapshot(controller.open(document));
@@ -145,6 +151,9 @@ export const MarkdownEditor = forwardRef<
 
     if (primary && !event.altKey && key === 'z') {
       event.preventDefault();
+      if (editingDisabled) {
+        return;
+      }
       if (event.shiftKey) {
         controller.redo(nodeId);
       } else {
@@ -161,6 +170,9 @@ export const MarkdownEditor = forwardRef<
       key === 'y'
     ) {
       event.preventDefault();
+      if (editingDisabled) {
+        return;
+      }
       controller.redo(nodeId);
       return;
     }
@@ -171,13 +183,16 @@ export const MarkdownEditor = forwardRef<
       key === 's'
     ) {
       event.preventDefault();
-      if (snapshot.status !== 'conflict') {
+      if (!editingDisabled && snapshot.status !== 'conflict') {
         void controller.save(nodeId);
       }
     }
   }
 
   function handleToolbarAction(action: MarkdownAction): void {
+    if (editingDisabled) {
+      return;
+    }
     const editor = editorRef.current;
 
     if (!editor) {
@@ -212,6 +227,9 @@ export const MarkdownEditor = forwardRef<
   }
 
   function handleTransaction(transaction: SourceEditTransaction): void {
+    if (editingDisabled) {
+      return;
+    }
     flushSync(() => {
       controller.commitEditorTransaction(nodeId, transaction);
     });
@@ -224,7 +242,11 @@ export const MarkdownEditor = forwardRef<
   return (
     <main className="markdown-editor" aria-label={translate('projects.editorLabel')}>
       <header className="markdown-editor__header">
-        {title ? <h1>{title}</h1> : <span />}
+        {title ? (
+          <h1 {...getTooltipTargetProps(title, 'bottom')}>{title}</h1>
+        ) : (
+          <span />
+        )}
         <div className="markdown-editor__meta">
           <div
             aria-label={translate('projects.editorLabel')}
@@ -276,7 +298,7 @@ export const MarkdownEditor = forwardRef<
             </button>
             <button
               className="markdown-editor__overwrite"
-              disabled={busy}
+              disabled={busy || editingDisabled}
               onClick={() => void controller.overwrite(nodeId)}
               type="button"
             >
@@ -286,7 +308,11 @@ export const MarkdownEditor = forwardRef<
         </section>
       ) : null}
       {mode === 'reading' ? null : (
-        <MarkdownToolbar onAction={handleToolbarAction} translate={translate} />
+        <MarkdownToolbar
+          disabled={editingDisabled}
+          onAction={handleToolbarAction}
+          translate={translate}
+        />
       )}
       <div className={`markdown-editor__body markdown-editor__body--${mode}`}>
         {mode === 'reading' ? null : (
@@ -295,6 +321,7 @@ export const MarkdownEditor = forwardRef<
             autoFocus={autoFocus}
             editorRef={editorRef}
             nodeId={nodeId}
+            readOnly={editingDisabled}
             onKeyDown={handleKeyDown}
             onRedo={() => controller.redo(nodeId)}
             onScroll={(scrollPosition) => onScrollChange?.(scrollPosition)}

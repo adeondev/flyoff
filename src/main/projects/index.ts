@@ -1,4 +1,7 @@
 export * from './errors';
+export * from './encrypted-note-crypto';
+export * from './encrypted-note-format';
+export * from './encrypted-note-key-session';
 export * from './portable-name';
 export * from './project-catalog-store';
 export * from './project-format';

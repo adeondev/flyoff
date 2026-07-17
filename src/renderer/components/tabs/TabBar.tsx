@@ -3,6 +3,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type CSSProperties,
   type DragEvent,
   type KeyboardEvent,
 } from 'react';
@@ -31,20 +32,37 @@ interface DropTarget {
 }
 
 interface TabVisualBounds {
-  height: number;
   left: number;
-  top: number;
   width: number;
 }
 
 interface ClosingTabVisual {
   active: boolean;
   bounds: TabVisualBounds;
+  sequence: number;
+  slot: number;
   presentation: TabPresentation;
   tab: TabDescriptor;
 }
 
-const TAB_CLOSE_DURATION = 140;
+type ClosingTabCandidate = Omit<ClosingTabVisual, 'sequence'>;
+
+type VisualTabEntry =
+  | { kind: 'closing'; visual: ClosingTabVisual }
+  | { index: number; kind: 'live'; tab: TabDescriptor };
+
+const TAB_MOTION_DURATION_MS = 90;
+const DEFAULT_TAB_WIDTH = 176;
+
+function tabContext(tab: TabDescriptor | undefined): string | undefined {
+  if (!tab) {
+    return undefined;
+  }
+
+  return tab.target.type === 'internal'
+    ? 'home'
+    : `project:${tab.target.projectId}`;
+}
 
 function prefersReducedMotion(): boolean {
   return (
@@ -59,17 +77,9 @@ function removedTabVisuals(
   previousActiveTabId: string | null,
   previousBounds: ReadonlyMap<string, TabVisualBounds>,
   previousPresentations: ReadonlyMap<string, TabPresentation>,
-): ClosingTabVisual[] {
-  const currentContext = currentTabs[0]?.target.type === 'internal'
-    ? 'home'
-    : currentTabs[0]
-      ? 'project'
-      : undefined;
-  const previousContext = previousTabs[0]?.target.type === 'internal'
-    ? 'home'
-    : previousTabs[0]
-      ? 'project'
-      : undefined;
+): ClosingTabCandidate[] {
+  const currentContext = tabContext(currentTabs[0]);
+  const previousContext = tabContext(previousTabs[0]);
   if (
     currentContext &&
     previousContext &&
@@ -79,22 +89,58 @@ function removedTabVisuals(
   }
 
   const currentIds = new Set(currentTabs.map(({ tabId }) => tabId));
+  let removedBefore = 0;
 
-  return previousTabs.flatMap((tab) => {
+  return previousTabs.flatMap((tab, index) => {
+    if (currentIds.has(tab.tabId)) {
+      return [];
+    }
+
     const bounds = previousBounds.get(tab.tabId);
     const presentation = previousPresentations.get(tab.tabId);
+    const slot = Math.min(currentTabs.length, index - removedBefore);
+    removedBefore += 1;
 
-    return currentIds.has(tab.tabId) || !bounds || !presentation
+    return !bounds || !presentation
       ? []
       : [
           {
             active: tab.tabId === previousActiveTabId,
             bounds,
             presentation,
+            slot,
             tab,
           },
         ];
   });
+}
+
+function visualTabEntries(
+  tabs: readonly TabDescriptor[],
+  closingTabs: readonly ClosingTabVisual[],
+): VisualTabEntry[] {
+  const entries: VisualTabEntry[] = [];
+  const orderedClosingTabs = [...closingTabs].sort(
+    (left, right) =>
+      left.slot - right.slot ||
+      left.bounds.left - right.bounds.left ||
+      left.sequence - right.sequence,
+  );
+
+  for (let index = 0; index <= tabs.length; index += 1) {
+    for (const visual of orderedClosingTabs) {
+      if (visual.slot === index) {
+        entries.push({ kind: 'closing', visual });
+      }
+    }
+
+    const tab = tabs[index];
+    if (tab) {
+      entries.push({ index, kind: 'live', tab });
+    }
+  }
+
+  return entries;
 }
 
 function focusTab(
@@ -139,6 +185,7 @@ export function TabBar({
   const previousPresentationsRef = useRef(
     new Map<string, TabPresentation>(),
   );
+  const closingSequenceRef = useRef(0);
   const closingTimersRef = useRef(new Map<string, number>());
   const [dropTarget, setDropTarget] = useState<DropTarget>();
   const [draggingTabId, setDraggingTabId] = useState<string>();
@@ -179,7 +226,6 @@ export function TabBar({
       previousPresentationsRef.current,
     );
     const reducedMotion = prefersReducedMotion();
-    const tabListBounds = tabList.getBoundingClientRect();
     const nextBounds = new Map<string, TabVisualBounds>();
 
     for (const tab of tabs) {
@@ -190,44 +236,57 @@ export function TabBar({
 
       const bounds = element.getBoundingClientRect();
       const relativeBounds = {
-        height: bounds.height,
-        left: bounds.left - tabListBounds.left + tabList.scrollLeft,
-        top: bounds.top - tabListBounds.top + tabList.scrollTop,
-        width: bounds.width,
+        left: bounds.left,
+        width: bounds.width || element.offsetWidth || DEFAULT_TAB_WIDTH,
       };
       nextBounds.set(tab.tabId, relativeBounds);
-
-      const previous = previousBoundsRef.current.get(tab.tabId);
-      const deltaX = previous ? previous.left - relativeBounds.left : 0;
-      if (
-        removed.length > 0 &&
-        !reducedMotion &&
-        Math.abs(deltaX) >= 0.5 &&
-        typeof element.animate === 'function'
-      ) {
-        element.animate(
-          [
-            { transform: `translateX(${deltaX}px)` },
-            { transform: 'translateX(0)' },
-          ],
-          {
-            duration: TAB_CLOSE_DURATION,
-            easing: 'cubic-bezier(0.16, 1, 0.3, 1)',
-          },
-        );
-      }
     }
 
-    if (removed.length > 0 && !reducedMotion) {
-      setClosingTabs((current) => {
-        const next = [...current];
-        for (const visual of removed) {
-          if (!next.some(({ tab }) => tab.tabId === visual.tab.tabId)) {
-            next.push(visual);
+    if (!reducedMotion) {
+      const previousIds = new Set(
+        previousTabsRef.current.map(({ tabId }) => tabId),
+      );
+      const currentIds = new Set(tabs.map(({ tabId }) => tabId));
+      const removedIndices = previousTabsRef.current.flatMap((tab, index) =>
+        currentIds.has(tab.tabId) ? [] : [index],
+      );
+      const addedIndices = tabs.flatMap((tab, index) =>
+        previousIds.has(tab.tabId) ? [] : [index],
+      );
+
+      if (
+        removed.length > 0 ||
+        removedIndices.length > 0 ||
+        addedIndices.length > 0
+      ) {
+        setClosingTabs((current) => {
+          let next = current.map((visual) => ({ ...visual }));
+
+          removedIndices.forEach((originalIndex, removedCount) => {
+            const slot = originalIndex - removedCount;
+            next = next.map((visual) => ({
+              ...visual,
+              slot: visual.slot > slot ? visual.slot - 1 : visual.slot,
+            }));
+          });
+          for (const index of addedIndices) {
+            next = next.map((visual) => ({
+              ...visual,
+              slot: visual.slot >= index ? visual.slot + 1 : visual.slot,
+            }));
           }
-        }
-        return next;
-      });
+          for (const visual of removed) {
+            if (!next.some(({ tab }) => tab.tabId === visual.tab.tabId)) {
+              next.push({
+                ...visual,
+                sequence: closingSequenceRef.current,
+              });
+              closingSequenceRef.current += 1;
+            }
+          }
+          return next;
+        });
+      }
 
       for (const { tab } of removed) {
         if (!closingTimersRef.current.has(tab.tabId)) {
@@ -242,7 +301,7 @@ export function TabBar({
                   ),
                 );
               },
-              TAB_CLOSE_DURATION + 30,
+              TAB_MOTION_DURATION_MS,
             ),
           );
         }
@@ -256,6 +315,14 @@ export function TabBar({
       tabs.map((tab) => [tab.tabId, getPresentation(tab)]),
     );
   }, [activeTabId, getPresentation, tabs]);
+
+  const currentContext = tabContext(tabs[0]);
+  const visibleClosingTabs = currentContext
+    ? closingTabs.filter(
+        ({ tab }) => tabContext(tab) === currentContext,
+      )
+    : closingTabs;
+  const visualEntries = visualTabEntries(tabs, visibleClosingTabs);
 
   useEffect(() => {
     const tabId = pendingFocusTabId.current;
@@ -436,8 +503,51 @@ export function TabBar({
         onDrop={handleDrop}
         ref={tabListRef}
         role="tablist"
+        style={
+          {
+            '--page-tab-motion-duration': `${TAB_MOTION_DURATION_MS}ms`,
+          } as CSSProperties
+        }
       >
-        {tabs.map((tab, index) => {
+        {visualEntries.map((entry) => {
+          if (entry.kind === 'closing') {
+            const { active, bounds, presentation, tab } = entry.visual;
+            return (
+              <div
+                aria-hidden="true"
+                className={`page-tab page-tab--closing${active ? ' page-tab--active' : ''}`}
+                key={`closing:${tab.tabId}`}
+                onAnimationEnd={(event) => {
+                  if (event.currentTarget === event.target) {
+                    finishClosingTab(tab.tabId);
+                  }
+                }}
+                style={
+                  {
+                    flexBasis: bounds.width,
+                    maxWidth: bounds.width,
+                    minWidth: bounds.width,
+                    width: bounds.width,
+                  } as CSSProperties
+                }
+              >
+                <span className="page-tab__trigger">
+                  <MaskedIcon
+                    className="page-tab__icon"
+                    icon={presentation.icon}
+                  />
+                  <span className="page-tab__label">{presentation.title}</span>
+                </span>
+                <span className="page-tab__close">
+                  <svg aria-hidden="true" viewBox="0 0 16 16">
+                    <path d="M4 4l8 8m0-8-8 8" />
+                  </svg>
+                </span>
+              </div>
+            );
+          }
+
+          const { index, tab } = entry;
           const presentation = getPresentation(tab);
           const label = presentation.title;
           const active = tab.tabId === activeTabId;
@@ -515,41 +625,6 @@ export function TabBar({
             </div>
           );
         })}
-        {closingTabs.map(
-          ({ active, bounds, presentation, tab }) => (
-            <div
-              aria-hidden="true"
-              className={`page-tab page-tab--closing${active ? ' page-tab--active' : ''}`}
-              key={`closing:${tab.tabId}`}
-              onAnimationEnd={(event) => {
-                if (event.currentTarget === event.target) {
-                  finishClosingTab(tab.tabId);
-                }
-              }}
-              style={{
-                height: bounds.height,
-                left: bounds.left,
-                maxWidth: bounds.width,
-                minWidth: bounds.width,
-                top: bounds.top,
-                width: bounds.width,
-              }}
-            >
-              <span className="page-tab__trigger">
-                <MaskedIcon
-                  className="page-tab__icon"
-                  icon={presentation.icon}
-                />
-                <span className="page-tab__label">{presentation.title}</span>
-              </span>
-              <span className="page-tab__close">
-                <svg aria-hidden="true" viewBox="0 0 16 16">
-                  <path d="M4 4l8 8m0-8-8 8" />
-                </svg>
-              </span>
-            </div>
-          ),
-        )}
       </div>
     </div>
   );

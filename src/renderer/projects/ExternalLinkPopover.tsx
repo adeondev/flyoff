@@ -10,6 +10,7 @@ import {
 import { createPortal } from 'react-dom';
 
 import type { Translate } from '../pages/page-types';
+import { getTooltipTargetProps } from '../components/tooltip';
 
 export interface ExternalLinkPopoverProps {
   anchor: HTMLAnchorElement;
@@ -117,21 +118,29 @@ export function ExternalLinkPopover({
 
   return createPortal(
     <div
+      aria-busy={busy}
       aria-labelledby={titleId}
       className="external-link-popover"
       ref={dialogRef}
       role="dialog"
       style={position}
     >
-      <strong id={titleId}>
-        {translate('projects.linkRedirectTitle')}
-      </strong>
-      <p>{translate('projects.linkRedirectDescription')}</p>
-      <span className="external-link-popover__label" id={destinationId}>
-        {translate('projects.linkDestination')}
-      </span>
-      <output aria-labelledby={destinationId} title={url}>{url}</output>
-      <div className="external-link-popover__actions">
+      <header className="external-link-popover__header">
+        <strong id={titleId}>{translate('projects.linkRedirectTitle')}</strong>
+        <p>{translate('projects.linkRedirectDescription')}</p>
+      </header>
+      <div className="external-link-popover__destination">
+        <span className="external-link-popover__label" id={destinationId}>
+          {translate('projects.linkDestination')}
+        </span>
+        <output
+          aria-labelledby={destinationId}
+          {...getTooltipTargetProps(url)}
+        >
+          {url}
+        </output>
+      </div>
+      <footer className="external-link-popover__actions">
         <button disabled={busy} onClick={close} ref={cancelRef} type="button">
           {translate('projects.cancel')}
         </button>
@@ -143,7 +152,7 @@ export function ExternalLinkPopover({
         >
           {translate('projects.openLink')}
         </button>
-      </div>
+      </footer>
     </div>,
     document.body,
   );

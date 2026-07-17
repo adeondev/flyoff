@@ -36,6 +36,7 @@ import {
   type InternalPageId,
   type MarkdownDocument,
   type ProjectLocationSelection,
+  type ProjectFailureDetails,
   type ProjectResult,
   type ProjectSummary,
   type ProjectTreeNode,
@@ -70,6 +71,7 @@ import {
 import { GlobalSidebar } from './components/Sidebar';
 import { PageHost } from './components/tabs/PageHost';
 import { TabBar } from './components/tabs/TabBar';
+import { TooltipHost, getTooltipTargetProps } from './components/tooltip';
 import {
   adoptWorkspaceSnapshot,
   createInitialWorkspaceState,
@@ -102,10 +104,14 @@ import {
   ProjectContentPage,
   ProjectEmptyState,
   ProjectOverview,
+  ProjectPagePropertiesDialog,
   ProjectSidebar,
   getProjectPageTypeDefinition,
   type ProjectSidebarHandle,
   projectNodeDisplayName,
+  projectNodeLogicalPath,
+  resolveProjectNodeLineage,
+  useProjectPageProperties,
 } from './projects';
 
 function translateCatalog(
@@ -197,8 +203,8 @@ function Titlebar({
         aria-pressed={sidebarCollapsed}
         className="titlebar__sidebar-toggle"
         onClick={onToggleSidebar}
-        title={toggleSidebarLabel}
         type="button"
+        {...getTooltipTargetProps(toggleSidebarLabel, 'bottom')}
       >
         <MaskedIcon className="titlebar__sidebar-toggle-icon" icon={sidebarToggleIcon} />
       </button>
@@ -232,7 +238,7 @@ function unavailableProjectResult<T>(message: string): ProjectResult<T> {
 }
 
 function createMarkdownController(
-  onSaveError?: (message: string) => void,
+  onSaveError?: (error: ProjectFailureDetails, nodeId: string) => void,
 ): MarkdownDocumentController {
   return new MarkdownDocumentController({
     reload: (request) => {
@@ -251,7 +257,7 @@ function createMarkdownController(
             unavailableProjectResult('The project bridge is unavailable.'),
           );
     },
-    onSaveError: (error) => onSaveError?.(error.message),
+    onSaveError,
   });
 }
 
@@ -277,8 +283,12 @@ export function App() {
     (message: string): void => pushToast(message, 'error'),
     [pushToast],
   );
+  const notifyProjectInfo = useCallback(
+    (message: string): void => pushToast(message, 'info'),
+    [pushToast],
+  );
   const [documentController, setDocumentController] = useState(() =>
-    createMarkdownController(notifyProjectError),
+    createMarkdownController(),
   );
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [restoreCandidate, setRestoreCandidate] =
@@ -312,6 +322,34 @@ export function App() {
   const layout = useWorkspaceLayout();
   const adjustNoteFontScale = layout.adjustNoteFontScale;
   const translate = translator.translate;
+  const pageProperties = useProjectPageProperties({
+    controller: documentController,
+    nodes: projectNodes,
+    translate,
+  });
+  const {
+    closeProtectedPage,
+    discardRemoved: discardRemovedPageData,
+    lockedNodeIds,
+    markPasswordRequired,
+    open: openPageProperties,
+    reset: resetPageProperties,
+    unlockDocument,
+  } = pageProperties;
+  const handleMarkdownSaveError = useCallback(
+    (error: ProjectFailureDetails, nodeId: string): void => {
+      notifyProjectError(error.message);
+      if (error.code === 'password-required') {
+        markPasswordRequired(nodeId);
+      }
+    },
+    [markPasswordRequired, notifyProjectError],
+  );
+
+  useEffect(() => {
+    documentController.setOnSaveError(handleMarkdownSaveError);
+    return () => documentController.setOnSaveError(undefined);
+  }, [documentController, handleMarkdownSaveError]);
 
   const menus = useMemo(
     () => createMenuBarItems(translate),
@@ -381,10 +419,10 @@ export function App() {
 
   const replaceDocumentController = useCallback((): void => {
     documentControllerRef.current.dispose();
-    const next = createMarkdownController(notifyProjectError);
+    const next = createMarkdownController(handleMarkdownSaveError);
     documentControllerRef.current = next;
     setDocumentController(next);
-  }, [notifyProjectError]);
+  }, [handleMarkdownSaveError]);
 
   const setActiveProject = useCallback(
     (summary: ProjectSummary | null): void => {
@@ -392,9 +430,10 @@ export function App() {
       setProject(summary);
       projectNodesRef.current = new Map();
       setProjectNodes(new Map());
+      resetPageProperties();
       replaceDocumentController();
     },
-    [replaceDocumentController],
+    [replaceDocumentController, resetPageProperties],
   );
 
   const resolveRestoreCandidate = useCallback(
@@ -454,6 +493,17 @@ export function App() {
     }
   }, []);
 
+  const flushProjectDocumentsForTreeMutation = useCallback(
+    async (): Promise<boolean> => {
+      try {
+        return await documentControllerRef.current.flushForTreeMutation();
+      } catch {
+        return false;
+      }
+    },
+    [],
+  );
+
   const performGuardedTabAction = useCallback(
     async (action: WorkspaceAction): Promise<boolean> => {
       if (closeRequestRef.current || restorePendingRef.current) {
@@ -474,10 +524,31 @@ export function App() {
         return true;
       }
 
+      if (action.type === 'close-tab') {
+        const closingTab = selectActiveTabs(initial).tabs.find(
+          ({ tabId }) => tabId === action.tabId,
+        );
+        const target = closingTab?.target;
+        if (
+          target?.type === 'project-content' &&
+          target.pageType === 'markdown'
+        ) {
+          const result = await closeProtectedPage(target.nodeId);
+          if (!result.ok) {
+            notifyProjectError(result.error.message);
+            return false;
+          }
+        }
+      }
+
       dispatchUserAction(action);
       return true;
     },
-    [dispatchUserAction],
+    [
+      dispatchUserAction,
+      notifyProjectError,
+      closeProtectedPage,
+    ],
   );
 
   const enqueueWorkspaceTransition = useCallback(
@@ -573,11 +644,21 @@ export function App() {
     () => ({
       markdown: {
         controller: documentController,
+        lockedNodeIds,
+        onPasswordRequired: markPasswordRequired,
         readDocument: readMarkdownDocument,
+        unlockDocument,
       },
       onError: notifyProjectError,
     }),
-    [documentController, notifyProjectError, readMarkdownDocument],
+    [
+      documentController,
+      notifyProjectError,
+      lockedNodeIds,
+      markPasswordRequired,
+      readMarkdownDocument,
+      unlockDocument,
+    ],
   );
 
   const completeConsumedRestore = useCallback(
@@ -694,7 +775,7 @@ export function App() {
           );
         }
 
-        if (!(await flushProjectDocuments())) {
+        if (!(await flushProjectDocumentsForTreeMutation())) {
           return unavailableProjectResult<ProjectTreeNode>(
             translate('projects.saveFailed'),
           );
@@ -715,7 +796,7 @@ export function App() {
     [
       cacheProjectNodes,
       enqueueWorkspaceTransition,
-      flushProjectDocuments,
+      flushProjectDocumentsForTreeMutation,
       translate,
     ],
   );
@@ -730,7 +811,7 @@ export function App() {
           );
         }
 
-        if (!(await flushProjectDocuments())) {
+        if (!(await flushProjectDocumentsForTreeMutation())) {
           return unavailableProjectResult<ProjectTreeNode>(
             translate('projects.saveFailed'),
           );
@@ -751,7 +832,7 @@ export function App() {
     [
       cacheProjectNodes,
       enqueueWorkspaceTransition,
-      flushProjectDocuments,
+      flushProjectDocumentsForTreeMutation,
       translate,
     ],
   );
@@ -759,7 +840,7 @@ export function App() {
   const moveProjectNode = useCallback(
     (request: Parameters<FlyoffApi['moveProjectNode']>[0]) =>
       enqueueWorkspaceTransition(async () => {
-        if (!(await flushProjectDocuments())) {
+        if (!(await flushProjectDocumentsForTreeMutation())) {
           return unavailableProjectResult<ProjectTreeNode>(
             translate('projects.saveFailed'),
           );
@@ -780,7 +861,7 @@ export function App() {
     [
       cacheProjectNodes,
       enqueueWorkspaceTransition,
-      flushProjectDocuments,
+      flushProjectDocumentsForTreeMutation,
       translate,
     ],
   );
@@ -788,6 +869,7 @@ export function App() {
   const commitProjectNodeTrashed = useCallback(
     async (nodeIds: readonly string[]): Promise<void> => {
       const removedIds = new Set(nodeIds);
+      discardRemovedPageData(nodeIds);
 
       const remainingNodes = new Map(projectNodesRef.current);
       for (const nodeId of removedIds) {
@@ -813,13 +895,13 @@ export function App() {
         dispatchWorkspace(action);
       }
     },
-    [],
+    [discardRemovedPageData],
   );
 
   const trashProjectNode = useCallback(
     (request: Parameters<FlyoffApi['trashProjectNode']>[0]) =>
       enqueueWorkspaceTransition(async () => {
-        if (!(await flushProjectDocuments())) {
+        if (!(await flushProjectDocumentsForTreeMutation())) {
           return unavailableProjectResult<TrashProjectNodeOutcome>(
             translate('projects.saveFailed'),
           );
@@ -841,9 +923,37 @@ export function App() {
     [
       commitProjectNodeTrashed,
       enqueueWorkspaceTransition,
-      flushProjectDocuments,
+      flushProjectDocumentsForTreeMutation,
       translate,
     ],
+  );
+
+  const revealProjectPath = useCallback(
+    (request: Parameters<FlyoffApi['revealProjectPath']>[0]) => {
+      const operation = getApi().revealProjectPath;
+      return operation
+        ? operation(request)
+        : Promise.resolve(
+            unavailableProjectResult<null>(
+              translate('projects.operationFailed'),
+            ),
+          );
+    },
+    [translate],
+  );
+
+  const copyProjectPath = useCallback(
+    (request: Parameters<FlyoffApi['copyProjectPath']>[0]) => {
+      const operation = getApi().copyProjectPath;
+      return operation
+        ? operation(request)
+        : Promise.resolve(
+            unavailableProjectResult<null>(
+              translate('projects.operationFailed'),
+            ),
+          );
+    },
+    [translate],
   );
 
   const openProjectNode = useCallback(
@@ -1337,6 +1447,29 @@ export function App() {
 
       const primary = platform === 'darwin' ? event.metaKey : event.ctrlKey;
 
+      if (
+        event.altKey &&
+        !event.ctrlKey &&
+        !event.metaKey &&
+        !event.shiftKey &&
+        event.key === 'Enter'
+      ) {
+        const state = selectActiveTabs(workspaceStateRef.current);
+        const activeTab = state.tabs.find(
+          ({ tabId }) => tabId === state.activeTabId,
+        );
+        const target = activeTab?.target;
+        const node =
+          target?.type === 'project-content'
+            ? projectNodesRef.current.get(target.nodeId)
+            : undefined;
+        if (node?.kind === 'page' && node.pageType === 'markdown') {
+          event.preventDefault();
+          openPageProperties(node);
+        }
+        return;
+      }
+
       if (event.ctrlKey && event.key === 'Tab') {
         event.preventDefault();
         const state = selectActiveTabs(workspaceStateRef.current);
@@ -1376,7 +1509,7 @@ export function App() {
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [dispatchGuardedTabAction, platform]);
+  }, [dispatchGuardedTabAction, openPageProperties, platform]);
 
   useEffect(() => {
     // Ctrl+wheel zooms the whole window, except over a note, where it scales
@@ -1512,9 +1645,11 @@ export function App() {
         );
       }
 
+      const node = projectNodes.get(target.nodeId);
       return (
         <ProjectContentPage
-          node={projectNodes.get(target.nodeId)}
+          displayPath={projectNodeLogicalPath(projectNodes, target.nodeId)}
+          node={node}
           nodeId={target.nodeId}
           pageState={props.descriptor.pageState}
           pageType={target.pageType}
@@ -1555,23 +1690,17 @@ export function App() {
       return [];
     }
 
-    const pathIds: string[] = [];
-    const visited = new Set<string>();
-    let current = projectNodes.get(activeProjectTarget.nodeId);
-
-    while (current?.parentId && !visited.has(current.parentId)) {
-      visited.add(current.parentId);
-      const parent = projectNodes.get(current.parentId);
-      if (!parent || parent.kind !== 'folder') {
-        break;
-      }
-      pathIds.unshift(parent.nodeId);
-      current = parent;
-    }
-
-    return pathIds;
+    const lineage = resolveProjectNodeLineage(
+      projectNodes,
+      activeProjectTarget.nodeId,
+    );
+    return lineage
+      ? lineage
+          .slice(0, -1)
+          .filter(({ kind }) => kind === 'folder')
+          .map(({ nodeId }) => nodeId)
+      : [];
   }, [activeProjectTarget, projectNodes]);
-
   return (
     <div className="app-shell">
       <Titlebar
@@ -1626,13 +1755,16 @@ export function App() {
             activeNodePath={activeProjectNodePath}
             hidden={layout.railViewId !== RAIL_VIEW_IDS.project}
             loadChildren={listProjectChildren}
-            onBeforeNodeChange={() => flushProjectDocuments()}
+            onBeforeNodeChange={() => flushProjectDocumentsForTreeMutation()}
+            onCopyPath={copyProjectPath}
             onCreateNode={createProjectNode}
             onError={notifyProjectError}
             onMoveNode={moveProjectNode}
             onNodeChanged={(node) => cacheProjectNodes([node])}
+            onNotice={notifyProjectInfo}
             onCloseProject={() => void closeProjectWorkspace()}
             onOpenNode={openProjectNode}
+            onRequestProperties={openPageProperties}
             onOpenOverview={() =>
               void dispatchGuardedTabAction({
                 type: 'open-target',
@@ -1642,12 +1774,14 @@ export function App() {
                 },
               })
             }
+            onRevealPath={revealProjectPath}
             onRenameNode={renameProjectNode}
             onTrashNode={trashProjectNode}
             overviewActive={
               activeProjectTarget?.type === 'project-overview'
             }
             project={project}
+            platform={platform}
             ref={projectSidebarRef}
             translate={translate}
           />
@@ -1759,12 +1893,32 @@ export function App() {
         open={createProjectOpen}
         translate={translate}
       />
+      {pageProperties.node && pageProperties.logicalPath ? (
+        <ProjectPagePropertiesDialog
+          loadError={pageProperties.state.error}
+          loading={pageProperties.state.loading}
+          logicalPath={pageProperties.logicalPath}
+          node={pageProperties.node}
+          onChangePassword={pageProperties.changePassword}
+          onClose={pageProperties.close}
+          onLock={pageProperties.lock}
+          onPropertiesChange={pageProperties.acceptProperties}
+          onProtect={pageProperties.protect}
+          onRemovePassword={pageProperties.removePassword}
+          onRetry={() => void pageProperties.load(pageProperties.node!.nodeId)}
+          onSetReadOnly={pageProperties.setReadOnly}
+          onUnlock={pageProperties.unlock}
+          properties={pageProperties.state.properties}
+          translate={translate}
+        />
+      ) : null}
       <ToastHost
         ariaLabel={translate('projects.notifications')}
         closeLabel={translate('projects.dismissNotice')}
         onDismiss={dismissToast}
         toasts={toasts}
       />
+      <TooltipHost />
       {closeRequest ? (
         <CloseConfirmationDialog
           intent={closeRequest.intent}
