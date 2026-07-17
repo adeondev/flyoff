@@ -17,12 +17,12 @@ import {
   writeSelection,
   type SourceSelection,
 } from './source-caret';
+import {
+  installSourceMouseSelection,
+  revealSourceSelectionAfterNavigation,
+} from './source-interaction';
 import { reconcileSource } from './source-renderer';
 import { resolveSourceInput } from './source-input';
-import {
-  expandDoubleClickSelection,
-  expandTripleClickSelection,
-} from './source-word-selection';
 
 export interface RichSourceEditorProps {
   ariaLabel: string;
@@ -426,45 +426,13 @@ export function RichSourceEditor({
       callbacksRef.current.onSelectionChange(nextSelection);
     }
 
-    function handleDoubleClick(event: MouseEvent): void {
-      if (composingRef.current) {
-        return;
-      }
-      const content = readSource(editor);
-      const current = readSelection(editor);
-      const next = expandDoubleClickSelection(content, current);
-      if (
-        next.start === current.start &&
-        next.end === current.end &&
-        next.direction === current.direction
-      ) {
-        return;
-      }
-      event.preventDefault();
-      writeSelection(editor, next);
-      stateRef.current = { content, selection: next };
-      callbacksRef.current.onSelectionChange(next);
-    }
-
-    function handleClick(event: MouseEvent): void {
-      if (event.detail !== 3 || composingRef.current) {
-        return;
-      }
-      const content = readSource(editor);
-      const current = readSelection(editor);
-      const next = expandTripleClickSelection(content, current);
-      if (
-        next.start === current.start &&
-        next.end === current.end &&
-        next.direction === current.direction
-      ) {
-        return;
-      }
-      event.preventDefault();
-      writeSelection(editor, next);
-      stateRef.current = { content, selection: next };
-      callbacksRef.current.onSelectionChange(next);
-    }
+    const removeMouseSelection = installSourceMouseSelection(editor, {
+      isComposing: () => composingRef.current,
+      onSelectionChange: (content, nextSelection) => {
+        stateRef.current = { content, selection: nextSelection };
+        callbacksRef.current.onSelectionChange(nextSelection);
+      },
+    });
 
     editor.addEventListener('beforeinput', handleBeforeInput);
     editor.addEventListener('compositionstart', handleCompositionStart);
@@ -474,8 +442,6 @@ export function RichSourceEditor({
     editor.addEventListener('copy', handleCopy);
     editor.addEventListener('cut', handleCut);
     editor.addEventListener('drop', handleDrop);
-    editor.addEventListener('click', handleClick);
-    editor.addEventListener('dblclick', handleDoubleClick);
     editor.ownerDocument.addEventListener(
       'selectionchange',
       handleSelectionChange,
@@ -493,8 +459,7 @@ export function RichSourceEditor({
       editor.removeEventListener('copy', handleCopy);
       editor.removeEventListener('cut', handleCut);
       editor.removeEventListener('drop', handleDrop);
-      editor.removeEventListener('click', handleClick);
-      editor.removeEventListener('dblclick', handleDoubleClick);
+      removeMouseSelection();
       editor.ownerDocument.removeEventListener(
         'selectionchange',
         handleSelectionChange,
@@ -508,6 +473,11 @@ export function RichSourceEditor({
     }
   }, [autoFocus, editorRef]);
 
+  function handleKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
+    onKeyDown?.(event);
+    revealSourceSelectionAfterNavigation(event.currentTarget, event);
+  }
+
   return (
     <div className="markdown-source">
       <div
@@ -517,7 +487,7 @@ export function RichSourceEditor({
         className="markdown-source__editor"
         contentEditable={readOnly ? false : 'plaintext-only'}
         data-markdown-node-id={nodeId}
-        onKeyDown={onKeyDown}
+        onKeyDown={handleKeyDown}
         onScroll={(event) => onScroll?.(event.currentTarget.scrollTop)}
         ref={editorRef}
         role="textbox"

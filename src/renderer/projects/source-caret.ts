@@ -180,6 +180,60 @@ function offsetOf(
   return serializeRoot(range.cloneContents()).length;
 }
 
+function caretPositionAtPoint(
+  document: Document,
+  x: number,
+  y: number,
+): Position | undefined {
+  const position = document.caretPositionFromPoint?.(x, y);
+  if (position) {
+    return { node: position.offsetNode, offset: position.offset };
+  }
+
+  const range = document.caretRangeFromPoint?.(x, y);
+  return range
+    ? { node: range.startContainer, offset: range.startOffset }
+    : undefined;
+}
+
+function pointOffset(
+  root: HTMLElement,
+  x: number,
+  y: number,
+): number | undefined {
+  const position = caretPositionAtPoint(root.ownerDocument, x, y);
+  if (
+    !position ||
+    (position.node !== root && !root.contains(position.node))
+  ) {
+    return undefined;
+  }
+  return offsetOf(root, position.node, position.offset);
+}
+
+export function sourceOffsetAtPoint(
+  root: HTMLElement,
+  x: number,
+  y: number,
+): number | undefined {
+  const direct = pointOffset(root, x, y);
+  if (direct !== undefined) {
+    return direct;
+  }
+
+  const bounds = root.getBoundingClientRect();
+  if (bounds.width <= 0 || bounds.height <= 0) {
+    return undefined;
+  }
+
+  const inset = 1;
+  return pointOffset(
+    root,
+    Math.min(Math.max(x, bounds.left + inset), bounds.right - inset),
+    Math.min(Math.max(y, bounds.top + inset), bounds.bottom - inset),
+  );
+}
+
 function selectionDirection(
   anchor: number,
   focus: number,

@@ -1267,13 +1267,13 @@ describe('Markdown editor', () => {
     });
     const wordStart = content.indexOf('informação42');
     writeSelection(editor, wordStart + 3, wordStart + 6);
-    fireEvent.doubleClick(editor);
+    expect(fireEvent.mouseDown(editor, { button: 0, detail: 2 })).toBe(false);
     let selected = readSelection(editor);
     expect(content.slice(selected.start, selected.end)).toBe('informação42');
 
     const dateStart = content.indexOf('2026-07-16');
     writeSelection(editor, dateStart + 5, dateStart + 7);
-    fireEvent.doubleClick(editor);
+    expect(fireEvent.mouseDown(editor, { button: 0, detail: 2 })).toBe(false);
     selected = readSelection(editor);
     expect(content.slice(selected.start, selected.end)).toBe('2026-07-16');
     expect(controller.getSnapshot(note.nodeId)?.selection).toMatchObject(
@@ -1307,7 +1307,7 @@ describe('Markdown editor', () => {
     });
     const lineStart = content.indexOf(line);
     writeSelection(editor, lineStart + 4, lineStart + 9);
-    fireEvent.click(editor, { detail: 3 });
+    expect(fireEvent.mouseDown(editor, { button: 0, detail: 3 })).toBe(false);
 
     const selected = readSelection(editor);
     expect(content.slice(selected.start, selected.end)).toBe(line);

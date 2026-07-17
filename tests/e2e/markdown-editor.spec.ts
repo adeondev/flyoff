@@ -100,13 +100,11 @@ async function sourceOf(editor: ReturnType<Page['locator']>): Promise<string> {
   );
 }
 
-async function clickSourceText(
-  page: Page,
+async function sourceTextPoint(
   editor: ReturnType<Page['locator']>,
   target: string,
-  clickCount: 2 | 3,
-): Promise<void> {
-  const point = await editor.evaluate((root, expected) => {
+): Promise<{ x: number; y: number }> {
+  return editor.evaluate((root, expected) => {
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     let node = walker.nextNode();
     while (node) {
@@ -125,7 +123,15 @@ async function clickSourceText(
     }
     throw new Error(`Source text was not found: ${expected}`);
   }, target);
+}
 
+async function clickSourceText(
+  page: Page,
+  editor: ReturnType<Page['locator']>,
+  target: string,
+  clickCount: 2 | 3,
+): Promise<void> {
+  const point = await sourceTextPoint(editor, target);
   await page.mouse.click(point.x, point.y, { clickCount });
 }
 
@@ -210,7 +216,28 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
     await expect.poll(() => page.evaluate(() => getSelection()?.toString())).toBe(
       'text',
     );
+    await editor.evaluate((root) => {
+      const editorElement = root as HTMLElement;
+      const recordTripleMouseDown = (event: MouseEvent): void => {
+        if (event.detail !== 3) {
+          return;
+        }
+        editorElement.dataset.tripleMouseDownDefaultPrevented = String(
+          event.defaultPrevented,
+        );
+        editorElement.removeEventListener(
+          'mousedown',
+          recordTripleMouseDown,
+        );
+      };
+      editorElement.addEventListener('mousedown', recordTripleMouseDown);
+    });
     await clickSourceText(page, editor, 'text', 3);
+    await expect
+      .poll(() =>
+        editor.getAttribute('data-triple-mouse-down-default-prevented'),
+      )
+      .toBe('true');
     await expect.poll(() => page.evaluate(() => getSelection()?.toString())).toBe(
       '[text](https://x.dev)',
     );
@@ -258,6 +285,205 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
     );
     await expect.poll(() => sourceOf(editor)).toBe(sample);
 
+    const primary = process.platform === 'darwin' ? 'Meta' : 'Control';
+    const documentStart =
+      process.platform === 'darwin' ? 'Meta+ArrowUp' : 'Control+Home';
+    const documentEnd =
+      process.platform === 'darwin' ? 'Meta+ArrowDown' : 'Control+End';
+    const lineEnd =
+      process.platform === 'darwin' ? 'Meta+ArrowRight' : 'End';
+    const selectDocumentStart =
+      process.platform === 'darwin'
+        ? 'Meta+Shift+ArrowUp'
+        : 'Control+Shift+Home';
+    const selectDocumentEnd =
+      process.platform === 'darwin'
+        ? 'Meta+Shift+ArrowDown'
+        : 'Control+Shift+End';
+    const selectLineStart =
+      process.platform === 'darwin'
+        ? 'Meta+Shift+ArrowLeft'
+        : 'Shift+Home';
+    const selectLineEnd =
+      process.platform === 'darwin'
+        ? 'Meta+Shift+ArrowRight'
+        : 'Shift+End';
+    const selectWordForward =
+      process.platform === 'darwin'
+        ? 'Alt+Shift+ArrowRight'
+        : 'Control+Shift+ArrowRight';
+    const selectWordBackward =
+      process.platform === 'darwin'
+        ? 'Alt+Shift+ArrowLeft'
+        : 'Control+Shift+ArrowLeft';
+    const deleteWordBackward =
+      process.platform === 'darwin' ? 'Alt+Backspace' : 'Control+Backspace';
+    const undo = `${primary}+Z`;
+    const commandContent = 'alpha beta\ngamma delta\nomega';
+
+    await app.evaluate(
+      ({ clipboard }, text) => clipboard.writeText(text),
+      commandContent,
+    );
+    await editor.selectText();
+    await page.keyboard.press(`${primary}+V`);
+    await expect.poll(() => sourceOf(editor)).toBe(commandContent);
+
+    await page.keyboard.press(`${primary}+A`);
+    await page.keyboard.press(`${primary}+C`);
+    await expect.poll(() =>
+      app!.evaluate(({ clipboard }) => clipboard.readText()),
+    ).toBe(commandContent);
+
+    await page.keyboard.press(documentStart);
+    await page.keyboard.press('Shift+ArrowRight');
+    await page.keyboard.press(`${primary}+C`);
+    await expect.poll(() =>
+      app!.evaluate(({ clipboard }) => clipboard.readText()),
+    ).toBe('a');
+
+    await page.keyboard.press(documentStart);
+    await page.keyboard.press('Shift+ArrowDown');
+    await page.keyboard.press(`${primary}+C`);
+    await expect
+      .poll(() => app!.evaluate(({ clipboard }) => clipboard.readText()))
+      .toContain('alpha');
+
+    await page.keyboard.press(documentEnd);
+    await page.keyboard.press('Shift+ArrowUp');
+    await page.keyboard.press(`${primary}+C`);
+    await expect
+      .poll(() => app!.evaluate(({ clipboard }) => clipboard.readText()))
+      .toContain('omega');
+
+    await page.keyboard.press(documentStart);
+    await page.keyboard.press(selectLineEnd);
+    await page.keyboard.press(`${primary}+C`);
+    await expect.poll(() =>
+      app!.evaluate(({ clipboard }) => clipboard.readText()),
+    ).toBe('alpha beta');
+
+    await page.keyboard.press(documentStart);
+    await page.keyboard.press(lineEnd);
+    await page.keyboard.press(selectLineStart);
+    await page.keyboard.press(`${primary}+C`);
+    await expect.poll(() =>
+      app!.evaluate(({ clipboard }) => clipboard.readText()),
+    ).toBe('alpha beta');
+
+    await page.keyboard.press(documentStart);
+    await page.keyboard.press(selectWordForward);
+    await page.keyboard.press(`${primary}+C`);
+    await expect
+      .poll(async () =>
+        (await app!.evaluate(({ clipboard }) => clipboard.readText())).trim(),
+      )
+      .toBe('alpha');
+
+    await page.keyboard.press(documentStart);
+    await page.keyboard.press(lineEnd);
+    await page.keyboard.press(selectWordBackward);
+    await page.keyboard.press(`${primary}+C`);
+    await expect
+      .poll(async () =>
+        (await app!.evaluate(({ clipboard }) => clipboard.readText())).trim(),
+      )
+      .toBe('beta');
+
+    await page.keyboard.press(documentStart);
+    await page.keyboard.press(selectDocumentEnd);
+    await page.keyboard.press(`${primary}+C`);
+    await expect.poll(() =>
+      app!.evaluate(({ clipboard }) => clipboard.readText()),
+    ).toBe(commandContent);
+
+    await page.keyboard.press(documentEnd);
+    await page.keyboard.press(selectDocumentStart);
+    await page.keyboard.press(`${primary}+C`);
+    await expect.poll(() =>
+      app!.evaluate(({ clipboard }) => clipboard.readText()),
+    ).toBe(commandContent);
+
+    await page.keyboard.press(documentStart);
+    await page.keyboard.press('Delete');
+    await expect.poll(() => sourceOf(editor)).toBe(commandContent.slice(1));
+    await page.keyboard.press(undo);
+    await expect.poll(() => sourceOf(editor)).toBe(commandContent);
+
+    await page.keyboard.press(documentEnd);
+    await page.keyboard.press('Backspace');
+    await expect.poll(() => sourceOf(editor)).toBe(commandContent.slice(0, -1));
+    await page.keyboard.press(undo);
+    await expect.poll(() => sourceOf(editor)).toBe(commandContent);
+
+    await page.keyboard.press(documentEnd);
+    await page.keyboard.press(deleteWordBackward);
+    await expect.poll(() => sourceOf(editor)).toBe(
+      commandContent.slice(0, -'omega'.length),
+    );
+    await page.keyboard.press(undo);
+    await expect.poll(() => sourceOf(editor)).toBe(commandContent);
+
+    if (process.platform !== 'darwin') {
+      await page.keyboard.press(documentStart);
+      await page.keyboard.press('Control+Delete');
+      await expect.poll(() => sourceOf(editor)).toBe(
+        commandContent.slice('alpha'.length),
+      );
+      await page.keyboard.press(undo);
+      await expect.poll(() => sourceOf(editor)).toBe(commandContent);
+    }
+
+    await page.keyboard.press(documentStart);
+    await page.keyboard.press('Enter');
+    await expect.poll(() => sourceOf(editor)).toBe(`\n${commandContent}`);
+    await page.keyboard.press(undo);
+    await expect.poll(() => sourceOf(editor)).toBe(commandContent);
+
+    await page.keyboard.press(documentStart);
+    await page.keyboard.press(selectWordForward);
+    await page.keyboard.press(`${primary}+X`);
+    await expect
+      .poll(async () =>
+        (await app!.evaluate(({ clipboard }) => clipboard.readText())).trim(),
+      )
+      .toBe('alpha');
+    expect(await sourceOf(editor)).not.toBe(commandContent);
+    await page.keyboard.press(`${primary}+V`);
+    await expect.poll(() => sourceOf(editor)).toBe(commandContent);
+
+    await editor.focus();
+    await page.keyboard.press('Tab');
+    await expect(editor).not.toBeFocused();
+    await page.keyboard.press('Shift+Tab');
+    await expect(editor).toBeFocused();
+
+    const dragStart = await sourceTextPoint(editor, 'alpha');
+    const dragEnd = await sourceTextPoint(editor, 'delta');
+    await page.mouse.move(dragStart.x, dragStart.y);
+    await page.mouse.down();
+    await page.mouse.move(dragEnd.x, dragEnd.y, { steps: 4 });
+    await page.mouse.up();
+    await expect
+      .poll(() => page.evaluate(() => getSelection()?.toString() ?? ''))
+      .toContain('gamma');
+
+    await page.mouse.click(dragStart.x, dragStart.y);
+    await page.keyboard.down('Shift');
+    await page.mouse.click(dragEnd.x, dragEnd.y);
+    await page.keyboard.up('Shift');
+    await expect
+      .poll(() => page.evaluate(() => getSelection()?.toString() ?? ''))
+      .toContain('gamma');
+
+    await app.evaluate(
+      ({ clipboard }, text) => clipboard.writeText(text),
+      sample,
+    );
+    await editor.selectText();
+    await page.keyboard.press(`${primary}+V`);
+    await expect.poll(() => sourceOf(editor)).toBe(sample);
+
     const longLine = `long ${'wrapped '.repeat(100)}`;
     const layoutContent = [
       '# Heading',
@@ -274,6 +500,26 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
       process.platform === 'darwin' ? 'Meta+V' : 'Control+V',
     );
     await expect.poll(() => sourceOf(editor)).toBe(layoutContent);
+
+    await editor.focus();
+    await page.keyboard.press(documentStart);
+    await expect.poll(() => editor.evaluate((root) => root.scrollTop)).toBe(0);
+    await editor.hover();
+    await page.mouse.wheel(0, 400);
+    await expect
+      .poll(() => editor.evaluate((root) => root.scrollTop))
+      .toBeGreaterThan(0);
+    await page.keyboard.press(documentStart);
+    await expect.poll(() => editor.evaluate((root) => root.scrollTop)).toBe(0);
+    await page.keyboard.press('PageDown');
+    await expect
+      .poll(() => editor.evaluate((root) => root.scrollTop))
+      .toBeGreaterThan(0);
+    const pageDownScroll = await editor.evaluate((root) => root.scrollTop);
+    await page.keyboard.press('PageUp');
+    await expect
+      .poll(() => editor.evaluate((root) => root.scrollTop))
+      .toBeLessThan(pageDownScroll);
 
     let currentScale = 1;
     for (const targetScale of [0.6, 1, 2, 2.6]) {

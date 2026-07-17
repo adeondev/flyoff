@@ -100,6 +100,27 @@ describe('reusable dropdown menu', () => {
     await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
     expect(trigger.getAttribute('aria-expanded')).toBe('false');
   });
+
+  it('closes on Escape even when focus has left the menu items', async () => {
+    render(
+      <DropdownMenu
+        items={menuItems}
+        onAction={() => undefined}
+        trigger={(props) => <button {...props}>Open menu</button>}
+      />,
+    );
+
+    const trigger = screen.getByRole('button', { name: 'Open menu' });
+    fireEvent.click(trigger);
+    await screen.findByRole('menu');
+
+    // Simulate focus leaving the menu so no menu item can handle the key.
+    (document.activeElement as HTMLElement | null)?.blur();
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+    expect(trigger.getAttribute('aria-expanded')).toBe('false');
+  });
 });
 
 describe('menu bar', () => {

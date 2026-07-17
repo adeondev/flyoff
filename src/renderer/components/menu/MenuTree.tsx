@@ -497,8 +497,20 @@ export function MenuTree({
       onClose(false);
     };
     const closeForWindowBlur = () => onClose(false);
+    const closeForEscape = (event: globalThis.KeyboardEvent) => {
+      // A focused menu item already handles Escape (closing a submenu or the
+      // whole menu) and marks the event handled. This covers the case where the
+      // menu is open but focus never landed on an item, so Escape would
+      // otherwise do nothing.
+      if (event.key !== 'Escape' || event.defaultPrevented) {
+        return;
+      }
+      event.preventDefault();
+      onClose(true);
+    };
 
     document.addEventListener('pointerdown', closeForExternalInteraction, true);
+    document.addEventListener('keydown', closeForEscape);
     window.addEventListener('blur', closeForWindowBlur);
 
     return () => {
@@ -507,6 +519,7 @@ export function MenuTree({
         closeForExternalInteraction,
         true,
       );
+      document.removeEventListener('keydown', closeForEscape);
       window.removeEventListener('blur', closeForWindowBlur);
     };
   }, [anchor, onClose]);
