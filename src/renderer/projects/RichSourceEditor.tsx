@@ -19,7 +19,10 @@ import {
 } from './source-caret';
 import { reconcileSource } from './source-renderer';
 import { resolveSourceInput } from './source-input';
-import { expandDoubleClickSelection } from './source-word-selection';
+import {
+  expandDoubleClickSelection,
+  expandTripleClickSelection,
+} from './source-word-selection';
 
 export interface RichSourceEditorProps {
   ariaLabel: string;
@@ -443,6 +446,26 @@ export function RichSourceEditor({
       callbacksRef.current.onSelectionChange(next);
     }
 
+    function handleClick(event: MouseEvent): void {
+      if (event.detail !== 3 || composingRef.current) {
+        return;
+      }
+      const content = readSource(editor);
+      const current = readSelection(editor);
+      const next = expandTripleClickSelection(content, current);
+      if (
+        next.start === current.start &&
+        next.end === current.end &&
+        next.direction === current.direction
+      ) {
+        return;
+      }
+      event.preventDefault();
+      writeSelection(editor, next);
+      stateRef.current = { content, selection: next };
+      callbacksRef.current.onSelectionChange(next);
+    }
+
     editor.addEventListener('beforeinput', handleBeforeInput);
     editor.addEventListener('compositionstart', handleCompositionStart);
     editor.addEventListener('compositionend', handleCompositionEnd);
@@ -451,6 +474,7 @@ export function RichSourceEditor({
     editor.addEventListener('copy', handleCopy);
     editor.addEventListener('cut', handleCut);
     editor.addEventListener('drop', handleDrop);
+    editor.addEventListener('click', handleClick);
     editor.addEventListener('dblclick', handleDoubleClick);
     editor.ownerDocument.addEventListener(
       'selectionchange',
@@ -469,6 +493,7 @@ export function RichSourceEditor({
       editor.removeEventListener('copy', handleCopy);
       editor.removeEventListener('cut', handleCut);
       editor.removeEventListener('drop', handleDrop);
+      editor.removeEventListener('click', handleClick);
       editor.removeEventListener('dblclick', handleDoubleClick);
       editor.ownerDocument.removeEventListener(
         'selectionchange',

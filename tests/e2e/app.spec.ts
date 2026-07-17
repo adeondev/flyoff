@@ -667,7 +667,19 @@ test.describe('Flyoff desktop shell', () => {
       .getByRole('button', { name: labels.settings, exact: true })
       .click();
     await page.getByTestId('window-close').click();
-    await expect(page.getByRole('dialog')).toBeVisible();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toBeVisible();
+    const dialogPosition = await dialog.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      return {
+        horizontal:
+          Math.abs(bounds.left + bounds.width / 2 - window.innerWidth / 2),
+        vertical:
+          Math.abs(bounds.top + bounds.height / 2 - window.innerHeight / 2),
+      };
+    });
+    expect(dialogPosition.horizontal).toBeLessThanOrEqual(2);
+    expect(dialogPosition.vertical).toBeLessThanOrEqual(2);
     await expect(
       page.getByRole('button', { name: labels.cancel }),
     ).toBeFocused();

@@ -221,3 +221,40 @@ export function expandDoubleClickSelection(
       : expandWord(source, segmented);
   return { ...range, direction: 'forward' };
 }
+
+export function expandTripleClickSelection(
+  source: string,
+  selection: SourceSelection,
+): SourceSelection {
+  const normalized = normalizedSelection(source, selection);
+  let probe = normalized.start;
+  if (
+    probe > 0 &&
+    source[probe] === '\n' &&
+    source[probe - 1] === '\r'
+  ) {
+    probe -= 1;
+  }
+
+  let start = probe;
+  while (
+    start > 0 &&
+    source[start - 1] !== '\n' &&
+    source[start - 1] !== '\r'
+  ) {
+    start -= 1;
+  }
+
+  let end = probe;
+  while (
+    end < source.length &&
+    source[end] !== '\n' &&
+    source[end] !== '\r'
+  ) {
+    end += 1;
+  }
+
+  return start === end
+    ? normalized
+    : { start, end, direction: 'forward' };
+}

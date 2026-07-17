@@ -1,5 +1,8 @@
 // @vitest-environment jsdom
 
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -65,5 +68,61 @@ describe('toast queue', () => {
 
     fireEvent.click(screen.getAllByRole('button', { name: 'Dismiss' })[0]!);
     expect(onDismiss).toHaveBeenCalledTimes(3);
+  });
+
+  it('keeps a timed notification mounted until its exit motion completes', async () => {
+    vi.useFakeTimers();
+    const onDismiss = vi.fn();
+    render(
+      <ToastHost
+        ariaLabel="Notifications"
+        closeLabel="Dismiss"
+        onDismiss={onDismiss}
+        toasts={[toast(1, 'info')]}
+      />,
+    );
+
+    await act(async () => vi.advanceTimersByTimeAsync(5_000));
+    expect(screen.getByRole('status').classList.contains('toast--exiting')).toBe(
+      true,
+    );
+    expect(onDismiss).not.toHaveBeenCalled();
+
+    await act(async () => vi.advanceTimersByTimeAsync(79));
+    expect(onDismiss).not.toHaveBeenCalled();
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(onDismiss).toHaveBeenCalledWith('1');
+  });
+
+  it('anchors notifications at the bottom with short directional motion', () => {
+    const styles = readFileSync(
+      resolve(
+        process.cwd(),
+        'src/renderer/components/feedback/feedback.css',
+      ),
+      'utf8',
+    );
+    const theme = readFileSync(
+      resolve(process.cwd(), 'src/renderer/theme.css'),
+      'utf8',
+    );
+    const hostRules = styles.match(/\.toast-host\s*{([^}]*)}/)?.[1];
+
+    expect(hostRules).toContain('bottom: var(--space-md)');
+    expect(hostRules).not.toMatch(/\btop:/);
+    expect(styles).toMatch(
+      /@keyframes toast-enter\s*{\s*from\s*{\s*transform: translateX/,
+    );
+    expect(styles).toMatch(
+      /@keyframes toast-exit\s*{\s*to\s*{\s*transform: translateX/,
+    );
+    expect(styles).not.toMatch(
+      /@keyframes toast-(?:enter|exit)\s*{[^}]*opacity:/,
+    );
+    expect(styles).toMatch(
+      /@media \(prefers-reduced-motion: reduce\)\s*{[\s\S]*?\.toast,[\s\S]*?animation: none;/,
+    );
+    expect(theme).toMatch(/--dur-toast-enter:\s*100ms/);
+    expect(theme).toMatch(/--dur-toast-exit:\s*80ms/);
   });
 });

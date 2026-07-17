@@ -1281,6 +1281,41 @@ describe('Markdown editor', () => {
     );
   });
 
+  it('expands a triple click to the complete logical Markdown line', () => {
+    const line = '**Linha inteira** 2026-07-16.';
+    const content = `Antes\n${line}\nDepois`;
+    const original: MarkdownDocument = {
+      nodeId: note.nodeId,
+      content,
+      readOnly: false,
+      revision: '1'.repeat(64),
+    };
+    const controller = new MarkdownDocumentController({
+      reload: vi.fn(),
+      save: successfulSave(),
+    });
+    render(
+      <MarkdownEditor
+        controller={controller}
+        document={original}
+        mode="edit"
+        translate={translate}
+      />,
+    );
+    const editor = screen.getByRole('textbox', {
+      name: 'projects.editorLabel',
+    });
+    const lineStart = content.indexOf(line);
+    writeSelection(editor, lineStart + 4, lineStart + 9);
+    fireEvent.click(editor, { detail: 3 });
+
+    const selected = readSelection(editor);
+    expect(content.slice(selected.start, selected.end)).toBe(line);
+    expect(controller.getSnapshot(note.nodeId)?.selection).toMatchObject(
+      selected,
+    );
+  });
+
   it('confirms external links before invoking the trusted bridge', async () => {
     const openExternalLink = vi.fn(async () => ({ ok: true as const }));
     Object.defineProperty(window, 'flyoff', {

@@ -11,7 +11,7 @@ import { createPortal } from 'react-dom';
 import { getTooltipTargetProps } from '../tooltip';
 import type { ToastDescriptor } from './toast-state';
 
-const TOAST_EXIT_DURATION = 45;
+const TOAST_EXIT_DURATION = 80;
 
 export interface ToastHostProps {
   ariaLabel: string;

@@ -29,9 +29,10 @@
   --dur-micro: 100ms;
   --dur-overlay: 45ms;
   --dur-tooltip: 100ms;
-  --dur-toast-enter: 45ms;
-  --dur-toast-exit: 45ms;
+  --dur-toast-enter: 100ms;
+  --dur-toast-exit: 80ms;
   --z-modal: 10000;
+  --z-toast: 10005;
   --z-tooltip: 10010;
   --font-note: Arial, "Liberation Sans", "Helvetica Neue", sans-serif;
   --font-code: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas,

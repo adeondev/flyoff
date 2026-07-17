@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { expandDoubleClickSelection } from '../../src/renderer/projects/source-word-selection';
+import {
+  expandDoubleClickSelection,
+  expandTripleClickSelection,
+} from '../../src/renderer/projects/source-word-selection';
 
 function selection(start: number, end = start) {
   return { start, end, direction: start === end ? 'none' as const : 'forward' as const };
@@ -57,5 +60,42 @@ describe('source word selection', () => {
     expect(expandDoubleClickSelection('a ** b', selection(2, 4))).toEqual(
       selection(2, 4),
     );
+  });
+
+  it('selects the complete logical line with Markdown and punctuation', () => {
+    const line = '**Informação** em 2026-07-16.';
+    const source = `Introdução\n${line}\nFim`;
+    const lineStart = source.indexOf(line);
+    const resolved = expandTripleClickSelection(
+      source,
+      selection(lineStart + 4, lineStart + 9),
+    );
+
+    expect(source.slice(resolved.start, resolved.end)).toBe(line);
+    expect(resolved.direction).toBe('forward');
+  });
+
+  it('selects a final line without absorbing CRLF separators', () => {
+    const line = '[texto](https://flyoff.dev)';
+    const source = `Primeira\r\n\r\n${line}`;
+    const lineStart = source.indexOf(line);
+    const resolved = expandTripleClickSelection(
+      source,
+      selection(lineStart + 2),
+    );
+
+    expect(source.slice(resolved.start, resolved.end)).toBe(line);
+  });
+
+  it('preserves the native range on an empty logical line', () => {
+    const source = 'Antes\n\nDepois';
+    const lineBreak = source.indexOf('\n') + 1;
+
+    expect(
+      expandTripleClickSelection(
+        source,
+        selection(lineBreak, lineBreak + 1),
+      ),
+    ).toEqual(selection(lineBreak, lineBreak + 1));
   });
 });

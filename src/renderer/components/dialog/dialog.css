@@ -5,9 +5,8 @@
   z-index: var(--z-modal);
   inset: 0;
   display: grid;
-  align-items: start;
-  justify-items: center;
-  padding: clamp(56px, 10dvh, 92px) var(--space-lg) var(--space-lg);
+  place-items: center;
+  padding: var(--space-lg);
   background: var(--color-overlay);
   animation: flyoff-overlay-opacity-in var(--dur-overlay) linear;
   -webkit-app-region: no-drag;
@@ -16,7 +15,7 @@
 .flyoff-dialog {
   display: grid;
   width: min(100%, 480px);
-  max-height: calc(100dvh - clamp(80px, 16dvh, 136px));
+  max-height: calc(100dvh - var(--space-lg) - var(--space-lg));
   grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;
   border: 1px solid var(--color-border);
@@ -241,12 +240,11 @@
 
 @media (max-width: 40rem) {
   .flyoff-dialog__backdrop {
-    align-items: center;
     padding: var(--space-sm);
   }
 
   .flyoff-dialog {
-    max-height: calc(100dvh - 24px);
+    max-height: calc(100dvh - var(--space-sm) - var(--space-sm));
   }
 
   .flyoff-dialog__header {

@@ -100,10 +100,11 @@ async function sourceOf(editor: ReturnType<Page['locator']>): Promise<string> {
   );
 }
 
-async function doubleClickSourceText(
+async function clickSourceText(
   page: Page,
   editor: ReturnType<Page['locator']>,
   target: string,
+  clickCount: 2 | 3,
 ): Promise<void> {
   const point = await editor.evaluate((root, expected) => {
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
@@ -125,7 +126,7 @@ async function doubleClickSourceText(
     throw new Error(`Source text was not found: ${expected}`);
   }, target);
 
-  await page.mouse.dblclick(point.x, point.y);
+  await page.mouse.click(point.x, point.y, { clickCount });
 }
 
 test('stabilizes Markdown editing, history, gutters and note zoom', async () => {
@@ -205,9 +206,13 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
     const sample = '==uau==\n[text](https://x.dev)';
     await expect.poll(() => sourceOf(editor)).toBe(sample);
 
-    await doubleClickSourceText(page, editor, 'text');
+    await clickSourceText(page, editor, 'text', 2);
     await expect.poll(() => page.evaluate(() => getSelection()?.toString())).toBe(
       'text',
+    );
+    await clickSourceText(page, editor, 'text', 3);
+    await expect.poll(() => page.evaluate(() => getSelection()?.toString())).toBe(
+      '[text](https://x.dev)',
     );
     await page.getByRole('button', { name: labels.split }).click();
     const reading = page.getByRole('document', { name: labels.reading });
@@ -374,7 +379,7 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
       process.platform === 'darwin' ? 'Meta+Shift+Z' : 'Control+Y',
     );
     await expect.poll(() => sourceOf(editor)).toBe(layoutContent);
-    await doubleClickSourceText(page, editor, '1000');
+    await clickSourceText(page, editor, '1000', 2);
     await expect.poll(() => page.evaluate(() => getSelection()?.toString())).toBe(
       '1000',
     );
