@@ -47,6 +47,7 @@ jobs:
         run: npm run make -- --platform=win32 --arch=x64
 
       - name: Upload distributables
+        continue-on-error: true
         uses: actions/upload-artifact@v6
         with:
           name: flyoff-Windows-x64
