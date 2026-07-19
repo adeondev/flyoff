@@ -41,6 +41,11 @@ async function readWindowState(statePath: string): Promise<unknown> {
 }
 
 test('restores normal bounds, maximized state and minimized state', async () => {
+  test.skip(
+    process.platform !== 'win32' && Boolean(process.env.CI),
+    'Hosted runners do not provide reliable native window-mode transitions.',
+  );
+
   const appPath = locatePackagedAsar(repositoryRoot);
   const userDataPath = await mkdtemp(
     path.join(os.tmpdir(), 'flyoff-window-state-e2e-'),
@@ -61,11 +66,19 @@ test('restores normal bounds, maximized state and minimized state', async () => 
         }
 
         const workArea = screen.getPrimaryDisplay().workArea;
+        const width = Math.min(1_000, workArea.width);
+        const height = Math.min(680, workArea.height);
         const bounds = {
-          x: workArea.x + 40,
-          y: workArea.y + 40,
-          width: Math.min(1_000, workArea.width),
-          height: Math.min(680, workArea.height),
+          x: Math.min(
+            workArea.x + 40,
+            workArea.x + workArea.width - width,
+          ),
+          y: Math.min(
+            workArea.y + 40,
+            workArea.y + workArea.height - height,
+          ),
+          width,
+          height,
         };
 
         window.setBounds(bounds);

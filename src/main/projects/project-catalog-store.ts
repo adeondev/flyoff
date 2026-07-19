@@ -2,6 +2,7 @@ import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
+  PROJECT_FORMAT_LEGACY_VERSION,
   PROJECT_FORMAT_VERSION,
   type ProjectSummary,
 } from '../../shared/contracts/projects';
@@ -18,7 +19,7 @@ export interface ProjectCatalogEntry {
   projectId: string;
   name: string;
   location: string;
-  formatVersion: typeof PROJECT_FORMAT_VERSION;
+  formatVersion: ProjectSummary['formatVersion'];
   lastOpenedAt: string;
 }
 
@@ -43,7 +44,8 @@ function isCatalogEntry(value: unknown): value is ProjectCatalogEntry {
     isPortableProjectName(entry.name) &&
     typeof entry.location === 'string' &&
     path.isAbsolute(entry.location) &&
-    entry.formatVersion === PROJECT_FORMAT_VERSION &&
+    (entry.formatVersion === PROJECT_FORMAT_LEGACY_VERSION ||
+      entry.formatVersion === PROJECT_FORMAT_VERSION) &&
     typeof entry.lastOpenedAt === 'string' &&
     Number.isFinite(Date.parse(entry.lastOpenedAt))
   );

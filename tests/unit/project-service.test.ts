@@ -1,5 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+} from 'node:fs';
 import { rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -147,6 +152,18 @@ describe('ProjectService', () => {
         expect.objectContaining({ name: 'Documento' }),
       ]),
     });
+    await expect(service.resolvePath(2, { nodeId: null })).resolves.toEqual({
+      ok: true,
+      value: created.value.location,
+    });
+    if (note.ok) {
+      await expect(
+        service.resolvePath(2, { nodeId: note.value.nodeId }),
+      ).resolves.toEqual({
+        ok: true,
+        value: path.join(created.value.location, 'Documento.md'),
+      });
+    }
   });
 
   it('returns typed failures when no project is active', async () => {
@@ -155,6 +172,12 @@ describe('ProjectService', () => {
 
     expect(
       await service.getNode('missing', { nodeId: randomUUID() }),
+    ).toMatchObject({
+      ok: false,
+      error: { code: 'invalid-operation' },
+    });
+    expect(
+      await service.resolvePath('missing', { nodeId: null }),
     ).toMatchObject({
       ok: false,
       error: { code: 'invalid-operation' },
@@ -297,4 +320,329 @@ describe('ProjectService', () => {
     expect(service.getActiveProject(1)).toBeNull();
     openSpy.mockRestore();
   });
+
+  it('updates Markdown and wikilink references when folders are renamed', async () => {
+    const parent = createTemporaryDirectory();
+    const service = createService(parent);
+    const selection = await service.selectCreateLocation(1, parent);
+    if (!selection.ok) {
+      throw new Error('Expected a valid project location.');
+    }
+    const project = await service.createProject(1, {
+      name: 'Referências',
+      selectionToken: selection.value.token,
+    });
+    const folder = await service.createNode(1, {
+      kind: 'folder',
+      name: 'Notes',
+      parentId: null,
+    });
+    if (!project.ok || !folder.ok) {
+      throw new Error('Expected project setup to succeed.');
+    }
+    const target = await service.createNode(1, {
+      kind: 'page',
+      name: 'Target',
+      pageType: 'markdown',
+      parentId: folder.value.nodeId,
+    });
+    const source = await service.createNode(1, {
+      kind: 'page',
+      name: 'Source',
+      pageType: 'markdown',
+      parentId: null,
+    });
+    if (!target.ok || !source.ok) {
+      throw new Error('Expected Markdown notes to be created.');
+    }
+    const initialSource = await service.readMarkdown(1, {
+      nodeId: source.value.nodeId,
+    });
+    const initialTarget = await service.readMarkdown(1, {
+      nodeId: target.value.nodeId,
+    });
+    if (!initialSource.ok || !initialTarget.ok) {
+      throw new Error('Expected Markdown notes to be readable.');
+    }
+    await service.saveMarkdown(1, {
+      content:
+        '[label](Notes/Target.md#Heading)\n[[Notes/Target#Heading|alias]]',
+      expectedRevision: initialSource.value.revision,
+      nodeId: source.value.nodeId,
+    });
+    await service.saveMarkdown(1, {
+      content: '# Heading',
+      expectedRevision: initialTarget.value.revision,
+      nodeId: target.value.nodeId,
+    });
+
+    const renamed = await service.renameNode(1, {
+      name: 'Archive',
+      nodeId: folder.value.nodeId,
+    });
+
+    expect(renamed).toMatchObject({
+      ok: true,
+      value: {
+        node: { name: 'Archive' },
+        updatedDocumentNodeIds: [source.value.nodeId],
+      },
+    });
+    await expect(
+      service.readMarkdown(1, { nodeId: source.value.nodeId }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: {
+        content:
+          '[label](Archive/Target.md#Heading)\n[[Archive/Target#Heading|alias]]',
+      },
+    });
+
+    const destination = await service.createNode(1, {
+      kind: 'folder',
+      name: 'Elsewhere',
+      parentId: null,
+    });
+    if (!destination.ok) {
+      throw new Error('Expected destination folder to be created.');
+    }
+    const moved = await service.moveNode(1, {
+      nodeId: target.value.nodeId,
+      parentId: destination.value.nodeId,
+    });
+
+    expect(moved).toMatchObject({
+      ok: true,
+      value: {
+        node: { parentId: destination.value.nodeId },
+        updatedDocumentNodeIds: [source.value.nodeId],
+      },
+    });
+    await expect(
+      service.readMarkdown(1, { nodeId: source.value.nodeId }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: {
+        content:
+          '[label](Elsewhere/Target.md#Heading)\n[[Elsewhere/Target#Heading|alias]]',
+      },
+    });
+  });
+
+  it('rolls link rewrites back when the filesystem mutation fails', async () => {
+    const parent = createTemporaryDirectory();
+    const service = createService(parent);
+    const selection = await service.selectCreateLocation(1, parent);
+    if (!selection.ok) {
+      throw new Error('Expected a valid project location.');
+    }
+    await service.createProject(1, {
+      name: 'Rollback',
+      selectionToken: selection.value.token,
+    });
+    const target = await service.createNode(1, {
+      kind: 'page',
+      name: 'Target',
+      pageType: 'markdown',
+      parentId: null,
+    });
+    const source = await service.createNode(1, {
+      kind: 'page',
+      name: 'Source',
+      pageType: 'markdown',
+      parentId: null,
+    });
+    if (!target.ok || !source.ok) {
+      throw new Error('Expected Markdown notes to be created.');
+    }
+    const initial = await service.readMarkdown(1, {
+      nodeId: source.value.nodeId,
+    });
+    if (!initial.ok) {
+      throw new Error('Expected source note to be readable.');
+    }
+    const originalContent = '[target](Target.md)';
+    await service.saveMarkdown(1, {
+      content: originalContent,
+      expectedRevision: initial.value.revision,
+      nodeId: source.value.nodeId,
+    });
+    vi.spyOn(ProjectRepository.prototype, 'renameNode').mockRejectedValueOnce(
+      new Error('rename failed'),
+    );
+
+    await expect(
+      service.renameNode(1, {
+        name: 'Renamed',
+        nodeId: target.value.nodeId,
+      }),
+    ).resolves.toMatchObject({
+      error: { code: 'io-error' },
+      ok: false,
+    });
+    await expect(
+      service.readMarkdown(1, { nodeId: source.value.nodeId }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: { content: originalContent },
+    });
+    await expect(
+      service.getNode(1, { nodeId: target.value.nodeId }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: { name: 'Target' },
+    });
+  });
+
+  it('renames and moves nodes while protected notes remain locked', async () => {
+    const parent = createTemporaryDirectory();
+    const service = createService(parent);
+    const selection = await service.selectCreateLocation(1, parent);
+    if (!selection.ok) {
+      throw new Error('Expected a valid project location.');
+    }
+    const project = await service.createProject(1, {
+      name: 'Protegido',
+      selectionToken: selection.value.token,
+    });
+    if (!project.ok) {
+      throw new Error('Expected project creation to succeed.');
+    }
+    const target = await service.createNode(1, {
+      kind: 'page',
+      name: 'Target',
+      pageType: 'markdown',
+      parentId: null,
+    });
+    const secret = await service.createNode(1, {
+      kind: 'page',
+      name: 'Secret',
+      pageType: 'markdown',
+      parentId: null,
+    });
+    const destination = await service.createNode(1, {
+      kind: 'folder',
+      name: 'Destination',
+      parentId: null,
+    });
+    if (!target.ok || !secret.ok || !destination.ok) {
+      throw new Error('Expected Markdown notes to be created.');
+    }
+    const secretDocument = await service.readMarkdown(1, {
+      nodeId: secret.value.nodeId,
+    });
+    if (!secretDocument.ok) {
+      throw new Error('Expected secret note to be readable.');
+    }
+    const linkedSecret = await service.saveMarkdown(1, {
+      content: 'very secret sentence\n[target](Target.md)\n[[Target]]',
+      expectedRevision: secretDocument.value.revision,
+      nodeId: secret.value.nodeId,
+    });
+    if (!linkedSecret.ok) {
+      throw new Error('Expected secret links to be saved.');
+    }
+    const readOnlySecret = await service.setPageReadOnly(1, {
+      expectedRevision: linkedSecret.value.revision,
+      nodeId: secret.value.nodeId,
+      readOnly: true,
+    });
+    if (!readOnlySecret.ok) {
+      throw new Error('Expected the secret note to become read-only.');
+    }
+    await service.protectPage(1, {
+      expectedRevision: readOnlySecret.value.revision,
+      nodeId: secret.value.nodeId,
+      password: 'test password',
+    });
+    await service.openProject(2, project.value.location);
+
+    const maintenancePath = path.join(
+      project.value.location,
+      '.flyoff',
+      'link-maintenance.json',
+    );
+    const failedRename = vi
+      .spyOn(ProjectRepository.prototype, 'renameNode')
+      .mockRejectedValueOnce(new Error('rename failed'));
+    await expect(
+      service.renameNode(2, {
+        name: 'Failed',
+        nodeId: target.value.nodeId,
+      }),
+    ).resolves.toMatchObject({
+      error: { code: 'io-error' },
+      ok: false,
+    });
+    expect(existsSync(maintenancePath)).toBe(false);
+    failedRename.mockRestore();
+
+    await expect(
+      service.renameNode(2, {
+        name: 'Renamed',
+        nodeId: target.value.nodeId,
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: {
+        node: { name: 'Renamed' },
+        skippedLockedNodeIds: [secret.value.nodeId],
+        updatedDocumentNodeIds: [],
+      },
+    });
+    await expect(
+      service.getNode(2, { nodeId: target.value.nodeId }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: { name: 'Renamed' },
+    });
+    await expect(
+      service.renameNode(2, {
+        name: 'Archive',
+        nodeId: destination.value.nodeId,
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: {
+        node: { name: 'Archive' },
+        skippedLockedNodeIds: [secret.value.nodeId],
+        updatedDocumentNodeIds: [],
+      },
+    });
+    await expect(
+      service.moveNode(2, {
+        nodeId: target.value.nodeId,
+        parentId: destination.value.nodeId,
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: {
+        node: { parentId: destination.value.nodeId },
+        skippedLockedNodeIds: [secret.value.nodeId],
+        updatedDocumentNodeIds: [],
+      },
+    });
+    expect(existsSync(maintenancePath)).toBe(true);
+    expect(readFileSync(maintenancePath, 'utf8')).not.toContain(
+      'very secret sentence',
+    );
+
+    const reopenedService = createService(parent);
+    await expect(
+      reopenedService.openProject(3, project.value.location),
+    ).resolves.toMatchObject({ ok: true });
+    await expect(
+      reopenedService.unlockPage(3, {
+        nodeId: secret.value.nodeId,
+        password: 'test password',
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: {
+        content:
+          'very secret sentence\n[target](Archive/Renamed.md)\n[[Renamed]]',
+      },
+    });
+    expect(existsSync(maintenancePath)).toBe(false);
+  }, 10_000);
 });

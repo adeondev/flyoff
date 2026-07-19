@@ -1,6 +1,5 @@
 import type { Session } from 'electron';
 import type { FlyoffPlatform } from '../../../shared/contracts';
-import { getSpellcheckCapabilities } from './capabilities';
 import {
   SpellcheckLanguageSelectionUnsupportedError,
   UnsupportedSpellcheckLanguagesError,
@@ -14,6 +13,7 @@ export type ElectronSpellcheckSession = Pick<
   | 'availableSpellCheckerLanguages'
   | 'getSpellCheckerLanguages'
   | 'setSpellCheckerLanguages'
+  | 'addWordToSpellCheckerDictionary'
   | 'on'
   | 'removeListener'
 >;
@@ -25,7 +25,17 @@ export class ElectronSpellcheckService implements SpellcheckService {
   ) {}
 
   getCapabilities() {
-    return getSpellcheckCapabilities(this.platform);
+    return this.platform === 'darwin'
+      ? {
+          provider: 'macos-native' as const,
+          canSelectLanguages: false,
+          downloadsDictionaries: false,
+        }
+      : {
+          provider: 'chromium-hunspell' as const,
+          canSelectLanguages: true,
+          downloadsDictionaries: true,
+        };
   }
 
   getAvailableLanguages(): readonly string[] {
@@ -60,6 +70,18 @@ export class ElectronSpellcheckService implements SpellcheckService {
     }
 
     this.session.setSpellCheckerLanguages(normalizedLanguages);
+  }
+
+  addWordToDictionary(word: string): boolean {
+    return this.session.addWordToSpellCheckerDictionary(word);
+  }
+
+  async checkWords(): Promise<readonly string[]> {
+    return [];
+  }
+
+  async getSuggestions(): Promise<readonly string[]> {
+    return [];
   }
 
   onDictionaryDownload(

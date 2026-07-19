@@ -15,8 +15,8 @@ export function getSpellcheckCapabilities(
   }
 
   return {
-    provider: 'chromium-hunspell',
+    provider: 'bundled-hunspell',
     canSelectLanguages: true,
-    downloadsDictionaries: true,
+    downloadsDictionaries: false,
   };
 }

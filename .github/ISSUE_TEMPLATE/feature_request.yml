@@ -1,0 +1,43 @@
+name: Propor uma melhoria
+description: Descreva uma necessidade e o resultado desejado.
+title: "feat: "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problema
+      description: O que hoje é difícil, lento ou impossível?
+    validations:
+      required: true
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Resultado desejado
+      description: Descreva o comportamento, sem presumir uma implementação.
+    validations:
+      required: true
+  - type: textarea
+    id: workflow
+    attributes:
+      label: Fluxo de uso
+      description: Em que momento e com que frequência isso seria usado?
+    validations:
+      required: true
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Área principal
+      options:
+        - Editor e leitura
+        - Projetos e arquivos
+        - Interface e acessibilidade
+        - Segurança e privacidade
+        - Empacotamento e plataforma
+        - Arquitetura interna
+    validations:
+      required: true
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Restrições ou alternativas
+      description: Compatibilidade, desempenho ou soluções já tentadas.

@@ -1,6 +1,7 @@
 node_modules/
 .webpack/
 out/
+artifacts/
 coverage/
 test-results/
 playwright-report/

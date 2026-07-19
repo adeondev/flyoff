@@ -31,7 +31,11 @@ function selectBuildDirectory(outDirectory) {
 }
 
 export function locatePackagedApplication() {
-  const outDirectory = path.join(repositoryRoot, 'out');
+  const configuredOutDirectory =
+    process.env.FLYOFF_PACKAGE_OUT_DIR ?? process.env.FLYOFF_E2E_OUT_DIR;
+  const outDirectory = configuredOutDirectory
+    ? path.resolve(repositoryRoot, configuredOutDirectory)
+    : path.join(repositoryRoot, 'out');
 
   if (!existsSync(outDirectory)) {
     throw new Error('Package output is missing. Run `npm run package` first.');

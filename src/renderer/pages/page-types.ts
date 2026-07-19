@@ -17,6 +17,7 @@ export interface TabPresentation {
 }
 
 export interface PageRenderProps {
+  active: boolean;
   descriptor: TabDescriptor;
   title: string;
   translate: Translate;
@@ -26,6 +27,7 @@ export interface PageRenderProps {
 
 export interface InternalPageProps extends PageRenderProps {
   descriptor: TabDescriptor & { target: InternalTabTarget };
+  icon?: string;
 }
 
 export type PageRenderer = (props: PageRenderProps) => ReactNode;

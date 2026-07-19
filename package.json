@@ -27,7 +27,11 @@
   },
   "dependencies": {
     "@flyoff/native-core": "0.1.0",
-    "@fontsource/ibm-plex-sans": "5.2.8",
+    "@fontsource/inter": "5.2.8",
+    "@fontsource/nunito-sans": "5.2.7",
+    "dictionary-en": "4.0.0",
+    "dictionary-pt": "4.0.0",
+    "hunspell-wasm": "0.3.0",
     "i18next": "26.3.6",
     "react": "19.2.7",
     "react-dom": "19.2.7"

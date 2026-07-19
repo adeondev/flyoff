@@ -10,11 +10,14 @@ const child = spawn(
     '--smoke-test',
     '--remote-debugging-address=127.0.0.1',
     '--remote-debugging-port=0',
+    ...(process.platform === 'linux' && process.env.CI
+      ? ['--no-sandbox']
+      : []),
   ],
   {
-  env: process.env,
-  stdio: ['ignore', 'pipe', 'pipe'],
-  windowsHide: true,
+    env: process.env,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
   },
 );
 
@@ -66,7 +69,7 @@ assert.equal(result.state.nativeCore.coreVersion, '0.1.0');
 assert.equal(result.state.nativeCore.protocolVersion, 1);
 assert.equal(
   result.state.spellcheck.provider,
-  process.platform === 'darwin' ? 'macos-native' : 'chromium-hunspell',
+  process.platform === 'darwin' ? 'macos-native' : 'bundled-hunspell',
 );
 
 process.stdout.write(

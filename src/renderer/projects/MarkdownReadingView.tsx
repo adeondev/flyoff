@@ -1,0 +1,271 @@
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type MouseEvent,
+  type PointerEvent,
+  type RefObject,
+} from 'react';
+
+import type { ProjectInternalLinkSyntax } from '../../shared/contracts';
+import type { Translate } from '../pages/page-types';
+import { ExternalLinkPopover } from './ExternalLinkPopover';
+import {
+  LARGE_MARKDOWN_DOCUMENT_CHARACTERS,
+  SPLIT_PREVIEW_IDLE_MS,
+  SPLIT_PREVIEW_MAX_LAG_MS,
+} from './editor-performance';
+import { renderMarkdownInto } from './markdown-render';
+
+export type MarkdownReadingUpdatePolicy = 'immediate' | 'split';
+
+function cancelScheduledRender(
+  frameRef: RefObject<number | undefined>,
+  idleTimerRef: RefObject<number | undefined>,
+  maxTimerRef: RefObject<number | undefined>,
+): void {
+  if (frameRef.current !== undefined) {
+    cancelAnimationFrame(frameRef.current);
+    frameRef.current = undefined;
+  }
+  if (idleTimerRef.current !== undefined) {
+    window.clearTimeout(idleTimerRef.current);
+    idleTimerRef.current = undefined;
+  }
+  if (maxTimerRef.current !== undefined) {
+    window.clearTimeout(maxTimerRef.current);
+    maxTimerRef.current = undefined;
+  }
+}
+
+export interface MarkdownReadingViewProps {
+  ariaLabel: string;
+  content: string;
+  translate: Translate;
+  updatePolicy?: MarkdownReadingUpdatePolicy;
+  onError?: (message: string) => void;
+  onScrollIntent?: () => void;
+  onInternalLink?: (
+    link: {
+      headingPath: readonly string[];
+      path: string;
+      syntax: ProjectInternalLinkSyntax;
+    },
+    position: { x: number; y: number },
+    action: 'open' | 'peek',
+  ) => void;
+  viewRef?: RefObject<HTMLDivElement | null>;
+}
+
+export function MarkdownReadingView({
+  ariaLabel,
+  content,
+  onError,
+  onInternalLink,
+  onScrollIntent,
+  translate,
+  updatePolicy = 'immediate',
+  viewRef,
+}: MarkdownReadingViewProps) {
+  const fallbackRef = useRef<HTMLDivElement>(null);
+  const containerRef = viewRef ?? fallbackRef;
+  const renderedContentRef = useRef<string | undefined>(undefined);
+  const latestContentRef = useRef(content);
+  const frameRef = useRef<number | undefined>(undefined);
+  const idleTimerRef = useRef<number | undefined>(undefined);
+  const maxTimerRef = useRef<number | undefined>(undefined);
+  const [pendingLink, setPendingLink] = useState<{
+    anchor: HTMLAnchorElement;
+    url: string;
+  }>();
+
+  useEffect(() => {
+    latestContentRef.current = content;
+
+    const renderLatest = (): void => {
+      cancelScheduledRender(frameRef, idleTimerRef, maxTimerRef);
+      const container = containerRef.current;
+      const latest = latestContentRef.current;
+      if (!container || renderedContentRef.current === latest) {
+        return;
+      }
+      renderMarkdownInto(container, latest);
+      renderedContentRef.current = latest;
+      setPendingLink(undefined);
+    };
+
+    if (
+      renderedContentRef.current === undefined ||
+      updatePolicy === 'immediate'
+    ) {
+      renderLatest();
+      return;
+    }
+
+    if (content.length < LARGE_MARKDOWN_DOCUMENT_CHARACTERS) {
+      if (frameRef.current === undefined) {
+        frameRef.current = requestAnimationFrame(() => {
+          frameRef.current = undefined;
+          renderLatest();
+        });
+      }
+      return;
+    }
+
+    if (idleTimerRef.current !== undefined) {
+      window.clearTimeout(idleTimerRef.current);
+    }
+    idleTimerRef.current = window.setTimeout(
+      renderLatest,
+      SPLIT_PREVIEW_IDLE_MS,
+    );
+    if (maxTimerRef.current === undefined) {
+      maxTimerRef.current = window.setTimeout(
+        renderLatest,
+        SPLIT_PREVIEW_MAX_LAG_MS,
+      );
+    }
+  }, [containerRef, content, updatePolicy]);
+
+  useEffect(
+    () => () =>
+      cancelScheduledRender(frameRef, idleTimerRef, maxTimerRef),
+    [],
+  );
+
+  const closeLink = useCallback(() => setPendingLink(undefined), []);
+
+  function requestLink(target: EventTarget | null): boolean {
+    const anchor =
+      target instanceof Element
+        ? target.closest<HTMLAnchorElement>('a[data-markdown-external-url]')
+        : null;
+    if (!anchor || !containerRef.current?.contains(anchor)) {
+      return false;
+    }
+    setPendingLink({
+      anchor,
+      url: anchor.dataset.markdownExternalUrl!,
+    });
+    return true;
+  }
+
+  function requestInternalLink(
+    target: EventTarget | null,
+    action: 'open' | 'peek',
+  ): boolean {
+    const anchor =
+      target instanceof Element
+        ? target.closest<HTMLAnchorElement>('a[data-markdown-internal-path]')
+        : null;
+    if (!anchor || !containerRef.current?.contains(anchor)) {
+      return false;
+    }
+    let headingPath: readonly string[] = [];
+    try {
+      const parsed = JSON.parse(
+        anchor.dataset.markdownInternalHeadings ?? '[]',
+      );
+      if (
+        Array.isArray(parsed) &&
+        parsed.every((part) => typeof part === 'string')
+      ) {
+        headingPath = parsed;
+      }
+    } catch {
+      return false;
+    }
+    const syntax =
+      anchor.dataset.markdownInternalSyntax === 'wikilink'
+        ? 'wikilink'
+        : 'markdown';
+    const bounds = anchor.getBoundingClientRect();
+    onInternalLink?.(
+      {
+        headingPath,
+        path: anchor.dataset.markdownInternalPath ?? '',
+        syntax,
+      },
+      { x: bounds.left, y: bounds.bottom },
+      action,
+    );
+    return true;
+  }
+
+  function handleClick(event: MouseEvent<HTMLDivElement>): void {
+    if (
+      requestInternalLink(event.target, 'open') ||
+      requestLink(event.target)
+    ) {
+      event.preventDefault();
+    }
+  }
+
+  function handlePointerOver(event: PointerEvent<HTMLDivElement>): void {
+    if ((event.ctrlKey || event.metaKey) && requestInternalLink(event.target, 'peek')) {
+      event.preventDefault();
+    }
+  }
+
+  function handleKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
+    if (
+      [
+        'ArrowDown',
+        'ArrowUp',
+        'End',
+        'Home',
+        'PageDown',
+        'PageUp',
+        ' ',
+      ].includes(event.key)
+    ) {
+      onScrollIntent?.();
+    }
+    if (
+      (event.key === 'Enter' || event.key === ' ') &&
+      (requestInternalLink(event.target, 'open') ||
+        requestLink(event.target))
+    ) {
+      event.preventDefault();
+    }
+  }
+
+  return (
+    <>
+      <div
+        aria-label={ariaLabel}
+        className="markdown-view"
+        onClick={handleClick}
+        onKeyDown={handleKeyDown}
+        onPointerDown={onScrollIntent}
+        onPointerOver={handlePointerOver}
+        onWheel={onScrollIntent}
+        ref={containerRef}
+        role="document"
+        tabIndex={0}
+      />
+      {pendingLink ? (
+        <ExternalLinkPopover
+          anchor={pendingLink.anchor}
+          onClose={closeLink}
+          onOpen={async () => {
+            try {
+              const result = await window.flyoff.openExternalLink({
+                url: pendingLink.url,
+              });
+              if (!result.ok) {
+                onError?.(translate('projects.linkOpenFailed'));
+              }
+            } catch {
+              onError?.(translate('projects.linkOpenFailed'));
+            }
+          }}
+          translate={translate}
+          url={pendingLink.url}
+        />
+      ) : null}
+    </>
+  );
+}

@@ -163,7 +163,9 @@ async function createAndCloseSession(
     ).toHaveAttribute('aria-selected', 'true');
 
     const windowClosed = running.page.waitForEvent('close');
-    await running.page.getByTestId('window-close').click();
+    await running.app.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0]?.close();
+    });
     await expect(running.page.getByRole('dialog')).toBeVisible();
     const confirmation = running.page
       .getByRole('button', { name: labels.closeWindow, exact: true })
@@ -192,6 +194,7 @@ test.describe('tab session restoration', () => {
 
       await expect(running.page.getByRole('status')).toBeVisible();
       await running.page
+        .getByRole('status')
         .getByRole('button', { name: labels.restore, exact: true })
         .click();
 

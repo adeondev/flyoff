@@ -97,11 +97,11 @@ describe('application menu template', () => {
       ).toBe('CommandOrControl+Shift+W');
       expect(
         submenuOf(itemById(template, APPLICATION_MENU_IDS.edit)).map(
-          ({ role, type }) => role ?? type,
+          ({ id, role, type }) => role ?? type ?? id,
         ),
       ).toEqual([
-        'undo',
-        'redo',
+        'editor.undo',
+        'editor.redo',
         'separator',
         'cut',
         'copy',
@@ -109,6 +109,12 @@ describe('application menu template', () => {
         'separator',
         'selectAll',
       ]);
+      const undo = itemById(
+        submenuOf(itemById(template, APPLICATION_MENU_IDS.edit)),
+        'editor.undo',
+      );
+      undo.click?.({} as never, undefined, {} as never);
+      expect(onRendererCommand).toHaveBeenCalledWith('editor.undo', undefined);
       expect(
         submenuOf(itemById(template, APPLICATION_MENU_IDS.view)).map(
           ({ role, type }) => role ?? type,

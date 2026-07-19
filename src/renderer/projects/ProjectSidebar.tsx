@@ -7,21 +7,45 @@ import {
   useState,
 } from 'react';
 
+import arrowLeftIcon from '../../../public/images/icons/actions/arrow-left.svg';
+import infoIcon from '../../../public/images/icons/actions/info.svg';
+import plusIcon from '../../../public/images/icons/actions/plus.svg';
+import refreshIcon from '../../../public/images/icons/actions/refresh.svg';
+import settingsIcon from '../../../public/images/icons/actions/settings-outline.svg';
+import expandIcon from '../../../public/images/icons/actions/expand-outline.svg';
+import collapseIcon from '../../../public/images/icons/actions/collapse-outline.svg';
+import copyPathIcon from '../../../public/images/icons/actions/copy-path-outline.svg';
+import folderOpenIcon from '../../../public/images/icons/instances/folder-open-solid.svg';
+import folderIcon from '../../../public/images/icons/instances/folder-solid.svg';
+import noteIcon from '../../../public/images/icons/instances/note-solid.svg';
 import type {
   CreateProjectNodeRequest,
+  FlyoffPlatform,
   ListProjectChildrenRequest,
   MoveProjectNodeRequest,
   ProjectResult,
+  ProjectSearchOutcome,
+  ProjectSearchPreview,
+  ProjectSearchRequest,
   ProjectSummary,
   ProjectTreeNode,
+  ProjectPathRequest,
+  ProjectPageNode,
   RenameProjectNodeRequest,
   TrashProjectNodeRequest,
   TrashProjectNodeOutcome,
 } from '../../shared/contracts';
-import { DropdownMenu, type MenuItem } from '../components/menu';
+import { MaskedIcon } from '../components/MaskedIcon';
+import { ContextMenu, type MenuItem } from '../components/menu';
+import { getTooltipTargetProps } from '../components/tooltip';
 import type { Translate } from '../pages/page-types';
+import {
+  AddInstancePopover,
+  type AddInstanceChoice,
+} from './AddInstancePopover';
 import { MoveProjectNodeDialog } from './MoveProjectNodeDialog';
 import { projectNodeInputName } from './project-node-name';
+import { ProjectSearchInput } from './ProjectSearchInput';
 import { ProjectTree, type ProjectTreeInlineEdit } from './ProjectTree';
 import {
   ProjectTreeController,
@@ -32,24 +56,43 @@ import { TrashProjectNodeDialog } from './TrashProjectNodeDialog';
 function createTreeController(
   projectId: string,
   loadChildren: ProjectChildrenLoader,
+  onError?: (message: string) => void,
 ): ProjectTreeController {
   void projectId;
-  return new ProjectTreeController(loadChildren);
+  return new ProjectTreeController(loadChildren, onError);
 }
 
 const EMPTY_NODE_PATH: readonly string[] = [];
 
+function fileManagerLabel(
+  platform: FlyoffPlatform | undefined,
+  translate: Translate,
+): string {
+  if (platform === 'win32') {
+    return translate('projects.revealInExplorer');
+  }
+  if (platform === 'darwin') {
+    return translate('projects.revealInFinder');
+  }
+  return translate('projects.revealInFileManager');
+}
+
 export interface ProjectSidebarProps {
   project: ProjectSummary;
+  platform?: FlyoffPlatform;
   hidden?: boolean;
   translate: Translate;
   activeNodeId?: string;
   activeNodePath?: readonly string[];
   overviewActive?: boolean;
+  settingsActive?: boolean;
   createRequest?: ProjectSidebarCreateRequest;
   loadChildren: (
     request: ListProjectChildrenRequest,
   ) => Promise<ProjectResult<readonly ProjectTreeNode[]>>;
+  onSearch?: (
+    request: ProjectSearchRequest,
+  ) => Promise<ProjectResult<ProjectSearchOutcome>>;
   onCreateNode: (
     request: CreateProjectNodeRequest,
   ) => Promise<ProjectResult<ProjectTreeNode>>;
@@ -62,14 +105,24 @@ export interface ProjectSidebarProps {
   onTrashNode: (
     request: TrashProjectNodeRequest,
   ) => Promise<ProjectResult<TrashProjectNodeOutcome>>;
+  onCopyPath?: (
+    request: ProjectPathRequest,
+  ) => Promise<ProjectResult<null>>;
+  onRevealPath?: (
+    request: ProjectPathRequest,
+  ) => Promise<ProjectResult<null>>;
   onOpenOverview: () => void;
-  onOpenHome?: () => void;
+  onOpenAbout?: () => void;
+  onOpenSettings?: () => void;
+  onCloseProject?: () => void;
   onOpenNode: (node: ProjectTreeNode) => void;
+  onRequestProperties?: (node: ProjectPageNode) => void;
   onBeforeNodeChange?: (node: ProjectTreeNode) => Promise<boolean>;
   onCreateRequestHandled?: (id: number | string) => void;
   onNodeChanged?: (node: ProjectTreeNode) => void;
   onNodeTrashed?: (node: ProjectTreeNode) => void;
   onError?: (message: string) => void;
+  onNotice?: (message: string) => void;
 }
 
 export interface ProjectSidebarCreateRequest {
@@ -84,21 +137,6 @@ export interface ProjectSidebarHandle {
   refresh: () => Promise<boolean>;
 }
 
-function createMenuItems(translate: Translate): readonly MenuItem[] {
-  return [
-    {
-      id: 'new-note',
-      kind: 'action',
-      label: translate('projects.newNote'),
-    },
-    {
-      id: 'new-folder',
-      kind: 'action',
-      label: translate('projects.newFolder'),
-    },
-  ];
-}
-
 export const ProjectSidebar = forwardRef<
   ProjectSidebarHandle,
   ProjectSidebarProps
@@ -109,32 +147,111 @@ export const ProjectSidebar = forwardRef<
   hidden = false,
   loadChildren,
   onBeforeNodeChange,
+  onCopyPath,
   onCreateRequestHandled,
   onCreateNode,
   onError,
   onMoveNode,
   onNodeChanged,
   onNodeTrashed,
-  onOpenHome,
+  onCloseProject,
+  onOpenAbout,
   onOpenNode,
   onOpenOverview,
+  onOpenSettings,
+  onRequestProperties,
+  onRevealPath,
   onRenameNode,
+  onSearch,
   onTrashNode,
+  onNotice,
   overviewActive = false,
+  platform,
   project,
+  settingsActive = false,
   translate,
 }: ProjectSidebarProps, forwardedRef) {
   const controller = useMemo(
-    () => createTreeController(project.projectId, loadChildren),
-    [loadChildren, project.projectId],
+    () => createTreeController(project.projectId, loadChildren, onError),
+    [loadChildren, onError, project.projectId],
   );
   const [edit, setEdit] = useState<ProjectTreeInlineEdit>();
   const [movingNode, setMovingNode] = useState<ProjectTreeNode>();
   const [trashingNode, setTrashingNode] = useState<ProjectTreeNode>();
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string>();
+  const [searchQuery, setSearchQuery] = useState('');
+  const [appliedSearchQuery, setAppliedSearchQuery] = useState('');
+  const [searchNodeIds, setSearchNodeIds] = useState<ReadonlySet<string>>();
+  const [searchPreviews, setSearchPreviews] =
+    useState<ReadonlyMap<string, ProjectSearchPreview>>();
+  const [skippedLockedCount, setSkippedLockedCount] = useState(0);
+  const [searching, setSearching] = useState(false);
+  const [instancePicker, setInstancePicker] = useState<{
+    parentId: string | null;
+    position: { x: number; y: number };
+    restoreFocus?: HTMLElement | null;
+  }>();
+  const [branchMenu, setBranchMenu] = useState<{
+    parentId: string | null;
+    position: { x: number; y: number };
+    restoreFocus?: HTMLElement | null;
+  }>();
 
   useEffect(() => () => controller.dispose(), [controller]);
+  useEffect(() => {
+    const query = searchQuery.trim();
+    if (!query) {
+      setAppliedSearchQuery('');
+      setSearchNodeIds(undefined);
+      setSearchPreviews(undefined);
+      setSkippedLockedCount(0);
+      setSearching(false);
+      return;
+    }
+
+    let active = true;
+    setSearching(true);
+    const timer = window.setTimeout(() => {
+      void Promise.all([
+        controller.loadAll(),
+        onSearch?.({ query }),
+      ]).then(([, result]) => {
+        if (!active) {
+          return;
+        }
+        if (result && !result.ok) {
+          onError?.(result.error.message);
+          setSearchNodeIds(new Set());
+          setSearchPreviews(new Map());
+          setSkippedLockedCount(0);
+        } else {
+          setSearchNodeIds(
+            result?.ok ? new Set(result.value.nodeIds) : undefined,
+          );
+          setSearchPreviews(
+            result?.ok
+              ? new Map(
+                  result.value.previews.map((preview) => [
+                    preview.nodeId,
+                    preview,
+                  ]),
+                )
+              : undefined,
+          );
+          setSkippedLockedCount(
+            result?.ok ? result.value.skippedLockedNodeIds.length : 0,
+          );
+        }
+        setAppliedSearchQuery(query);
+        setSearching(false);
+      });
+    }, 120);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [controller, onError, onSearch, searchQuery]);
   useEffect(() => {
     let active = true;
 
@@ -153,7 +270,6 @@ export const ProjectSidebar = forwardRef<
   }, [activeNodePath, controller]);
 
   function reportError(message: string): void {
-    setError(message);
     onError?.(message);
   }
 
@@ -165,12 +281,12 @@ export const ProjectSidebar = forwardRef<
     async (
       parentId: string | null,
       kind: ProjectTreeNode['kind'],
+      pageType?: string,
     ): Promise<void> => {
-      setError(undefined);
       if (parentId) {
         await controller.setExpanded(parentId, true);
       }
-      setEdit({ mode: 'create', parentId, kind });
+      setEdit({ mode: 'create', parentId, kind, pageType });
     },
     [controller],
   );
@@ -212,7 +328,6 @@ export const ProjectSidebar = forwardRef<
       name,
     );
     setPending(true);
-    setError(undefined);
     try {
       if (edit.mode === 'create') {
         const result = await onCreateNode(
@@ -221,7 +336,7 @@ export const ProjectSidebar = forwardRef<
             : {
                 kind: 'page',
                 name: requestName,
-                pageType: 'markdown',
+                pageType: edit.pageType ?? 'markdown',
                 parentId: edit.parentId,
               },
         );
@@ -262,15 +377,19 @@ export const ProjectSidebar = forwardRef<
   async function moveByDrop(
     node: ProjectTreeNode,
     parentId: string | null,
+    beforeNodeId?: string | null,
   ): Promise<void> {
     if (pending || !(await allowNodeChange(node))) {
       return;
     }
 
     setPending(true);
-    setError(undefined);
     try {
-      const result = await onMoveNode({ nodeId: node.nodeId, parentId });
+      const result = await onMoveNode({
+        nodeId: node.nodeId,
+        parentId,
+        ...(beforeNodeId === undefined ? {} : { beforeNodeId }),
+      });
       if (!result.ok) {
         reportError(result.error.message);
         return;
@@ -316,7 +435,135 @@ export const ProjectSidebar = forwardRef<
     return onTrashNode(request);
   }
 
-  const addItems = createMenuItems(translate);
+  function openInstancePicker(
+    parentId: string | null,
+    position: { x: number; y: number },
+    restoreFocus?: HTMLElement | null,
+  ): void {
+    setInstancePicker({ parentId, position, restoreFocus });
+  }
+
+  function openBranchMenu(
+    parentId: string | null,
+    position: { x: number; y: number },
+    restoreFocus?: HTMLElement | null,
+  ): void {
+    setInstancePicker(undefined);
+    setBranchMenu({ parentId, position, restoreFocus });
+  }
+
+  function chooseInstance(choice: AddInstanceChoice): void {
+    const target = instancePicker;
+    if (!target) {
+      return;
+    }
+    void startCreate(target.parentId, choice.kind, choice.pageType);
+  }
+
+  async function performPathAction(
+    operation:
+      | ProjectSidebarProps['onCopyPath']
+      | ProjectSidebarProps['onRevealPath'],
+    parentId: string | null,
+  ): Promise<void> {
+    if (!operation) {
+      return;
+    }
+
+    try {
+      const result = await operation({ nodeId: parentId });
+      if (!result.ok) {
+        reportError(result.error.message);
+      }
+    } catch (error) {
+      reportError(String(error));
+    }
+  }
+
+  function handleBranchMenuAction(
+    action: string,
+    target: NonNullable<typeof branchMenu>,
+  ): void {
+    switch (action) {
+      case 'new-instance':
+        openInstancePicker(
+          target.parentId,
+          target.position,
+          target.restoreFocus,
+        );
+        return;
+      case 'new-folder':
+        void startCreate(target.parentId, 'folder');
+        return;
+      case 'expand-all':
+        void controller.expandBranch(target.parentId).then((result) => {
+          if (result.truncated) {
+            onNotice?.(translate('projects.expandLimitReached'));
+          }
+        });
+        return;
+      case 'collapse-all':
+        controller.collapseBranch(target.parentId);
+        return;
+      case 'reveal-path':
+        void performPathAction(onRevealPath, target.parentId);
+        return;
+      case 'copy-path':
+        void performPathAction(onCopyPath, target.parentId);
+        return;
+      default:
+        return;
+    }
+  }
+
+  function branchMenuItems(parentId: string | null): readonly MenuItem[] {
+    return [
+      {
+        id: 'new-instance',
+        kind: 'action',
+        label: translate('projects.newInstance'),
+        icon: noteIcon,
+        disabled: pending,
+      },
+      {
+        id: 'new-folder',
+        kind: 'action',
+        label: translate('projects.newFolder'),
+        icon: folderIcon,
+        disabled: pending,
+      },
+      { id: 'create-separator', kind: 'separator' },
+      {
+        id: 'expand-all',
+        kind: 'action',
+        label: translate('projects.expandAll'),
+        icon: expandIcon,
+        disabled: pending || !controller.canExpandBranch(parentId),
+      },
+      {
+        id: 'collapse-all',
+        kind: 'action',
+        label: translate('projects.collapseAll'),
+        icon: collapseIcon,
+        disabled: pending || !controller.canCollapseBranch(parentId),
+      },
+      { id: 'path-separator', kind: 'separator' },
+      {
+        id: 'reveal-path',
+        kind: 'action',
+        label: fileManagerLabel(platform, translate),
+        icon: folderOpenIcon,
+        disabled: !onRevealPath,
+      },
+      {
+        id: 'copy-path',
+        kind: 'action',
+        label: translate('projects.copyPath'),
+        icon: copyPathIcon,
+        disabled: !onCopyPath,
+      },
+    ];
+  }
 
   return (
     <aside
@@ -325,91 +572,178 @@ export const ProjectSidebar = forwardRef<
       hidden={hidden}
     >
       <header className="project-sidebar__header">
-        <button
-          aria-current={overviewActive ? 'page' : undefined}
-          className="project-sidebar__project"
-          onClick={onOpenOverview}
-          title={project.location}
-          type="button"
-        >
-          <span className="project-sidebar__project-mark" aria-hidden="true" />
-          <span>{project.name}</span>
-        </button>
         <div className="project-sidebar__tools">
           <button
-            aria-label={translate('pages.home')}
+            aria-label={translate('projects.closeProject')}
             className="project-sidebar__tool"
-            disabled={!onOpenHome || pending}
-            onClick={onOpenHome}
-            title={translate('pages.home')}
+            disabled={!onCloseProject || pending}
+            onClick={onCloseProject}
             type="button"
+            {...getTooltipTargetProps(
+              translate('projects.closeProject'),
+              'bottom',
+            )}
           >
-            <span aria-hidden="true">←</span>
+            <MaskedIcon
+              className="project-sidebar__tool-icon"
+              icon={arrowLeftIcon}
+            />
           </button>
           <button
             aria-label={translate('projects.refresh')}
             className="project-sidebar__tool"
             disabled={pending}
             onClick={() => void controller.refreshLoaded()}
-            title={translate('projects.refresh')}
             type="button"
+            {...getTooltipTargetProps(translate('projects.refresh'), 'bottom')}
           >
-            <span aria-hidden="true">↻</span>
+            <MaskedIcon
+              className="project-sidebar__tool-icon"
+              icon={refreshIcon}
+            />
           </button>
-          <DropdownMenu
-            items={addItems}
-            onAction={(action) => {
-              void startCreate(null, action === 'new-folder' ? 'folder' : 'page');
+          <button
+            aria-expanded={Boolean(instancePicker)}
+            aria-haspopup="dialog"
+            aria-label={translate('projects.addInstance')}
+            className="project-sidebar__tool"
+            disabled={pending}
+            onClick={(event) => {
+              const bounds = event.currentTarget.getBoundingClientRect();
+              openInstancePicker(
+                null,
+                { x: bounds.left, y: bounds.bottom + 4 },
+                event.currentTarget,
+              );
             }}
-            trigger={(props) => (
-              <button
-                {...props}
-                aria-label={translate('projects.add')}
-                className="project-sidebar__tool"
-                disabled={pending}
-                title={translate('projects.add')}
-                type="button"
-              >
-                <span aria-hidden="true">+</span>
-              </button>
+            type="button"
+            {...getTooltipTargetProps(
+              translate('projects.addInstance'),
+              'bottom',
             )}
-          />
+          >
+            <MaskedIcon
+              className="project-sidebar__tool-icon"
+              icon={plusIcon}
+            />
+          </button>
         </div>
       </header>
-      {error ? (
-        <div className="project-sidebar__error" role="alert">
-          <span>{error}</span>
-          <button
-            aria-label={translate('projects.cancel')}
-            onClick={() => setError(undefined)}
-            type="button"
-          >
-            ×
-          </button>
-        </div>
-      ) : null}
-      <div className="project-sidebar__tree-scroll">
+      <ProjectSearchInput
+        onChange={setSearchQuery}
+        searching={searching}
+        skippedLockedCount={skippedLockedCount}
+        translate={translate}
+        value={searchQuery}
+      />
+      <div
+        aria-busy={searching || undefined}
+        className="project-sidebar__tree-scroll"
+        onContextMenu={(event) => {
+          if (event.target !== event.currentTarget) {
+            return;
+          }
+          event.preventDefault();
+          openBranchMenu(
+            null,
+            { x: event.clientX, y: event.clientY },
+            event.currentTarget,
+          );
+        }}
+      >
         <ProjectTree
           activeNodeId={activeNodeId}
           controller={controller}
           edit={edit}
           onCancelEdit={() => setEdit(undefined)}
-          onMoveNode={(node, parentId) => void moveByDrop(node, parentId)}
+          onMoveNode={(node, parentId, beforeNodeId) =>
+            void moveByDrop(node, parentId, beforeNodeId)
+          }
           onOpenNode={onOpenNode}
-          onRequestCreate={(parentId, kind) => void startCreate(parentId, kind)}
+          onRequestAddInstance={openInstancePicker}
+          onRequestBranchMenu={openBranchMenu}
           onRequestMove={setMovingNode}
+          onRequestProperties={onRequestProperties}
           onRequestRename={(node) => setEdit({ mode: 'rename', node })}
           onRequestTrash={setTrashingNode}
           onSubmitEdit={(name) => void submitEdit(name)}
           operationPending={pending}
+          projectId={project.projectId}
+          searchNodeIds={searchNodeIds}
+          searchPreviews={searchPreviews}
+          searchQuery={appliedSearchQuery}
           translate={translate}
         />
       </div>
+      <footer className="project-sidebar__footer">
+        <button
+          aria-current={overviewActive ? 'page' : undefined}
+          className="project-sidebar__project"
+          onClick={onOpenOverview}
+          type="button"
+          {...getTooltipTargetProps(project.location, 'top')}
+        >
+          <span>{project.name}</span>
+        </button>
+        <div className="project-sidebar__footer-actions">
+          <button
+            aria-label={translate('menu.about')}
+            className="project-sidebar__tool"
+            disabled={!onOpenAbout}
+            onClick={onOpenAbout}
+            type="button"
+            {...getTooltipTargetProps(translate('menu.about'), 'top')}
+          >
+            <MaskedIcon
+              className="project-sidebar__tool-icon"
+              icon={infoIcon}
+            />
+          </button>
+          <button
+            aria-current={settingsActive ? 'page' : undefined}
+            aria-label={translate('pages.settings')}
+            className="project-sidebar__tool"
+            disabled={!onOpenSettings}
+            onClick={onOpenSettings}
+            type="button"
+            {...getTooltipTargetProps(translate('pages.settings'), 'top')}
+          >
+            <MaskedIcon
+              className="project-sidebar__tool-icon"
+              icon={settingsIcon}
+            />
+          </button>
+        </div>
+      </footer>
+      {branchMenu ? (
+        <ContextMenu
+          ariaLabel={translate('projects.branchActions')}
+          items={branchMenuItems(branchMenu.parentId)}
+          onAction={(action) => {
+            handleBranchMenuAction(action, branchMenu);
+            setBranchMenu(undefined);
+          }}
+          onClose={() => setBranchMenu(undefined)}
+          x={branchMenu.position.x}
+          y={branchMenu.position.y}
+        />
+      ) : null}
+      {instancePicker ? (
+        <AddInstancePopover
+          onClose={() => setInstancePicker(undefined)}
+          onSelect={chooseInstance}
+          parentId={instancePicker.parentId}
+          position={instancePicker.position}
+          restoreFocus={instancePicker.restoreFocus}
+          translate={translate}
+        />
+      ) : null}
       {movingNode ? (
         <MoveProjectNodeDialog
           controller={controller}
           node={movingNode}
           onCancel={() => setMovingNode(undefined)}
+          onError={reportError}
           onMove={moveFromDialog}
           onMoved={(node) => {
             setMovingNode(undefined);

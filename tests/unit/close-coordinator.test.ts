@@ -10,9 +10,10 @@ import type { TabSessionStore } from '../../src/main/session';
 import {
   CLOSE_REQUESTED_CHANNEL,
   CLOSE_RESPONSE_CHANNEL,
-  TAB_SESSION_VERSION,
+  RESTART_APPLICATION_CHANNEL,
+  WORKSPACE_SESSION_VERSION,
   type CloseRequest,
-  type TabSessionSnapshot,
+  type WorkspaceSessionSnapshot,
 } from '../../src/shared/contracts';
 
 type Listener = (...arguments_: unknown[]) => void;
@@ -28,6 +29,7 @@ const electronMocks = vi.hoisted(() => ({
   getFocusedWindow: vi.fn(),
   handle: vi.fn(),
   quit: vi.fn(),
+  relaunch: vi.fn(),
   removeHandler: vi.fn(),
 }));
 
@@ -36,6 +38,7 @@ vi.mock('electron', () => ({
     off: electronMocks.appOff,
     on: electronMocks.appOn,
     quit: electronMocks.quit,
+    relaunch: electronMocks.relaunch,
   },
   BrowserWindow: {
     fromWebContents: electronMocks.fromWebContents,
@@ -48,23 +51,31 @@ vi.mock('electron', () => ({
   },
 }));
 
-const session: TabSessionSnapshot = {
-  version: TAB_SESSION_VERSION,
-  tabs: [
-    {
-      tabId: 'page:home',
-      target: { type: 'internal', pageId: 'home' },
-      scrollTop: 0,
-      pageState: { version: 1, data: {} },
+const session: WorkspaceSessionSnapshot = {
+  version: WORKSPACE_SESSION_VERSION,
+  home: {
+    root: {
+      kind: 'pane',
+      paneId: 'home-pane-1',
+      tabs: [
+        {
+          tabId: 'page:home',
+          target: { type: 'internal', pageId: 'home' },
+          scrollTop: 0,
+          pageState: { version: 1, data: {} },
+        },
+        {
+          tabId: 'page:settings',
+          target: { type: 'internal', pageId: 'settings' },
+          scrollTop: 0,
+          pageState: { version: 1, data: {} },
+        },
+      ],
+      activeTabId: 'page:settings',
     },
-    {
-      tabId: 'page:settings',
-      target: { type: 'internal', pageId: 'settings' },
-      scrollTop: 0,
-      pageState: { version: 1, data: {} },
-    },
-  ],
-  activeTabId: 'page:settings',
+    activePaneId: 'home-pane-1',
+  },
+  project: null,
 };
 
 function createEmitter() {
@@ -131,6 +142,20 @@ function responseHandler() {
 
   if (!handler) {
     throw new Error('Close response handler was not registered.');
+  }
+
+  return handler;
+}
+
+function restartHandler() {
+  const handler = vi
+    .mocked(ipcMain.handle)
+    .mock.calls.find(
+      ([channel]) => channel === RESTART_APPLICATION_CHANNEL,
+    )?.[1];
+
+  if (!handler) {
+    throw new Error('Restart handler was not registered.');
   }
 
   return handler;
@@ -303,6 +328,68 @@ describe('CloseCoordinator', () => {
     expect(onShutdownApproved.mock.invocationCallOrder[0]).toBeLessThan(
       vi.mocked(app.quit).mock.invocationCallOrder[0] ?? Number.MAX_VALUE,
     );
+    coordinator.dispose();
+  });
+
+  it('restarts only after a trusted request is confirmed and the session is saved', () => {
+    const store = createStore();
+    const coordinator = new CloseCoordinator({
+      isAllowedUrl: (url) => url.startsWith('flyoff://app/'),
+      smokeTest: false,
+      tabSessionStore: store,
+    });
+    const created = createWindow();
+    electronMocks.fromWebContents.mockReturnValue(created.window);
+    electronMocks.getAllWindows.mockReturnValue([
+      created.window as unknown as BrowserWindow,
+    ]);
+    const event = {
+      sender: created.webContents,
+      senderFrame: created.webContents.mainFrame,
+    } as unknown as IpcMainInvokeEvent;
+
+    restartHandler()(event);
+    restartHandler()(event);
+    const request = latestRequest(created.webContents);
+    expect(request.intent).toBe('restart-application');
+    expect(created.webContents.send).toHaveBeenCalledTimes(1);
+
+    invokeResponse(created.webContents, {
+      requestId: request.requestId,
+      decision: 'confirm',
+      session,
+    });
+
+    expect(store.saveFinal).toHaveBeenCalledWith(session);
+    expect(app.relaunch).toHaveBeenCalledOnce();
+    expect(app.quit).toHaveBeenCalledOnce();
+    expect(vi.mocked(app.relaunch).mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(app.quit).mock.invocationCallOrder[0] ?? Number.MAX_VALUE,
+    );
+    coordinator.dispose();
+  });
+
+  it('keeps the application open when restart is canceled', () => {
+    const coordinator = new CloseCoordinator({
+      isAllowedUrl: () => true,
+      smokeTest: false,
+      tabSessionStore: createStore(),
+    });
+    const created = createWindow();
+    electronMocks.fromWebContents.mockReturnValue(created.window);
+    restartHandler()({
+      sender: created.webContents,
+      senderFrame: created.webContents.mainFrame,
+    } as unknown as IpcMainInvokeEvent);
+    const request = latestRequest(created.webContents);
+
+    invokeResponse(created.webContents, {
+      requestId: request.requestId,
+      decision: 'cancel',
+    });
+
+    expect(app.relaunch).not.toHaveBeenCalled();
+    expect(app.quit).not.toHaveBeenCalled();
     coordinator.dispose();
   });
 

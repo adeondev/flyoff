@@ -177,6 +177,9 @@ Em um checkout sem `package-lock.json`, use `npm install` uma vez para criá-lo.
 
 ## Desenvolvimento
 
+O fluxo de branches, pull requests, revisões e releases está documentado em
+[CONTRIBUTING.md](CONTRIBUTING.md).
+
 ```console
 npm start
 ```

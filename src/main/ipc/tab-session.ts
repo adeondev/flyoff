@@ -3,7 +3,7 @@ import { ipcMain } from 'electron';
 import {
   GET_RESTORABLE_TAB_SESSION_CHANNEL,
   isTabSessionRestoreDecision,
-  isTabSessionSnapshot,
+  isWorkspaceSessionSnapshot,
   RESOLVE_RESTORABLE_TAB_SESSION_CHANNEL,
   SAVE_TAB_SESSION_CHANNEL,
 } from '../../shared/contracts';
@@ -28,7 +28,7 @@ export function registerTabSessionHandlers(
         throw new TypeError('Invalid tab session restoration decision.');
       }
 
-      if (!isTabSessionSnapshot(current)) {
+      if (!isWorkspaceSessionSnapshot(current)) {
         throw new TypeError('Invalid tab session snapshot.');
       }
 
@@ -39,7 +39,7 @@ export function registerTabSessionHandlers(
   ipcMain.handle(SAVE_TAB_SESSION_CHANNEL, (event, session: unknown) => {
     validateTrustedMainFrame(event, isAllowedUrl, 'Tab session persistence');
 
-    if (!isTabSessionSnapshot(session)) {
+    if (!isWorkspaceSessionSnapshot(session)) {
       throw new TypeError('Invalid tab session snapshot.');
     }
 

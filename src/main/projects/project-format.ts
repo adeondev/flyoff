@@ -2,16 +2,23 @@ import path from 'node:path';
 
 import {
   PROJECT_FORMAT,
+  PROJECT_FORMAT_LEGACY_VERSION,
   PROJECT_FORMAT_VERSION,
   PROJECT_INDEX_FORMAT,
+  PROJECT_INDEX_LEGACY_VERSION,
+  PROJECT_INDEX_PREVIOUS_VERSION,
   PROJECT_INDEX_VERSION,
+  isProjectInstanceTypeId,
   type ProjectTreeNode,
 } from '../../shared/contracts/projects';
 import { isPortableProjectName } from './portable-name';
+import { getProjectPageStorageAdapter } from './project-storage-adapters';
 
 export interface ProjectManifest {
   format: typeof PROJECT_FORMAT;
-  formatVersion: typeof PROJECT_FORMAT_VERSION;
+  formatVersion:
+    | typeof PROJECT_FORMAT_LEGACY_VERSION
+    | typeof PROJECT_FORMAT_VERSION;
   projectId: string;
   name: string;
   createdAt: string;
@@ -22,6 +29,7 @@ interface ContentIndexEntryBase {
   parentId: string | null;
   name: string;
   locator: string;
+  sortOrder?: number;
 }
 
 export interface ContentIndexFolderEntry extends ContentIndexEntryBase {
@@ -30,7 +38,10 @@ export interface ContentIndexFolderEntry extends ContentIndexEntryBase {
 
 export interface ContentIndexPageEntry extends ContentIndexEntryBase {
   kind: 'page';
-  pageType: 'markdown';
+  pageType: string;
+  attributes?: {
+    readOnly?: true;
+  };
 }
 
 export type ContentIndexEntry =
@@ -42,6 +53,11 @@ export interface ProjectContentIndex {
   formatVersion: typeof PROJECT_INDEX_VERSION;
   projectId: string;
   entries: ContentIndexEntry[];
+}
+
+export interface ParsedProjectContentIndex {
+  index: ProjectContentIndex;
+  migrated: boolean;
 }
 
 const uuidPattern =
@@ -70,7 +86,8 @@ export function isProjectManifest(value: unknown): value is ProjectManifest {
 
   return (
     value.format === PROJECT_FORMAT &&
-    value.formatVersion === PROJECT_FORMAT_VERSION &&
+    (value.formatVersion === PROJECT_FORMAT_LEGACY_VERSION ||
+      value.formatVersion === PROJECT_FORMAT_VERSION) &&
     isUuid(value.projectId) &&
     isPortableProjectName(value.name) &&
     isIsoDate(value.createdAt)
@@ -96,16 +113,29 @@ export function isSafeProjectLocator(value: unknown): value is string {
   );
 }
 
-function parseContentIndexEntry(value: unknown): ContentIndexEntry | undefined {
+function parseContentIndexEntry(
+  value: unknown,
+  version:
+    | typeof PROJECT_INDEX_LEGACY_VERSION
+    | typeof PROJECT_INDEX_PREVIOUS_VERSION
+    | typeof PROJECT_INDEX_VERSION,
+): ContentIndexEntry | undefined {
+  const legacy = version === PROJECT_INDEX_LEGACY_VERSION;
   if (
     !isRecord(value) ||
     !isUuid(value.nodeId) ||
     (value.parentId !== null && !isUuid(value.parentId)) ||
     !isPortableProjectName(value.name) ||
-    !isSafeProjectLocator(value.locator)
+    !isSafeProjectLocator(value.locator) ||
+    (value.sortOrder !== undefined &&
+      (typeof value.sortOrder !== 'number' ||
+        !Number.isSafeInteger(value.sortOrder) ||
+        value.sortOrder < 0))
   ) {
     return undefined;
   }
+
+  const sortOrder = legacy ? undefined : (value.sortOrder as number | undefined);
 
   if (value.kind === 'folder') {
     return {
@@ -114,17 +144,41 @@ function parseContentIndexEntry(value: unknown): ContentIndexEntry | undefined {
       name: value.name,
       locator: value.locator,
       kind: 'folder',
+      ...(sortOrder === undefined ? {} : { sortOrder }),
     };
   }
 
-  if (value.kind === 'page' && value.pageType === 'markdown') {
+  const pageType =
+    legacy && value.pageType === 'markdown'
+      ? 'markdown'
+      : !legacy && isProjectInstanceTypeId(value.pageType)
+        ? value.pageType
+        : undefined;
+
+  if (value.kind === 'page' && pageType) {
+    if (
+      version === PROJECT_INDEX_VERSION &&
+      value.attributes !== undefined &&
+      (!isRecord(value.attributes) ||
+        Object.keys(value.attributes).some((key) => key !== 'readOnly') ||
+        (value.attributes.readOnly !== undefined &&
+          typeof value.attributes.readOnly !== 'boolean'))
+    ) {
+      return undefined;
+    }
+    const readOnly =
+      version === PROJECT_INDEX_VERSION &&
+      isRecord(value.attributes) &&
+      value.attributes.readOnly === true;
     return {
       nodeId: value.nodeId,
       parentId: value.parentId,
       name: value.name,
       locator: value.locator,
       kind: 'page',
-      pageType: 'markdown',
+      pageType,
+      ...(sortOrder === undefined ? {} : { sortOrder }),
+      ...(readOnly ? { attributes: { readOnly: true } } : {}),
     };
   }
 
@@ -144,11 +198,20 @@ function hasValidRelationships(entries: readonly ContentIndexEntry[]): boolean {
     const locatorParent = path.posix.dirname(entry.locator);
     const expectedParent = parent?.locator ?? '.';
     const actualDiskName = path.posix.basename(entry.locator);
-    const validDiskName =
-      entry.kind === 'folder'
-        ? actualDiskName === entry.name
-        : actualDiskName.slice(0, -3) === entry.name &&
-          actualDiskName.slice(-3).toLowerCase() === '.md';
+    const adapter =
+      entry.kind === 'page'
+        ? getProjectPageStorageAdapter(entry.pageType)
+        : undefined;
+    const validDiskName = entry.kind === 'folder'
+      ? actualDiskName === entry.name
+      : adapter
+        ? adapter.extensions.some(
+            (extension) =>
+              actualDiskName.slice(0, -extension.length) === entry.name &&
+              actualDiskName.slice(-extension.length).toLocaleLowerCase() ===
+                extension,
+          )
+        : actualDiskName.startsWith(`${entry.name}.`);
 
     if (locatorParent !== expectedParent || !validDiskName) {
       return false;
@@ -173,18 +236,29 @@ function hasValidRelationships(entries: readonly ContentIndexEntry[]): boolean {
 export function parseProjectContentIndex(
   value: unknown,
   projectId: string,
-): ProjectContentIndex | undefined {
+): ParsedProjectContentIndex | undefined {
+  const version = isRecord(value) ? value.formatVersion : undefined;
   if (
     !isRecord(value) ||
     value.format !== PROJECT_INDEX_FORMAT ||
-    value.formatVersion !== PROJECT_INDEX_VERSION ||
+    (version !== PROJECT_INDEX_LEGACY_VERSION &&
+      version !== PROJECT_INDEX_PREVIOUS_VERSION &&
+      version !== PROJECT_INDEX_VERSION) ||
     value.projectId !== projectId ||
     !Array.isArray(value.entries)
   ) {
     return undefined;
   }
 
-  const entries = value.entries.map(parseContentIndexEntry);
+  const entries = value.entries.map((entry) =>
+    parseContentIndexEntry(
+      entry,
+      version as
+        | typeof PROJECT_INDEX_LEGACY_VERSION
+        | typeof PROJECT_INDEX_PREVIOUS_VERSION
+        | typeof PROJECT_INDEX_VERSION,
+    ),
+  );
 
   if (entries.some((entry) => !entry)) {
     return undefined;
@@ -205,10 +279,13 @@ export function parseProjectContentIndex(
   }
 
   return {
-    format: PROJECT_INDEX_FORMAT,
-    formatVersion: PROJECT_INDEX_VERSION,
-    projectId,
-    entries: parsedEntries,
+    index: {
+      format: PROJECT_INDEX_FORMAT,
+      formatVersion: PROJECT_INDEX_VERSION,
+      projectId,
+      entries: parsedEntries,
+    },
+    migrated: version !== PROJECT_INDEX_VERSION,
   };
 }
 

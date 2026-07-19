@@ -1,0 +1,8 @@
+{
+  "scanned_at": "2026-07-15",
+  "framework": "Electron Forge with React",
+  "font_stack": "IBM Plex Sans",
+  "motion": "motion-cut",
+  "palette": "dark surfaces with purple accent",
+  "spacing": "no root token scale detected"
+}

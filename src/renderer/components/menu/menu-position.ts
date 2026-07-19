@@ -1,4 +1,8 @@
-export type MenuPlacement = 'bottom-start' | 'bottom-end' | 'side-start';
+export type MenuPlacement =
+  | 'bottom-start'
+  | 'bottom-end'
+  | 'side-start'
+  | 'top-end';
 
 export interface MenuPosition {
   left: number;
@@ -42,16 +46,22 @@ export function calculateMenuPosition(
     };
   }
 
-  const preferredTop =
-    placement === 'bottom-start' ? anchor.bottom : anchor.top - menu.height;
-  const flippedTop =
-    placement === 'bottom-start' ? anchor.top - menu.height : anchor.bottom;
+  const opensBelow =
+    placement === 'bottom-start' || placement === 'bottom-end';
+  const preferredTop = opensBelow ? anchor.bottom : anchor.top - menu.height;
+  const flippedTop = opensBelow ? anchor.top - menu.height : anchor.bottom;
   const canUsePreferred =
     preferredTop >= VIEWPORT_GAP &&
     preferredTop + menu.height <= viewport.height - VIEWPORT_GAP;
 
   return {
-    left: clamp(anchor.left, VIEWPORT_GAP, maxLeft),
+    left: clamp(
+      placement === 'bottom-end' || placement === 'top-end'
+        ? anchor.right - menu.width
+        : anchor.left,
+      VIEWPORT_GAP,
+      maxLeft,
+    ),
     top: clamp(canUsePreferred ? preferredTop : flippedTop, VIEWPORT_GAP, maxTop),
     placement,
   };

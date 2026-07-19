@@ -1,8 +1,12 @@
 import { EventEmitter } from 'node:events';
+import { mkdtempSync, rmSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  BundledSpellcheckService,
   ElectronSpellcheckService,
   SpellcheckLanguageSelectionUnsupportedError,
   UnsupportedSpellcheckLanguagesError,
@@ -10,10 +14,19 @@ import {
   type ElectronSpellcheckSession,
 } from '../../src/main/services/spellcheck';
 
+const temporaryDirectories: string[] = [];
+
+afterEach(() => {
+  for (const directory of temporaryDirectories.splice(0)) {
+    rmSync(directory, { force: true, recursive: true });
+  }
+});
+
 interface FakeSession {
   availableSpellCheckerLanguages: string[];
   getSpellCheckerLanguages: ReturnType<typeof vi.fn>;
   setSpellCheckerLanguages: ReturnType<typeof vi.fn>;
+  addWordToSpellCheckerDictionary: ReturnType<typeof vi.fn>;
   events: EventEmitter;
 }
 
@@ -26,6 +39,7 @@ function createSession(
     availableSpellCheckerLanguages: [...available],
     getSpellCheckerLanguages: vi.fn(() => [...active]),
     setSpellCheckerLanguages: vi.fn(),
+    addWordToSpellCheckerDictionary: vi.fn(() => true),
     events,
   };
 
@@ -37,12 +51,12 @@ function createSession(
 
 describe('spellcheck capabilities', () => {
   it.each(['win32', 'linux'] as const)(
-    'uses Chromium Hunspell on %s',
+    'uses the bundled Hunspell engine on %s',
     (platform) => {
       expect(getSpellcheckCapabilities(platform)).toEqual({
-        provider: 'chromium-hunspell',
+        provider: 'bundled-hunspell',
         canSelectLanguages: true,
-        downloadsDictionaries: true,
+        downloadsDictionaries: false,
       });
     },
   );
@@ -53,6 +67,38 @@ describe('spellcheck capabilities', () => {
       canSelectLanguages: false,
       downloadsDictionaries: false,
     });
+  });
+});
+
+describe('BundledSpellcheckService', () => {
+  it('checks Brazilian Portuguese and returns native Hunspell suggestions', async () => {
+    const directory = mkdtempSync(
+      path.join(os.tmpdir(), 'flyoff-spellcheck-'),
+    );
+    temporaryDirectories.push(directory);
+    const service = new BundledSpellcheckService(directory);
+    service.setActiveLanguages(['pt-BR']);
+
+    await expect(service.checkWords(['casa', 'caza'])).resolves.toEqual([
+      'caza',
+    ]);
+    await expect(service.getSuggestions('caza')).resolves.toContain('casa');
+  });
+
+  it('persists personal words independently of preferences', async () => {
+    const directory = mkdtempSync(
+      path.join(os.tmpdir(), 'flyoff-spellcheck-'),
+    );
+    temporaryDirectories.push(directory);
+    const first = new BundledSpellcheckService(directory);
+    first.setActiveLanguages(['pt-BR']);
+    expect(await first.addWordToDictionary('Gabrielzito')).toBe(true);
+
+    const restored = new BundledSpellcheckService(directory);
+    restored.setActiveLanguages(['pt-BR']);
+    await expect(
+      restored.checkWords(['Gabrielzito']),
+    ).resolves.toEqual([]);
   });
 });
 
@@ -81,6 +127,16 @@ describe('ElectronSpellcheckService', () => {
       'pt-BR',
       'en-US',
     ]);
+  });
+
+  it('adds a word through the active session dictionary', () => {
+    const session = createSession();
+    const service = new ElectronSpellcheckService(session, 'win32');
+
+    expect(service.addWordToDictionary('Flyoff')).toBe(true);
+    expect(
+      session.addWordToSpellCheckerDictionary,
+    ).toHaveBeenCalledWith('Flyoff');
   });
 
   it('rejects empty and unavailable language codes', () => {
