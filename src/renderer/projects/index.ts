@@ -4,6 +4,7 @@ export * from './MarkdownEditor';
 export * from './markdown-document-controller';
 export * from './MoveProjectNodeDialog';
 export * from './ProjectEmptyState';
+export * from './ProjectGraphPanel';
 export * from './project-node-name';
 export * from './project-node-path';
 export * from './use-project-page-properties';

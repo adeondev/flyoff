@@ -24,6 +24,16 @@
   cursor: default;
 }
 
+:root[data-density='compact'] .icon-rail {
+  gap: 2px;
+  padding-block: 6px;
+}
+
+:root[data-density='compact'] .icon-rail__button {
+  width: 32px;
+  height: 32px;
+}
+
 .icon-rail__button:hover {
   background: var(--color-surface-hover);
   color: var(--color-text);

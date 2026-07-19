@@ -10,13 +10,22 @@ import {
   type GetProjectNodeRequest,
   type GetProjectPagePropertiesRequest,
   type ListProjectChildrenRequest,
+  type ListProjectBacklinksRequest,
   type MarkdownDocument,
   type LockProjectPageRequest,
   type MoveProjectNodeRequest,
   type ProjectLocationSelection,
+  type ProjectNodeMutationOutcome,
+  type ProjectBacklinksOutcome,
+  type ProjectGraphSnapshot,
+  type ProjectInternalLinkRequest,
+  type ProjectInternalLinkResolution,
+  type ProjectLinkTarget,
   type ProjectPathRequest,
   type ProjectPageProperties,
   type ProjectResult,
+  type ProjectSearchOutcome,
+  type ProjectSearchRequest,
   type ProjectSummary,
   type ProjectTreeNode,
   type ReadMarkdownDocumentRequest,
@@ -30,6 +39,10 @@ import {
   type TrashProjectNodeOutcome,
   type UnlockProjectPageRequest,
 } from '../../shared/contracts/projects';
+import type {
+  ProjectNoteActivityEntry,
+  ProjectNoteActivityEvent,
+} from '../../shared/contracts/project-note-activity';
 import { ProjectOperationError, normalizeProjectError, projectErrorResult } from './errors';
 import type { ProjectCatalogStore } from './project-catalog-store';
 import {
@@ -45,14 +58,24 @@ import {
   type ProjectRepositoryOptions,
   type TrashItem,
 } from './project-repository';
+import { ProjectReferenceIndex } from './project-reference-index';
+import { rewrittenLinkDestination } from './project-link-maintenance';
+import type { ProjectNoteActivityStore } from './project-note-activity-store';
 
 const DEFAULT_LOCATION_TOKEN_TTL_MS = 5 * 60 * 1_000;
+
+interface AppliedLinkRewrite {
+  rollback: () => Promise<void>;
+  skippedLockedNodeIds: readonly string[];
+  updatedDocumentNodeIds: readonly string[];
+}
 
 export type ProjectSenderKey = string | number;
 
 export interface ProjectServiceOptions {
   catalogStore: ProjectCatalogStore;
   trashItem: TrashItem;
+  activityStore?: ProjectNoteActivityStore;
   createId?: () => string;
   now?: () => Date;
   locationTokenTtlMs?: number;
@@ -60,6 +83,7 @@ export interface ProjectServiceOptions {
 }
 
 interface ActiveProject {
+  referenceIndex: ProjectReferenceIndex;
   repository: ProjectRepository;
   summary: ProjectSummary;
 }
@@ -78,6 +102,7 @@ export class ProjectService {
   private readonly now: () => Date;
   private readonly locationTokenTtlMs: number;
   private readonly repositoryOptions: ProjectRepositoryOptions;
+  private readonly activityStore: ProjectNoteActivityStore | undefined;
   private readonly locationTokens = new Map<string, PendingLocation>();
   private readonly projectQueues = new Map<string, Promise<void>>();
   private readonly senderEpochs = new Map<ProjectSenderKey, number>();
@@ -88,6 +113,7 @@ export class ProjectService {
 
   constructor(options: ProjectServiceOptions) {
     this.catalogStore = options.catalogStore;
+    this.activityStore = options.activityStore;
     this.createId = options.createId ?? randomUUID;
     this.now = options.now ?? (() => new Date());
     this.locationTokenTtlMs =
@@ -229,6 +255,7 @@ export class ProjectService {
       if (previousProjectId) {
         this.noteKeys.removeProject(senderKey, previousProjectId);
       }
+      this.activeProjects.get(senderKey)?.referenceIndex.clear();
       this.activeProjects.delete(senderKey);
 
       if (previousProjectId) {
@@ -264,37 +291,118 @@ export class ProjectService {
     senderKey: ProjectSenderKey,
     request: CreateProjectNodeRequest,
   ): Promise<ProjectResult<ProjectTreeNode>> {
-    return this.withActiveProject(senderKey, (repository) =>
-      request.kind === 'folder'
+    return this.withActiveProject(senderKey, async (repository) => {
+      const node = await (request.kind === 'folder'
         ? repository.createFolder(request.parentId, request.name)
         : repository.createPage(
             request.parentId,
             request.name,
             request.pageType,
-          ),
-    );
+          ));
+      this.invalidateProjectReferenceIndexes(repository.summary.projectId);
+      return node;
+    });
   }
 
   renameNode(
     senderKey: ProjectSenderKey,
     request: RenameProjectNodeRequest,
-  ): Promise<ProjectResult<ProjectTreeNode>> {
-    return this.withActiveProject(senderKey, (repository) =>
-      repository.renameNode(request.nodeId, request.name),
-    );
+  ): Promise<ProjectResult<ProjectNodeMutationOutcome>> {
+    return this.withActiveProject(senderKey, async (repository) => {
+      const current = await repository.getNode(request.nodeId);
+      if (current.name === request.name) {
+        return {
+          node: await repository.renameNode(request.nodeId, request.name),
+          skippedLockedNodeIds: [],
+          updatedDocumentNodeIds: [],
+        };
+      }
+      const currentPath = repository.projectRelativePath(request.nodeId);
+      const extension =
+        current.kind === 'page' ? path.posix.extname(currentPath) : '';
+      const nextPath = path.posix.join(
+        path.posix.dirname(currentPath),
+        `${request.name}${extension}`,
+      );
+      const projected = this.projectedMarkdownPaths(
+        repository,
+        currentPath,
+        nextPath,
+      );
+      const rewrite = await this.applyProjectedLinkRewrites(
+        senderKey,
+        repository,
+        projected,
+      );
+      let node: ProjectTreeNode;
+      try {
+        node = await repository.renameNode(request.nodeId, request.name);
+      } catch (error) {
+        await rewrite.rollback();
+        throw error;
+      }
+      this.invalidateProjectReferenceIndexes(repository.summary.projectId);
+      return {
+        node,
+        skippedLockedNodeIds: rewrite.skippedLockedNodeIds,
+        updatedDocumentNodeIds: rewrite.updatedDocumentNodeIds,
+      };
+    });
   }
 
   moveNode(
     senderKey: ProjectSenderKey,
     request: MoveProjectNodeRequest,
-  ): Promise<ProjectResult<ProjectTreeNode>> {
-    return this.withActiveProject(senderKey, (repository) =>
-      repository.moveNode(
-        request.nodeId,
-        request.parentId,
-        request.beforeNodeId,
-      ),
-    );
+  ): Promise<ProjectResult<ProjectNodeMutationOutcome>> {
+    return this.withActiveProject(senderKey, async (repository) => {
+      const currentPath = repository.projectRelativePath(request.nodeId);
+      const parentPath =
+        request.parentId === null
+          ? ''
+          : repository.projectRelativePath(request.parentId);
+      const nextPath = path.posix.join(
+        parentPath,
+        path.posix.basename(currentPath),
+      );
+      if (nextPath === currentPath) {
+        return {
+          node: await repository.moveNode(
+            request.nodeId,
+            request.parentId,
+            request.beforeNodeId,
+          ),
+          skippedLockedNodeIds: [],
+          updatedDocumentNodeIds: [],
+        };
+      }
+      const projected = this.projectedMarkdownPaths(
+        repository,
+        currentPath,
+        nextPath,
+      );
+      const rewrite = await this.applyProjectedLinkRewrites(
+        senderKey,
+        repository,
+        projected,
+      );
+      let node: ProjectTreeNode;
+      try {
+        node = await repository.moveNode(
+          request.nodeId,
+          request.parentId,
+          request.beforeNodeId,
+        );
+      } catch (error) {
+        await rewrite.rollback();
+        throw error;
+      }
+      this.invalidateProjectReferenceIndexes(repository.summary.projectId);
+      return {
+        node,
+        skippedLockedNodeIds: rewrite.skippedLockedNodeIds,
+        updatedDocumentNodeIds: rewrite.updatedDocumentNodeIds,
+      };
+    });
   }
 
   trashNode(
@@ -303,7 +411,17 @@ export class ProjectService {
   ): Promise<ProjectResult<TrashProjectNodeOutcome>> {
     return this.withActiveProject(senderKey, async (repository) => {
       const nodeIds = await repository.trashNode(request.nodeId);
+      await Promise.all(
+        nodeIds.map((nodeId) =>
+          repository.linkMaintenance.complete(nodeId),
+        ),
+      ).catch(() => undefined);
       const removed = new Set(nodeIds);
+      try {
+        this.activityStore?.removeMany(repository.summary.projectId, removed);
+      } catch {
+        // Stale entries are filtered and removed the next time activity is read.
+      }
       for (const [clientId, active] of this.activeProjects) {
         if (active.summary.projectId !== repository.summary.projectId) {
           continue;
@@ -312,7 +430,9 @@ export class ProjectService {
           this.noteKeys.remove(
             this.keyScope(clientId, repository, nodeId),
           );
+          active.referenceIndex.clearNode(nodeId);
         }
+        active.referenceIndex.invalidate();
       }
       return { nodeIds };
     });
@@ -331,14 +451,24 @@ export class ProjectService {
     senderKey: ProjectSenderKey,
     request: ReadMarkdownDocumentRequest,
   ): Promise<ProjectResult<MarkdownDocument>> {
-    const result = await this.withActiveProject(senderKey, (repository) =>
-      repository.readMarkdown(
+    const result = await this.withActiveProject(senderKey, async (repository) => {
+      const key = this.noteKeys.peek(
+        this.keyScope(senderKey, repository, request.nodeId),
+      );
+      const document = await repository.readMarkdown(
         request.nodeId,
-        this.noteKeys.peek(this.keyScope(senderKey, repository, request.nodeId)),
-      ),
-    );
+        key,
+      );
+      return this.repairPendingLinks(repository, document, key);
+    });
     if (!result.ok && result.error.code === 'password-required') {
       this.removeNoteKey(senderKey, request.nodeId);
+      const projectId = this.activeProjects.get(senderKey)?.summary.projectId;
+      if (projectId) {
+        this.clearProjectReferenceNode(projectId, request.nodeId);
+      }
+    } else if (result.ok) {
+      this.activeProjects.get(senderKey)?.referenceIndex.update(result.value);
     }
     return result;
   }
@@ -347,19 +477,163 @@ export class ProjectService {
     senderKey: ProjectSenderKey,
     request: SaveMarkdownDocumentRequest,
   ): Promise<ProjectResult<MarkdownDocument>> {
-    const result = await this.withActiveProject(senderKey, (repository) =>
-      repository.saveMarkdown(
+    const result = await this.withActiveProject(senderKey, async (repository) => {
+      const repair = await repository.linkMaintenance.rewrite(
         request.nodeId,
         request.content,
+        this.markdownPaths(repository),
+      );
+      const document = await repository.saveMarkdown(
+        request.nodeId,
+        repair.content,
         request.expectedRevision,
         request.force,
         this.noteKeys.peek(this.keyScope(senderKey, repository, request.nodeId)),
-      ),
-    );
+      );
+      if (repair.pending) {
+        await repository.linkMaintenance.complete(request.nodeId);
+        this.invalidateProjectReferenceIndexes(
+          repository.summary.projectId,
+        );
+      }
+      return document;
+    });
     if (!result.ok && result.error.code === 'password-required') {
       this.removeNoteKey(senderKey, request.nodeId);
+      const projectId = this.activeProjects.get(senderKey)?.summary.projectId;
+      if (projectId) {
+        this.clearProjectReferenceNode(projectId, request.nodeId);
+      }
+    } else if (result.ok) {
+      this.activeProjects.get(senderKey)?.referenceIndex.update(result.value);
     }
     return result;
+  }
+
+  listLinkTargets(
+    senderKey: ProjectSenderKey,
+  ): Promise<ProjectResult<readonly ProjectLinkTarget[]>> {
+    return this.withActiveProject(senderKey, async () =>
+      this.requireActiveReferenceIndex(senderKey).listTargets(),
+    );
+  }
+
+  getGraph(
+    senderKey: ProjectSenderKey,
+  ): Promise<ProjectResult<ProjectGraphSnapshot>> {
+    return this.withActiveProject(senderKey, () =>
+      this.requireActiveReferenceIndex(senderKey).graph(),
+    );
+  }
+
+  resolveInternalLink(
+    senderKey: ProjectSenderKey,
+    request: ProjectInternalLinkRequest,
+  ): Promise<ProjectResult<ProjectInternalLinkResolution>> {
+    return this.withActiveProject(senderKey, () =>
+      this.requireActiveReferenceIndex(senderKey).resolve(request),
+    );
+  }
+
+  listBacklinks(
+    senderKey: ProjectSenderKey,
+    request: ListProjectBacklinksRequest,
+  ): Promise<ProjectResult<ProjectBacklinksOutcome>> {
+    return this.withActiveProject(senderKey, () =>
+      this.requireActiveReferenceIndex(senderKey).backlinks(
+        request.targetNodeId,
+      ),
+    );
+  }
+
+  searchProject(
+    senderKey: ProjectSenderKey,
+    request: ProjectSearchRequest,
+  ): Promise<ProjectResult<ProjectSearchOutcome>> {
+    return this.withActiveProject(senderKey, () =>
+      this.requireActiveReferenceIndex(senderKey).search(request),
+    );
+  }
+
+  getNoteActivity(
+    senderKey: ProjectSenderKey,
+  ): Promise<ProjectResult<readonly ProjectNoteActivityEntry[]>> {
+    return this.withActiveProject(senderKey, async (repository) => {
+      const entries = this.activityStore?.get(repository.summary.projectId) ?? [];
+      if (entries.length === 0) {
+        return [];
+      }
+
+      const invalidNodeIds: string[] = [];
+      const eligibleEntries: ProjectNoteActivityEntry[] = [];
+      await Promise.all(
+        entries.map(async (entry) => {
+          try {
+            const node = await repository.getNode(entry.nodeId);
+            if (node.kind !== 'page' || node.pageType !== 'markdown') {
+              invalidNodeIds.push(entry.nodeId);
+              return;
+            }
+            const properties = await repository.getPageProperties(
+              entry.nodeId,
+              this.noteKeys.peek(
+                this.keyScope(senderKey, repository, entry.nodeId),
+              ),
+            );
+            if (properties.passwordProtected) {
+              invalidNodeIds.push(entry.nodeId);
+              return;
+            }
+            eligibleEntries.push(entry);
+          } catch {
+            invalidNodeIds.push(entry.nodeId);
+          }
+        }),
+      );
+      if (invalidNodeIds.length > 0) {
+        this.activityStore?.removeMany(
+          repository.summary.projectId,
+          invalidNodeIds,
+        );
+      }
+      const eligibleNodeIds = new Set(
+        eligibleEntries.map(({ nodeId }) => nodeId),
+      );
+      return entries.filter(({ nodeId }) => eligibleNodeIds.has(nodeId));
+    });
+  }
+
+  recordNoteActivity(
+    senderKey: ProjectSenderKey,
+    event: ProjectNoteActivityEvent,
+  ): Promise<ProjectResult<ProjectNoteActivityEntry>> {
+    return this.withActiveProject(senderKey, async (repository) => {
+      const node = await repository.getNode(event.nodeId);
+      if (node.kind !== 'page' || node.pageType !== 'markdown') {
+        throw new ProjectOperationError(
+          'invalid-operation',
+          'Only Markdown notes can be added to project activity.',
+        );
+      }
+      const properties = await repository.getPageProperties(
+        event.nodeId,
+        this.noteKeys.peek(this.keyScope(senderKey, repository, event.nodeId)),
+      );
+      if (properties.passwordProtected) {
+        this.activityStore?.remove(repository.summary.projectId, event.nodeId);
+        throw new ProjectOperationError(
+          'invalid-operation',
+          'Protected notes cannot be added to project activity.',
+        );
+      }
+      if (!this.activityStore) {
+        throw new ProjectOperationError(
+          'io-error',
+          'Project note activity storage is unavailable.',
+        );
+      }
+      return this.activityStore.record(repository.summary.projectId, event);
+    });
   }
 
   async getPageProperties(
@@ -399,6 +673,12 @@ export class ProjectService {
     ) {
       this.removeNoteKey(senderKey, request.nodeId);
     }
+    if (result.ok) {
+      const projectId = this.activeProjects.get(senderKey)?.summary.projectId;
+      if (projectId) {
+        this.invalidateProjectReferenceIndexes(projectId);
+      }
+    }
     return result;
   }
 
@@ -407,6 +687,10 @@ export class ProjectService {
     request: ProtectProjectPageRequest,
   ): Promise<ProjectResult<ProjectPageProperties>> {
     return this.withActiveProject(senderKey, async (repository) => {
+      this.activityStore?.remove(
+        repository.summary.projectId,
+        request.nodeId,
+      );
       const outcome = await repository.protectPage(
         request.nodeId,
         request.password,
@@ -418,6 +702,10 @@ export class ProjectService {
         repository,
         request.nodeId,
         outcome.key,
+      );
+      this.clearProjectReferenceNode(
+        repository.summary.projectId,
+        request.nodeId,
       );
       return outcome.properties;
     });
@@ -434,14 +722,38 @@ export class ProjectService {
         request.newPassword,
         request.expectedRevision,
       );
-      this.noteKeys.removeNode(repository.summary.projectId, request.nodeId);
-      this.adoptNoteKey(
-        senderKey,
-        repository,
-        request.nodeId,
-        outcome.key,
-      );
-      return outcome.properties;
+      try {
+        const repaired = await this.repairPendingLinks(
+          repository,
+          await repository.readMarkdown(request.nodeId, outcome.key),
+          outcome.key,
+        );
+        const properties =
+          repaired.revision === outcome.properties.revision
+            ? outcome.properties
+            : await repository.getPageProperties(
+                request.nodeId,
+                outcome.key,
+              );
+        this.noteKeys.removeNode(
+          repository.summary.projectId,
+          request.nodeId,
+        );
+        this.adoptNoteKey(
+          senderKey,
+          repository,
+          request.nodeId,
+          outcome.key,
+        );
+        this.clearProjectReferenceNode(
+          repository.summary.projectId,
+          request.nodeId,
+        );
+        return properties;
+      } catch (error) {
+        outcome.key.destroy();
+        throw error;
+      }
     });
   }
 
@@ -456,6 +768,7 @@ export class ProjectService {
         request.expectedRevision,
       );
       this.noteKeys.removeNode(repository.summary.projectId, request.nodeId);
+      this.invalidateProjectReferenceIndexes(repository.summary.projectId);
       return properties;
     });
   }
@@ -469,13 +782,26 @@ export class ProjectService {
         request.nodeId,
         request.password,
       );
-      this.adoptNoteKey(
-        senderKey,
-        repository,
-        request.nodeId,
-        outcome.key,
-      );
-      return outcome.document;
+      try {
+        const document = await this.repairPendingLinks(
+          repository,
+          outcome.document,
+          outcome.key,
+        );
+        this.adoptNoteKey(
+          senderKey,
+          repository,
+          request.nodeId,
+          outcome.key,
+        );
+        this.activeProjects
+          .get(senderKey)
+          ?.referenceIndex.update(document);
+        return document;
+      } catch (error) {
+        outcome.key.destroy();
+        throw error;
+      }
     });
   }
 
@@ -492,6 +818,9 @@ export class ProjectService {
         );
       }
       this.noteKeys.remove(this.keyScope(senderKey, repository, request.nodeId));
+      this.activeProjects
+        .get(senderKey)
+        ?.referenceIndex.clearNode(request.nodeId);
       return null;
     });
   }
@@ -503,6 +832,9 @@ export class ProjectService {
 
     this.disposed = true;
     this.noteKeys.clear();
+    for (const active of this.activeProjects.values()) {
+      active.referenceIndex.clear();
+    }
     this.activeProjects.clear();
     this.repositories.clear();
     this.locationTokens.clear();
@@ -515,6 +847,7 @@ export class ProjectService {
   disposeSender(senderKey: ProjectSenderKey): void {
     this.invalidateSenderActivation(senderKey);
     const projectId = this.activeProjects.get(senderKey)?.summary.projectId;
+    this.activeProjects.get(senderKey)?.referenceIndex.clear();
     this.activeProjects.delete(senderKey);
     this.noteKeys.removeClient(senderKey);
 
@@ -540,6 +873,7 @@ export class ProjectService {
       await this.waitForActiveProject(senderKey);
       this.assertSenderActivationCurrent(senderKey, senderEpoch);
       const previousProjectId = this.activeProjects.get(senderKey)?.summary.projectId;
+      this.activeProjects.get(senderKey)?.referenceIndex.clear();
       const existing = this.repositories.get(repository.summary.projectId);
 
       if (existing && existing.rootPath !== repository.rootPath) {
@@ -555,6 +889,16 @@ export class ProjectService {
       }
       this.repositories.set(repository.summary.projectId, sharedRepository);
       this.activeProjects.set(senderKey, {
+        referenceIndex: new ProjectReferenceIndex({
+          readMarkdown: (nodeId) =>
+            sharedRepository.readMarkdown(
+              nodeId,
+              this.noteKeys.peek(
+                this.keyScope(senderKey, sharedRepository, nodeId),
+              ),
+            ),
+          repository: sharedRepository,
+        }),
         repository: sharedRepository,
         summary: sharedRepository.summary,
       });
@@ -639,6 +983,253 @@ export class ProjectService {
     const repository = this.activeProjects.get(senderKey)?.repository;
     if (repository) {
       this.noteKeys.remove(this.keyScope(senderKey, repository, nodeId));
+    }
+  }
+
+  private markdownPaths(
+    repository: ProjectRepository,
+  ): ReadonlyMap<string, string> {
+    return new Map(
+      repository
+        .listIndexedNodes()
+        .filter(
+          (node) => node.kind === 'page' && node.pageType === 'markdown',
+        )
+        .map((node) => [
+          node.nodeId,
+          repository.projectRelativePath(node.nodeId),
+        ]),
+    );
+  }
+
+  private async repairPendingLinks(
+    repository: ProjectRepository,
+    document: MarkdownDocument,
+    key?: EncryptedNoteKey,
+  ): Promise<MarkdownDocument> {
+    const repair = await repository.linkMaintenance.rewrite(
+      document.nodeId,
+      document.content,
+      this.markdownPaths(repository),
+    );
+    if (!repair.pending) {
+      return document;
+    }
+
+    const repaired =
+      repair.content === document.content
+        ? document
+        : await repository.saveMarkdownForMaintenance(
+            document.nodeId,
+            repair.content,
+            document.revision,
+            key,
+          );
+    await repository.linkMaintenance.complete(document.nodeId);
+    this.invalidateProjectReferenceIndexes(repository.summary.projectId);
+    return repaired;
+  }
+
+  private projectedMarkdownPaths(
+    repository: ProjectRepository,
+    currentRoot: string,
+    nextRoot: string,
+  ): ReadonlyMap<string, string> {
+    const paths = new Map<string, string>();
+    const prefix = `${currentRoot}/`;
+    for (const node of repository.listIndexedNodes()) {
+      if (node.kind !== 'page' || node.pageType !== 'markdown') {
+        continue;
+      }
+      const current = repository.projectRelativePath(node.nodeId);
+      const next =
+        current === currentRoot
+          ? nextRoot
+          : current.startsWith(prefix)
+            ? `${nextRoot}/${current.slice(prefix.length)}`
+            : current;
+      paths.set(node.nodeId, next);
+    }
+    return paths;
+  }
+
+  private async applyProjectedLinkRewrites(
+    senderKey: ProjectSenderKey,
+    repository: ProjectRepository,
+    nextPaths: ReadonlyMap<string, string>,
+  ): Promise<AppliedLinkRewrite> {
+    const index = this.requireActiveReferenceIndex(senderKey);
+    await index.ensureAvailable();
+    const skippedLockedNodeIds = index.lockedNodes();
+    const documents = index.indexedDocuments();
+    const currentPaths = new Map(
+      [...nextPaths.keys()].map((nodeId) => [
+        nodeId,
+        repository.projectRelativePath(nodeId),
+      ]),
+    );
+    const replacements = new Map<
+      string,
+      {
+        content: string;
+        original: (typeof documents)[number]['document'];
+      }
+    >();
+
+    for (const { document, nodeId } of documents) {
+      const currentSourcePath = repository.projectRelativePath(nodeId);
+      const nextSourcePath = nextPaths.get(nodeId) ?? currentSourcePath;
+      const edits: { end: number; start: number; value: string }[] = [];
+
+      for (const link of document.links) {
+        const targetNodeId = index.resolveTargetNodeId(nodeId, link);
+        if (!targetNodeId) {
+          continue;
+        }
+        const currentTargetPath = repository.projectRelativePath(targetNodeId);
+        const nextTargetPath =
+          nextPaths.get(targetNodeId) ?? currentTargetPath;
+        if (
+          currentSourcePath === nextSourcePath &&
+          currentTargetPath === nextTargetPath
+        ) {
+          continue;
+        }
+        const value = rewrittenLinkDestination(
+          link,
+          nextSourcePath,
+          nextTargetPath,
+          nextPaths,
+        );
+        if (value !== link.destination) {
+          edits.push({
+            end: link.destinationEnd,
+            start: link.destinationStart,
+            value,
+          });
+        }
+      }
+
+      if (edits.length === 0) {
+        continue;
+      }
+      if (document.readOnly) {
+        throw new ProjectOperationError(
+          'read-only',
+          'Disable read-only on linked notes before renaming or moving this content.',
+        );
+      }
+      let content = document.content;
+      for (const edit of edits.sort((left, right) => right.start - left.start)) {
+        content =
+          content.slice(0, edit.start) +
+          edit.value +
+          content.slice(edit.end);
+      }
+      replacements.set(nodeId, { content, original: document });
+    }
+
+    const stagedMaintenance = await repository.linkMaintenance.stage(
+      currentPaths,
+      nextPaths,
+      skippedLockedNodeIds,
+    );
+    const applied: {
+      nodeId: string;
+      originalContent: string;
+      revision: string;
+    }[] = [];
+    const rollback = async (): Promise<void> => {
+      try {
+        for (const saved of [...applied].reverse()) {
+          const restored = await repository.saveMarkdown(
+            saved.nodeId,
+            saved.originalContent,
+            saved.revision,
+            false,
+            this.noteKeys.peek(
+              this.keyScope(senderKey, repository, saved.nodeId),
+            ),
+          );
+          saved.revision = restored.revision;
+        }
+      } finally {
+        index.invalidate();
+        await stagedMaintenance.rollback();
+      }
+    };
+
+    try {
+      for (const [nodeId, replacement] of replacements) {
+        const saved = await repository.saveMarkdown(
+          nodeId,
+          replacement.content,
+          replacement.original.revision,
+          false,
+          this.noteKeys.peek(this.keyScope(senderKey, repository, nodeId)),
+        );
+        applied.push({
+          nodeId,
+          originalContent: replacement.original.content,
+          revision: saved.revision,
+        });
+      }
+    } catch (error) {
+      try {
+        await rollback();
+      } catch (rollbackError) {
+        throw new ProjectOperationError(
+          'io-error',
+          'Project links could not be restored after an update failed.',
+          { cause: rollbackError },
+        );
+      }
+      throw error;
+    }
+
+    return {
+      rollback: async () => {
+        try {
+          await rollback();
+        } catch (error) {
+          throw new ProjectOperationError(
+            'io-error',
+            'Project links could not be restored after the content mutation failed.',
+            { cause: error },
+          );
+        }
+      },
+      skippedLockedNodeIds,
+      updatedDocumentNodeIds: applied.map(({ nodeId }) => nodeId),
+    };
+  }
+
+  private requireActiveReferenceIndex(
+    senderKey: ProjectSenderKey,
+  ): ProjectReferenceIndex {
+    const index = this.activeProjects.get(senderKey)?.referenceIndex;
+    if (!index) {
+      throw new ProjectOperationError(
+        'invalid-operation',
+        'No project is active for this window.',
+      );
+    }
+    return index;
+  }
+
+  private invalidateProjectReferenceIndexes(projectId: string): void {
+    for (const active of this.activeProjects.values()) {
+      if (active.summary.projectId === projectId) {
+        active.referenceIndex.invalidate();
+      }
+    }
+  }
+
+  private clearProjectReferenceNode(projectId: string, nodeId: string): void {
+    for (const active of this.activeProjects.values()) {
+      if (active.summary.projectId === projectId) {
+        active.referenceIndex.clearNode(nodeId);
+      }
     }
   }
 

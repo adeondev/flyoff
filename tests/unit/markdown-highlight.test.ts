@@ -46,6 +46,7 @@ describe('markdown source highlighter', () => {
 
     expect(html).toContain('md-tok-fence');
     expect(html).not.toContain('md-tok-strong');
+    expect(html.match(/md-line--code/g)).toHaveLength(3);
   });
 
   it('tokenises links and the color attribute', () => {

@@ -17,6 +17,7 @@ const HOVER_DELAY_MS = 800;
 const POINTER_TRANSFER_DELAY_MS = 120;
 const DEFAULT_PLACEMENT: TooltipPlacement = 'top';
 const TARGET_SELECTOR = '[data-flyoff-tooltip]';
+const SUPPRESS_EVENT = 'flyoff-tooltip-suppress';
 
 export interface TooltipTargetProps {
   'data-flyoff-tooltip'?: string;
@@ -69,6 +70,12 @@ export function getTooltipTargetProps(
     'data-flyoff-tooltip': content,
     'data-flyoff-tooltip-placement': placement,
   };
+}
+
+export function suppressFlyoffTooltip(target: HTMLElement): void {
+  document.dispatchEvent(
+    new CustomEvent<HTMLElement>(SUPPRESS_EVENT, { detail: target }),
+  );
 }
 
 export function TooltipHost() {
@@ -374,6 +381,10 @@ export function TooltipHost() {
         hide();
       }
     };
+    const handleSuppress = (event: Event): void => {
+      const target = (event as CustomEvent<HTMLElement>).detail;
+      hide(target);
+    };
     const closeTooltip = (): void => hide();
 
     document.addEventListener('pointerover', handlePointerOver);
@@ -385,6 +396,7 @@ export function TooltipHost() {
     document.addEventListener('dragstart', closeTooltip, true);
     document.addEventListener('scroll', closeTooltip, true);
     document.addEventListener('visibilitychange', handleVisibilityChange);
+    document.addEventListener(SUPPRESS_EVENT, handleSuppress);
     window.addEventListener('blur', closeTooltip);
     window.addEventListener('resize', closeTooltip);
     return () => {
@@ -400,6 +412,7 @@ export function TooltipHost() {
       document.removeEventListener('dragstart', closeTooltip, true);
       document.removeEventListener('scroll', closeTooltip, true);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      document.removeEventListener(SUPPRESS_EVENT, handleSuppress);
       window.removeEventListener('blur', closeTooltip);
       window.removeEventListener('resize', closeTooltip);
     };

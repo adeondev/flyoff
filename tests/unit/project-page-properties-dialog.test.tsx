@@ -145,6 +145,7 @@ describe('ProjectPagePropertiesDialog', () => {
     const checkbox = screen.getByRole('checkbox', {
       name: /projects.propertiesReadOnly/,
     });
+    expect(checkbox.classList.contains('flyoff-checkbox')).toBe(true);
     fireEvent.click(checkbox);
     expect(onSetReadOnly).not.toHaveBeenCalled();
     fireEvent.click(

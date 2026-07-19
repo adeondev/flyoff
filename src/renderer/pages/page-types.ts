@@ -17,6 +17,7 @@ export interface TabPresentation {
 }
 
 export interface PageRenderProps {
+  active: boolean;
   descriptor: TabDescriptor;
   title: string;
   translate: Translate;

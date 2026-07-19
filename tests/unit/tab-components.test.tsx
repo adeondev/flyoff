@@ -3,11 +3,24 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-import { act, cleanup, render, screen } from '@testing-library/react';
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { PageHost } from '../../src/renderer/components/tabs/PageHost';
-import { TabBar } from '../../src/renderer/components/tabs/TabBar';
+import {
+  TabBar,
+  tabReorderShift,
+  type TabBarHandle,
+} from '../../src/renderer/components/tabs/TabBar';
+import { findNewWorkspaceTabIds } from '../../src/renderer/components/tabs/WorkspacePaneHost';
+import { NewTabPage } from '../../src/renderer/pages/NewTabPage';
+import { ProjectEmptyState } from '../../src/renderer/projects/ProjectEmptyState';
 import type {
   ProjectTabTarget,
   TabDescriptor,
@@ -65,9 +78,182 @@ afterEach(() => {
   cleanup();
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  Reflect.deleteProperty(HTMLElement.prototype, 'animate');
 });
 
+function installElementAnimations() {
+  const animations: Array<{
+    finish: () => void;
+    keyframes: Keyframe[];
+    options: KeyframeAnimationOptions;
+  }> = [];
+  Object.defineProperty(HTMLElement.prototype, 'animate', {
+    configurable: true,
+    value: vi.fn(
+      (
+        keyframes: Keyframe[],
+        options: KeyframeAnimationOptions,
+      ) => {
+        const listeners = new Map<string, EventListener>();
+        const animation = {
+          addEventListener: (
+            type: string,
+            listener: EventListener,
+          ) => listeners.set(type, listener),
+        } as unknown as Animation;
+        animations.push({
+          finish: () =>
+            listeners.get('finish')?.(new Event('finish')),
+          keyframes,
+          options,
+        });
+        return animation;
+      },
+    ),
+  });
+  return animations;
+}
+
 describe('tab components', () => {
+  it('opens an exact-width gap while reordering in either direction', () => {
+    expect(
+      [0, 1, 2, 3].map((index) =>
+        tabReorderShift(index, 0, 3, 190),
+      ),
+    ).toEqual([0, -190, -190, -190]);
+    expect(
+      [0, 1, 2, 3].map((index) =>
+        tabReorderShift(index, 3, 0, 144),
+      ),
+    ).toEqual([144, 144, 144, 0]);
+    expect(tabReorderShift(1, 1, undefined, 176)).toBe(0);
+  });
+
+  it('renders the independent New tab search and activity sections', () => {
+    const openNote = vi.fn();
+    const { container } = render(
+      <NewTabPage
+        active
+        descriptor={{
+          tabId: 'page:new-tab:test',
+          target: {
+            type: 'internal',
+            pageId: 'new-tab',
+            instanceKey: 'test',
+          },
+          scrollTop: 0,
+          pageState: { version: 1, data: {} },
+        }}
+        frequentNotes={[
+          { nodeId: NODE_ID, name: 'Planning', path: '/Planning.md' },
+        ]}
+        recentNotes={[
+          { nodeId: NODE_ID_2, name: 'Roadmap', path: '/Roadmap.md' },
+        ]}
+        onOpenNote={openNote}
+        onScrollChange={vi.fn()}
+        onStateChange={vi.fn()}
+        title="Nova aba"
+        translate={(key) => key}
+      />,
+    );
+
+    expect(screen.getByRole('searchbox', { name: 'pages.searchDen' }))
+      .toBeTruthy();
+    expect(
+      screen.getByRole('heading', { name: 'pages.frequentNotes' }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole('heading', { name: 'pages.recentlyClosed' }),
+    ).toBeTruthy();
+    expect(
+      container.querySelector('.new-tab-page__books-frame'),
+    ).toBeTruthy();
+    expect(container.querySelector('.new-tab-page__books')).toBeTruthy();
+    fireEvent.click(screen.getByRole('option', { name: /Planning/ }));
+    expect(openNote).toHaveBeenCalledWith(
+      expect.objectContaining({ nodeId: NODE_ID }),
+    );
+  });
+
+  it('searches the den and opens a result from the keyboard', async () => {
+    vi.useFakeTimers();
+    const openNote = vi.fn();
+    const searchNotes = vi.fn().mockResolvedValue({
+      results: [
+        {
+          nodeId: NODE_ID,
+          name: 'Mission log',
+          path: '/Logs/Mission log.md',
+          excerpt: 'Apollo launch checklist',
+          line: 12,
+        },
+      ],
+      skippedLockedCount: 0,
+    });
+    render(
+      <NewTabPage
+        active={false}
+        descriptor={{
+          tabId: 'page:new-tab:search',
+          target: {
+            type: 'internal',
+            pageId: 'new-tab',
+            instanceKey: 'search',
+          },
+          scrollTop: 0,
+          pageState: { version: 1, data: {} },
+        }}
+        onOpenNote={openNote}
+        onSearch={searchNotes}
+        onScrollChange={vi.fn()}
+        onStateChange={vi.fn()}
+        title="New tab"
+        translate={(key) => key}
+      />,
+    );
+
+    const input = screen.getByRole('searchbox');
+    fireEvent.change(input, { target: { value: 'apollo' } });
+    await act(async () => {
+      vi.advanceTimersByTime(120);
+      await Promise.resolve();
+    });
+    expect(searchNotes).toHaveBeenCalledWith('apollo');
+    expect(screen.getByRole('option', { name: /Mission log/ }))
+      .toBeTruthy();
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    expect(openNote).toHaveBeenCalledWith(
+      expect.objectContaining({ nodeId: NODE_ID }),
+    );
+  });
+
+  it('renders the illustrated empty workspace with its two actions', () => {
+    const createNote = vi.fn();
+    const search = vi.fn();
+    const view = render(
+      <ProjectEmptyState
+        onCreateNote={createNote}
+        onSearch={search}
+        translate={(key) => key}
+      />,
+    );
+
+    expect(
+      screen.getByRole('heading', { name: 'pages.nothingOpenYet' }),
+    ).toBeTruthy();
+    expect(
+      view.container.querySelector('.project-empty__illustration'),
+    ).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole('button', { name: 'projects.newNote' }),
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'pages.search' }));
+    expect(createNote).toHaveBeenCalledOnce();
+    expect(search).toHaveBeenCalledOnce();
+  });
+
   it('renders titles and icons from presentations supplied by the workspace', () => {
     const presentations = new Map([
       [home.tabId, { title: 'Home', icon: 'home.svg' }],
@@ -156,8 +342,8 @@ describe('tab components', () => {
     expect(screen.queryByTestId(content.tabId)).toBeNull();
   });
 
-  it('keeps the closing tab in flow for exactly 90 ms without opacity', () => {
-    vi.useFakeTimers();
+  it('keeps the real tab mounted until its 120 ms exit finishes', async () => {
+    const animations = installElementAnimations();
     const presentations = new Map([
       [overview.tabId, { title: 'Overview', icon: 'project.svg' }],
       [content.tabId, { title: 'Planning', icon: 'markdown.svg' }],
@@ -173,8 +359,38 @@ describe('tab components', () => {
       onMove: vi.fn(),
       onSelect: vi.fn(),
     };
-    const view = render(<TabBar {...properties} />);
+    let handle: TabBarHandle | null = null;
+    const view = render(
+      <TabBar
+        {...properties}
+        ref={(value) => {
+          handle = value;
+        }}
+      />,
+    );
+    const pending = handle!.animateTabExit(content.tabId);
+    const closing = view.container.querySelector<HTMLElement>(
+      '.page-tab--closing',
+    );
+    expect(screen.getByRole('tab', { name: 'Planning' })).toBeTruthy();
+    expect(closing?.getAttribute('aria-busy')).toBe('true');
+    expect(closing?.hasAttribute('inert')).toBe(true);
+    expect(closing?.style.position).toBe('');
+    expect(closing?.style.opacity).toBe('');
+    expect(
+      screen
+        .getByRole('tablist')
+        .style.getPropertyValue('--page-tab-motion-duration'),
+    ).toBe('120ms');
+    expect(animations[0]?.options.duration).toBe(120);
+    expect(animations[0]?.keyframes.at(-1)).toMatchObject({
+      '--page-tab-reveal': '0',
+      width: '0px',
+      transform: 'translateX(-18px)',
+    });
 
+    animations[0]?.finish();
+    await pending;
     view.rerender(
       <TabBar
         {...properties}
@@ -182,45 +398,194 @@ describe('tab components', () => {
         tabs={[overview, content2]}
       />,
     );
-
-    expect(screen.queryByRole('tab', { name: 'Planning' })).toBeNull();
-    const tabList = screen.getByRole('tablist');
-    const closing = view.container.querySelector<HTMLElement>(
-      '.page-tab--closing',
-    );
-    expect([...tabList.children].map((element) => element.textContent)).toEqual([
-      expect.stringContaining('Overview'),
-      expect.stringContaining('Planning'),
-      expect.stringContaining('Roadmap'),
-    ]);
-    expect(closing?.style.position).toBe('');
-    expect(closing?.style.opacity).toBe('');
-    expect(
-      tabList.style.getPropertyValue('--page-tab-motion-duration'),
-    ).toBe('90ms');
-
-    act(() => vi.advanceTimersByTime(89));
-    expect(view.container.querySelector('.page-tab--closing')).toBeTruthy();
-    act(() => vi.advanceTimersByTime(1));
     expect(view.container.querySelector('.page-tab--closing')).toBeNull();
   });
 
-  it('uses the same ease-out curve for opening and closing tabs', () => {
+  it('opens a new empty tab from the trailing tab control', () => {
+    const onNewTab = vi.fn();
+    render(
+      <TabBar
+        activeTabId={home.tabId}
+        closeLabel="Close tab"
+        getPresentation={() => ({ icon: 'home.svg', title: 'Home' })}
+        navigationLabel="Pages"
+        newTabLabel="New tab"
+        onClose={vi.fn()}
+        onMove={vi.fn()}
+        onNewTab={onNewTab}
+        onSelect={vi.fn()}
+        tabs={[home]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'New tab' }));
+    expect(onNewTab).toHaveBeenCalledOnce();
+  });
+
+  it('uses one reversible progress for the tab body and feet', () => {
     const styles = readFileSync(
       resolve(process.cwd(), 'src/renderer/styles.css'),
       'utf8',
     );
 
     expect(styles).toMatch(
-      /animation:\s*page-tab-open var\(--page-tab-motion-duration\) var\(--ease-out\)/,
+      /@property --page-tab-reveal\s*{[^}]*syntax:\s*'<number>';[^}]*inherits:\s*true;[^}]*initial-value:\s*1;/s,
     );
     expect(styles).toMatch(
-      /\.page-tab--closing\s*{[^}]*animation:\s*page-tab-close var\(--page-tab-motion-duration\) var\(--ease-out\) both;/,
+      /\.page-tab--entering\s*{[^}]*animation:\s*page-tab-reveal var\(--page-tab-motion-duration\) var\(--ease-out\)\s*both;/s,
+    );
+    expect(
+      styles.match(/\.page-tab\s*{([^}]*)}/)?.[1],
+    ).not.toContain('animation:');
+    expect(styles).toMatch(
+      /\.page-tab::before,[\s\S]*?\.page-tab::after\s*{[^}]*transform:\s*scaleX\(var\(--page-tab-reveal\)\);[^}]*transition:\s*box-shadow var\(--dur-micro\) var\(--ease-out\);/s,
+    );
+    expect(styles).toMatch(
+      /\.page-tab--closing\s*{[^}]*pointer-events:\s*none;/s,
+    );
+    expect(styles).toMatch(
+      /@keyframes page-tab-reveal\s*{[\s\S]*?--page-tab-reveal:\s*0;[\s\S]*?transform:\s*translateX\(-18px\);/,
+    );
+    expect(styles).not.toMatch(/@keyframes page-tab-(?:open|close|foot)/);
+    const motion = readFileSync(
+      resolve(
+        process.cwd(),
+        'src/renderer/components/tabs/tab-motion.ts',
+      ),
+      'utf8',
+    );
+    expect(motion).toContain("'--page-tab-reveal': '1'");
+    expect(motion).toContain("'--page-tab-reveal': '0'");
+  });
+
+  it('keeps every tab curved and gives the close hover a circular hit area', () => {
+    const styles = readFileSync(
+      resolve(process.cwd(), 'src/renderer/styles.css'),
+      'utf8',
+    );
+
+    expect(styles).toMatch(
+      /\.page-tab\s*{[^}]*--page-tab-background:\s*var\(--color-background\);[^}]*margin-left:\s*14px;[^}]*border-radius:\s*12px 12px 0 0;/s,
+    );
+    expect(styles).toMatch(
+      /\.page-tab::before,[\s\S]*?\.page-tab::after\s*{[^}]*width:\s*12px;[^}]*height:\s*12px;/,
+    );
+    expect(styles).toMatch(
+      /\.page-tab--dragging\s*{[^}]*--page-tab-background:\s*color-mix\(/,
+    );
+    expect(styles).toMatch(
+      /\.page-tab__close\s*{[^}]*width:\s*26px;[^}]*height:\s*26px;[^}]*border-radius:\s*999px;/s,
+    );
+    expect(styles).toMatch(
+      /\.page-tab__content\s*{[^}]*overflow:\s*hidden;[^}]*border-radius:\s*inherit;/s,
+    );
+    expect(styles).toMatch(
+      /\.page-tab--closing\s*{[^}]*z-index:\s*0;[^}]*pointer-events:\s*none;/s,
+    );
+    expect(styles).toMatch(
+      /\.page-tab::before,[\s\S]*?\.page-tab::after\s*{[^}]*transform:\s*scaleX\(var\(--page-tab-reveal\)\);/s,
+    );
+    expect(styles).not.toContain('.page-tab--drop-before');
+    expect(styles).not.toContain('.page-tab--drop-after');
+    expect(styles).toMatch(
+      /\.page-tab--drag-source\s*{[^}]*opacity:\s*0;/s,
+    );
+    const dragSourceRule = styles.match(
+      /\.page-tab--drag-source\s*{([^}]*)}/,
+    )?.[1];
+    expect(dragSourceRule).not.toContain('visibility');
+    expect(dragSourceRule).not.toContain('pointer-events');
+    expect(styles).toMatch(
+      /\.page-tab--drag-shift\s*{[^}]*transform:\s*translateX\(var\(--page-tab-drag-shift\)\);[^}]*transition:\s*transform 90ms var\(--ease-out\);/s,
     );
   });
 
-  it('preserves visual order across consecutive closes', () => {
-    vi.useFakeTimers();
+  it('moves the pane drop preview and removes it with uniform opacity', () => {
+    const styles = readFileSync(
+      resolve(process.cwd(), 'src/renderer/styles.css'),
+      'utf8',
+    );
+    const dropTargetRule = styles.match(
+      /\.workspace-pane-host__drop-target\s*{([^}]*)}/,
+    )?.[1];
+    const previewRule = styles.match(
+      /\.workspace-pane__drop-preview\s*{([^}]*)}/,
+    )?.[1];
+
+    expect(dropTargetRule).toMatch(
+      /transition:\s*top 90ms var\(--ease-out\),\s*left 90ms var\(--ease-out\),\s*width 90ms var\(--ease-out\),\s*height 90ms var\(--ease-out\),\s*opacity 90ms linear;/s,
+    );
+    expect(styles).toMatch(
+      /\.workspace-pane-host__drop-target--exiting\s*{[^}]*opacity:\s*0;[^}]*transition:\s*opacity 90ms linear;/s,
+    );
+    expect(previewRule).toMatch(
+      /transition:\s*inset 90ms var\(--ease-out\),\s*border-radius 90ms var\(--ease-out\);/s,
+    );
+  });
+
+  it('animates the complete split instead of only shifting the new pane', () => {
+    const styles = readFileSync(
+      resolve(process.cwd(), 'src/renderer/styles.css'),
+      'utf8',
+    );
+
+    expect(styles).toMatch(
+      /\.workspace-split\[data-split-entry\],[\s\S]*?\.workspace-split\[data-split-exit\]\s*{[^}]*animation-duration:\s*var\(--workspace-pane-exit-duration, 120ms\);[^}]*animation-timing-function:\s*var\(--ease-out\);/s,
+    );
+    expect(styles).toMatch(
+      /\.workspace-split\[data-split-exit\]\s*{[^}]*animation-direction:\s*reverse;[^}]*animation-timing-function:\s*var\(--ease-in\);[^}]*pointer-events:\s*none;/s,
+    );
+    expect(styles).toMatch(
+      /@keyframes workspace-split-enter-row-end\s*{[^}]*grid-template-columns:[^}]*calc\(100% - 5px\)[^}]*0%\);/s,
+    );
+    expect(styles).toMatch(
+      /@keyframes workspace-split-enter-column-end\s*{[^}]*grid-template-rows:[^}]*calc\(100% - 5px\)[^}]*0%\);/s,
+    );
+    expect(styles).not.toContain('@keyframes workspace-pane-enter-right');
+  });
+
+  it('shrinks tabs before overflowing and maps the mouse wheel to horizontal scroll', () => {
+    const styles = readFileSync(
+      resolve(process.cwd(), 'src/renderer/styles.css'),
+      'utf8',
+    );
+    const view = render(
+      <TabBar
+        activeTabId={content.tabId}
+        closeLabel="Close tab"
+        getPresentation={(tab) => ({
+          title: tab.tabId,
+          icon: 'page.svg',
+        })}
+        navigationLabel="Pages"
+        onClose={vi.fn()}
+        onMove={vi.fn()}
+        onSelect={vi.fn()}
+        tabs={[overview, content, content2]}
+      />,
+    );
+    const tabList = screen.getByRole('tablist');
+    Object.defineProperties(tabList, {
+      clientWidth: { configurable: true, value: 320 },
+      scrollWidth: { configurable: true, value: 528 },
+    });
+
+    fireEvent.wheel(tabList, { deltaY: 72 });
+
+    expect(tabList.scrollLeft).toBe(72);
+    expect(styles).toMatch(
+      /:root\s*{[^}]*--page-tab-width:\s*176px;[^}]*--page-tab-min-width:\s*112px;[^}]*--page-tab-max-width:\s*220px;/s,
+    );
+    expect(styles).toMatch(
+      /\.page-tab\s*{[^}]*width:\s*var\(--page-tab-width\);[^}]*min-width:\s*var\(--page-tab-min-width\);[^}]*max-width:\s*var\(--page-tab-max-width\);[^}]*flex:\s*0 1 var\(--page-tab-width\);/s,
+    );
+    expect(
+      view.container.querySelectorAll('.page-tab'),
+    ).toHaveLength(3);
+  });
+
+  it('deduplicates repeated exits and keeps consecutive closing tabs in their original slots', async () => {
+    const animations = installElementAnimations();
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
       function getTabBounds() {
         const left = this.textContent?.includes('Planning')
@@ -256,32 +621,33 @@ describe('tab components', () => {
       onMove: vi.fn(),
       onSelect: vi.fn(),
     };
-    const view = render(<TabBar {...properties} />);
-
-    view.rerender(
+    let handle: TabBarHandle | null = null;
+    const view = render(
       <TabBar
         {...properties}
-        activeTabId={content2.tabId}
-        tabs={[overview, content2]}
+        ref={(value) => {
+          handle = value;
+        }}
       />,
     );
-    view.rerender(
-      <TabBar
-        {...properties}
-        activeTabId={overview.tabId}
-        tabs={[overview]}
-      />,
-    );
+    const first = handle!.animateTabExit(content.tabId);
+    const duplicate = handle!.animateTabExit(content.tabId);
+    const second = handle!.animateTabExit(content2.tabId);
 
+    expect(duplicate).toBe(first);
     expect(
       [...screen.getByRole('tablist').children].map((element) =>
         element.textContent?.replace(/Close tab/g, '').trim(),
       ),
     ).toEqual(['Overview', 'Planning', 'Roadmap']);
     expect(view.container.querySelectorAll('.page-tab--closing')).toHaveLength(2);
+    expect(animations).toHaveLength(2);
+
+    animations.forEach(({ finish }) => finish());
+    await Promise.all([first, second]);
   });
 
-  it('removes a closed tab immediately when reduced motion is preferred', () => {
+  it('resolves a tab exit immediately when reduced motion is preferred', async () => {
     vi.stubGlobal(
       'matchMedia',
       vi.fn(() => ({ matches: true })),
@@ -299,21 +665,21 @@ describe('tab components', () => {
       onMove: vi.fn(),
       onSelect: vi.fn(),
     };
-    const view = render(<TabBar {...properties} />);
-
-    view.rerender(
+    let handle: TabBarHandle | null = null;
+    const view = render(
       <TabBar
         {...properties}
-        activeTabId={overview.tabId}
-        tabs={[overview]}
+        ref={(value) => {
+          handle = value;
+        }}
       />,
     );
 
+    await expect(handle!.animateTabExit(content.tabId)).resolves.toBeUndefined();
     expect(view.container.querySelector('.page-tab--closing')).toBeNull();
   });
 
-  it('does not carry an outgoing visual into another workspace', () => {
-    vi.useFakeTimers();
+  it('does not reconstruct removed tabs as hidden visual copies', () => {
     const properties = {
       activeTabId: content.tabId,
       tabs: [overview, content],
@@ -336,11 +702,84 @@ describe('tab components', () => {
         tabs={[overview]}
       />,
     );
-    expect(view.container.querySelector('.page-tab--closing')).toBeTruthy();
+    expect(view.container.querySelector('.page-tab--closing')).toBeNull();
+    expect(
+      view.container.querySelector('[aria-hidden="true"].page-tab'),
+    ).toBeNull();
 
     view.rerender(
       <TabBar {...properties} activeTabId={home.tabId} tabs={[home]} />,
     );
     expect(view.container.querySelector('.page-tab--closing')).toBeNull();
+  });
+
+  it('marks only genuinely added tab ids for entry animation', () => {
+    const initialRoot = {
+      kind: 'pane' as const,
+      paneId: 'left',
+      tabs: [overview, content],
+      activeTabId: content.tabId,
+    };
+    const splitRoot = {
+      kind: 'split' as const,
+      splitId: 'split-1',
+      direction: 'row' as const,
+      ratio: 0.5,
+      first: {
+        ...initialRoot,
+        tabs: [overview],
+        activeTabId: overview.tabId,
+      },
+      second: {
+        kind: 'pane' as const,
+        paneId: 'right',
+        tabs: [content],
+        activeTabId: content.tabId,
+      },
+    };
+    const previous = new Set(initialRoot.tabs.map(({ tabId }) => tabId));
+
+    expect(findNewWorkspaceTabIds(previous, splitRoot)).toEqual([]);
+    expect(
+      findNewWorkspaceTabIds(previous, {
+        ...initialRoot,
+        tabs: [...initialRoot.tabs, content2],
+        activeTabId: content2.tabId,
+      }),
+    ).toEqual([content2.tabId]);
+  });
+
+  it('animates tab entry only when the host opts the real tab in', () => {
+    const properties = {
+      activeTabId: content.tabId,
+      tabs: [overview, content],
+      closeLabel: 'Close tab',
+      navigationLabel: 'Pages',
+      getPresentation: (tab: TabDescriptor) => ({
+        title: tab.tabId,
+        icon: 'page.svg',
+      }),
+      onClose: vi.fn(),
+      onMove: vi.fn(),
+      onSelect: vi.fn(),
+    };
+    let handle: TabBarHandle | null = null;
+    const view = render(
+      <TabBar
+        {...properties}
+        ref={(value) => {
+          handle = value;
+        }}
+      />,
+    );
+
+    expect(view.container.querySelector('.page-tab--entering')).toBeNull();
+    handle!.animateTabEntry(content.tabId);
+    const entering = screen
+      .getByRole('tab', { name: content.tabId })
+      .closest('.page-tab');
+    expect(entering?.classList.contains('page-tab--entering')).toBe(true);
+    fireEvent.animationEnd(entering!);
+    expect(entering?.classList.contains('page-tab--entering')).toBe(false);
   });
 });

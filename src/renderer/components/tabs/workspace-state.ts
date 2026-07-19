@@ -1,245 +1,299 @@
 import {
-  getTabTargetKey,
-  isProjectTarget,
+  INTERNAL_PAGE_IDS,
   WORKSPACE_SESSION_VERSION,
+  isProjectTarget,
+  type InternalPageId,
+  type PageSessionState,
   type ProjectWorkspaceSnapshot,
   type TabDescriptor,
   type TabTarget,
   type WorkspaceSessionSnapshot,
+  type WorkspaceSplitDirection,
 } from '../../../shared/contracts';
-import { getTabTargetPageDefinition } from '../../pages/page-registry';
+import { getPageDefinition } from '../../pages/page-registry';
+import { createDescriptor } from './tab-state';
 import {
-  createDescriptor,
-  createInitialTabState,
-  hasNonHomeTabs,
-  normalizeRendererTabSession,
-  tabReducer,
-  type TabAction,
-  type TabState,
-} from './tab-state';
+  acceptsProjectTarget,
+  closeAllPaneTabs,
+  closePaneTab,
+  closeWorkspacePane,
+  collectPanes,
+  createPaneWorkspace,
+  findPane,
+  migratePaneWorkspace,
+  movePaneTab,
+  moveOrOpenPaneTarget,
+  moveTabBetweenPanes,
+  openPaneTarget,
+  resizeWorkspaceSplit,
+  selectPane,
+  selectPaneTab,
+  splitPane,
+  splitPaneWithTab,
+  splitPaneWithTarget,
+  updatePageState,
+  updateScroll,
+  type PaneWorkspaceState,
+} from './pane-state';
 
 export type WorkspaceContext = 'home' | 'project';
 
-export interface ProjectWorkspaceState {
+export interface ProjectWorkspaceState extends PaneWorkspaceState {
   projectId: string;
-  tabs: readonly TabDescriptor[];
-  activeTabId: string | null;
 }
 
 export interface WorkspaceState {
-  home: TabState;
+  home: PaneWorkspaceState;
   project: ProjectWorkspaceState | null;
 }
 
+interface PaneActionTarget {
+  paneId?: string;
+}
+
 export type WorkspaceAction =
-  | TabAction
+  | ({ type: 'open-page'; pageId: InternalPageId } & PaneActionTarget)
+  | ({
+      type: 'open-target';
+      target: TabTarget;
+      initialPageState?: PageSessionState;
+    } & PaneActionTarget)
+  | {
+      type: 'move-or-open-target';
+      target: TabTarget;
+      paneId: string;
+      initialPageState?: PageSessionState;
+    }
+  | ({ type: 'select-tab'; tabId: string } & PaneActionTarget)
+  | ({ type: 'close-tab'; tabId: string } & PaneActionTarget)
+  | ({
+      type: 'move-tab';
+      tabId: string;
+      toIndex: number;
+    } & PaneActionTarget)
+  | ({
+      type: 'update-scroll';
+      tabId: string;
+      scrollTop: number;
+    } & PaneActionTarget)
+  | ({
+      type: 'update-page-state';
+      tabId: string;
+      pageState: PageSessionState;
+    } & PaneActionTarget)
+  | { type: 'select-pane'; paneId: string }
+  | {
+      type: 'split-pane';
+      paneId: string;
+      direction: WorkspaceSplitDirection;
+    }
+  | {
+      type: 'move-tab-between-panes';
+      fromPaneId: string;
+      toPaneId: string;
+      tabId: string;
+    }
+  | {
+      type: 'split-pane-with-tab';
+      fromPaneId: string;
+      targetPaneId: string;
+      tabId: string;
+      direction: WorkspaceSplitDirection;
+      before: boolean;
+    }
+  | {
+      type: 'split-pane-with-target';
+      targetPaneId: string;
+      target: TabTarget;
+      direction: WorkspaceSplitDirection;
+      before: boolean;
+      initialPageState?: PageSessionState;
+    }
+  | { type: 'close-pane'; paneId: string }
+  | { type: 'close-all-project-tabs' }
+  | { type: 'resize-split'; splitId: string; ratio: number }
   | { type: 'open-project-workspace'; projectId: string }
   | { type: 'close-project-workspace' }
   | { type: 'restore-workspace'; snapshot: WorkspaceSessionSnapshot };
 
 export interface ActiveTabsView {
+  paneId: string;
   tabs: readonly TabDescriptor[];
   activeTabId: string | null;
 }
 
 export function createInitialWorkspaceState(): WorkspaceState {
-  return { home: createInitialTabState(), project: null };
+  const home = createDescriptor({
+    type: 'internal',
+    pageId: INTERNAL_PAGE_IDS.home,
+  });
+  return { home: createPaneWorkspace([home], 'home-pane-1'), project: null };
 }
 
 export function selectActiveContext(state: WorkspaceState): WorkspaceContext {
   return state.project ? 'project' : 'home';
 }
 
+export function selectActivePaneWorkspace(
+  state: WorkspaceState,
+): PaneWorkspaceState {
+  return state.project ?? state.home;
+}
+
 export function selectActiveTabs(state: WorkspaceState): ActiveTabsView {
-  return state.project
-    ? { tabs: state.project.tabs, activeTabId: state.project.activeTabId }
-    : { tabs: state.home.tabs, activeTabId: state.home.activeTabId };
-}
-
-export function hasRestorableWorkspace(state: WorkspaceState): boolean {
-  return state.project !== null || hasNonHomeTabs(state.home);
-}
-
-function projectOpenTarget(
-  state: ProjectWorkspaceState,
-  target: TabTarget,
-): ProjectWorkspaceState {
-  if (!isProjectTarget(target) || target.projectId !== state.projectId) {
-    return state;
-  }
-
-  const targetKey = getTabTargetKey(target);
-  const existing = state.tabs.find(
-    (tab) => getTabTargetKey(tab.target) === targetKey,
-  );
-
-  if (existing) {
-    return existing.tabId === state.activeTabId
-      ? state
-      : { ...state, activeTabId: existing.tabId };
-  }
-
-  const tab = createDescriptor(target);
-
+  const workspace = selectActivePaneWorkspace(state);
+  const pane =
+    findPane(workspace.root, workspace.activePaneId) ??
+    collectPanes(workspace.root)[0];
   return {
-    ...state,
-    tabs: [...state.tabs, tab],
-    activeTabId: tab.tabId,
+    paneId: pane?.paneId ?? workspace.activePaneId,
+    tabs: pane?.tabs ?? [],
+    activeTabId: pane?.activeTabId ?? null,
   };
 }
 
-function projectCloseTab(
-  state: ProjectWorkspaceState,
-  tabId: string,
-): ProjectWorkspaceState {
-  const index = state.tabs.findIndex((tab) => tab.tabId === tabId);
-
-  if (index < 0) {
-    return state;
-  }
-
-  const tabs = state.tabs.filter((tab) => tab.tabId !== tabId);
-
-  if (tabs.length === 0) {
-    return { ...state, tabs, activeTabId: null };
-  }
-
-  if (state.activeTabId !== tabId) {
-    return { ...state, tabs };
-  }
-
-  const neighbor = tabs[Math.min(index, tabs.length - 1)];
-
-  return { ...state, tabs, activeTabId: neighbor?.tabId ?? tabs[0]?.tabId ?? null };
+export function selectAllActiveContextPanes(
+  state: WorkspaceState,
+): readonly ActiveTabsView[] {
+  const workspace = selectActivePaneWorkspace(state);
+  return collectPanes(workspace.root).map((pane) => ({
+    paneId: pane.paneId,
+    tabs: pane.tabs,
+    activeTabId: pane.activeTabId,
+  }));
 }
 
-function projectMoveTab(
-  state: ProjectWorkspaceState,
-  tabId: string,
-  toIndex: number,
-): ProjectWorkspaceState {
-  const fromIndex = state.tabs.findIndex((tab) => tab.tabId === tabId);
-  const boundedIndex = Math.max(
-    0,
-    Math.min(Math.trunc(toIndex), state.tabs.length - 1),
+export function hasRestorableWorkspace(state: WorkspaceState): boolean {
+  if (state.project) {
+    return true;
+  }
+  return collectPanes(state.home.root).some((pane) =>
+    pane.tabs.some(
+      ({ target }) =>
+        target.type !== 'internal' ||
+        target.pageId !== INTERNAL_PAGE_IDS.home,
+    ),
   );
-
-  if (fromIndex < 0 || fromIndex === boundedIndex) {
-    return state;
-  }
-
-  const tabs = [...state.tabs];
-  const [tab] = tabs.splice(fromIndex, 1);
-
-  if (!tab) {
-    return state;
-  }
-
-  tabs.splice(boundedIndex, 0, tab);
-
-  return { ...state, tabs };
 }
 
-function updateProjectTab(
-  state: ProjectWorkspaceState,
-  tabId: string,
-  update: (tab: TabDescriptor) => TabDescriptor,
-): ProjectWorkspaceState {
-  const index = state.tabs.findIndex((tab) => tab.tabId === tabId);
-  const current = index < 0 ? undefined : state.tabs[index];
+function reducePaneWorkspace(
+  workspace: PaneWorkspaceState,
+  context: WorkspaceContext,
+  action: Exclude<
+    WorkspaceAction,
+    | { type: 'open-project-workspace' }
+    | { type: 'close-project-workspace' }
+    | { type: 'close-all-project-tabs' }
+    | { type: 'restore-workspace' }
+  >,
+): PaneWorkspaceState {
+  const paneId =
+    'paneId' in action && action.paneId
+      ? action.paneId
+      : workspace.activePaneId;
 
-  if (!current) {
-    return state;
-  }
-
-  const next = update(current);
-
-  if (next === current) {
-    return state;
-  }
-
-  const tabs = [...state.tabs];
-  tabs[index] = next;
-  return { ...state, tabs };
-}
-
-function projectTabReducer(
-  state: ProjectWorkspaceState,
-  action: TabAction,
-): ProjectWorkspaceState {
   switch (action.type) {
     case 'open-page':
-      return state;
-    case 'open-target':
-      return projectOpenTarget(state, action.target);
-    case 'select-tab':
-      return state.tabs.some(({ tabId }) => tabId === action.tabId) &&
-        action.tabId !== state.activeTabId
-        ? { ...state, activeTabId: action.tabId }
-        : state;
-    case 'close-tab':
-      return projectCloseTab(state, action.tabId);
-    case 'move-tab':
-      return projectMoveTab(state, action.tabId, action.toIndex);
-    case 'update-scroll': {
-      if (!Number.isFinite(action.scrollTop)) {
-        return state;
-      }
-
-      const scrollTop = Math.min(10_000_000, Math.max(0, action.scrollTop));
-      return updateProjectTab(state, action.tabId, (tab) =>
-        tab.scrollTop === scrollTop ? tab : { ...tab, scrollTop },
+      return openPaneTarget(
+        workspace,
+        { type: 'internal', pageId: action.pageId },
+        paneId,
       );
-    }
+    case 'open-target':
+      return openPaneTarget(
+        workspace,
+        action.target,
+        paneId,
+        action.initialPageState,
+      );
+    case 'move-or-open-target':
+      return moveOrOpenPaneTarget(
+        workspace,
+        action.target,
+        action.paneId,
+        action.initialPageState,
+      );
+    case 'select-pane':
+      return selectPane(workspace, action.paneId);
+    case 'select-tab':
+      return selectPaneTab(workspace, paneId, action.tabId);
+    case 'close-tab':
+      return closePaneTab(
+        workspace,
+        paneId,
+        action.tabId,
+        false,
+        context === 'home'
+          ? { type: 'internal', pageId: INTERNAL_PAGE_IDS.home }
+          : undefined,
+      );
+    case 'move-tab':
+      return movePaneTab(workspace, paneId, action.tabId, action.toIndex);
+    case 'update-scroll':
+      return updateScroll(
+        workspace,
+        paneId,
+        action.tabId,
+        action.scrollTop,
+      );
     case 'update-page-state':
-      return updateProjectTab(state, action.tabId, (tab) => ({
-        ...tab,
-        pageState: getTabTargetPageDefinition(tab.target).migrateState(
-          action.pageState,
-        ),
-      }));
-    case 'restore-session':
-      return state;
+      return updatePageState(
+        workspace,
+        paneId,
+        action.tabId,
+        action.pageState,
+      );
+    case 'split-pane':
+      return splitPane(workspace, action.paneId, action.direction);
+    case 'move-tab-between-panes':
+      return moveTabBetweenPanes(
+        workspace,
+        action.fromPaneId,
+        action.toPaneId,
+        action.tabId,
+      );
+    case 'split-pane-with-tab':
+      return splitPaneWithTab(
+        workspace,
+        action.fromPaneId,
+        action.targetPaneId,
+        action.tabId,
+        action.direction,
+        action.before,
+      );
+    case 'split-pane-with-target':
+      return splitPaneWithTarget(
+        workspace,
+        action.targetPaneId,
+        action.target,
+        action.direction,
+        action.before,
+        action.initialPageState,
+      );
+    case 'close-pane':
+      return closeWorkspacePane(workspace, action.paneId);
+    case 'resize-split':
+      return resizeWorkspaceSplit(workspace, action.splitId, action.ratio);
   }
 }
 
 function adoptProjectWorkspace(
   snapshot: ProjectWorkspaceSnapshot,
 ): ProjectWorkspaceState {
-  const seen = new Set<string>();
-  const tabs: TabDescriptor[] = [];
-
-  for (const tab of snapshot.tabs) {
-    const targetKey = getTabTargetKey(tab.target);
-
-    if (seen.has(targetKey)) {
-      continue;
-    }
-
-    seen.add(targetKey);
-    tabs.push({
-      ...tab,
-      pageState: getTabTargetPageDefinition(tab.target).migrateState(
-        tab.pageState,
-      ),
-    });
-  }
-
-  const activeTabId =
-    tabs.length === 0
-      ? null
-      : tabs.some(({ tabId }) => tabId === snapshot.activeTabId)
-        ? snapshot.activeTabId
-        : (tabs[0]?.tabId ?? null);
-
-  return { projectId: snapshot.projectId, tabs, activeTabId };
+  return {
+    projectId: snapshot.projectId,
+    ...migratePaneWorkspace(snapshot),
+  };
 }
 
 export function adoptWorkspaceSnapshot(
   snapshot: WorkspaceSessionSnapshot,
 ): WorkspaceState {
   return {
-    home: normalizeRendererTabSession(snapshot.home),
+    home: migratePaneWorkspace(snapshot.home, {
+      type: 'internal',
+      pageId: INTERNAL_PAGE_IDS.home,
+    }),
     project: snapshot.project
       ? adoptProjectWorkspace(snapshot.project)
       : null,
@@ -255,8 +309,8 @@ export function serializeWorkspace(
     project: state.project
       ? {
           projectId: state.project.projectId,
-          tabs: state.project.tabs,
-          activeTabId: state.project.activeTabId,
+          root: state.project.root,
+          activePaneId: state.project.activePaneId,
         }
       : null,
   };
@@ -272,30 +326,53 @@ export function workspaceReducer(
         type: 'project-overview',
         projectId: action.projectId,
       });
-
       return {
         ...state,
         project: {
           projectId: action.projectId,
-          tabs: [overview],
-          activeTabId: overview.tabId,
+          ...createPaneWorkspace([overview], 'project-pane-1'),
         },
       };
     }
     case 'close-project-workspace':
       return state.project ? { ...state, project: null } : state;
+    case 'close-all-project-tabs': {
+      if (!state.project) {
+        return state;
+      }
+      const project = closeAllPaneTabs(state.project);
+      return project === state.project
+        ? state
+        : { ...state, project: { ...state.project, ...project } };
+    }
     case 'restore-workspace':
       return adoptWorkspaceSnapshot(action.snapshot);
     default: {
       if (state.project) {
-        const nextProject = projectTabReducer(state.project, action);
-        return nextProject === state.project
+        if (
+          (action.type === 'open-page' &&
+            !getPageDefinition(action.pageId).availableInProject) ||
+          ((action.type === 'open-target' ||
+            action.type === 'move-or-open-target') &&
+            !acceptsProjectTarget(state.project.projectId, action.target))
+        ) {
+          return state;
+        }
+        const project = reducePaneWorkspace(state.project, 'project', action);
+        return project === state.project
           ? state
-          : { ...state, project: nextProject };
+          : { ...state, project: { ...state.project, ...project } };
       }
 
-      const nextHome = tabReducer(state.home, action);
-      return nextHome === state.home ? state : { ...state, home: nextHome };
+      if (
+        (action.type === 'open-target' ||
+          action.type === 'move-or-open-target') &&
+        isProjectTarget(action.target)
+      ) {
+        return state;
+      }
+      const home = reducePaneWorkspace(state.home, 'home', action);
+      return home === state.home ? state : { ...state, home };
     }
   }
 }

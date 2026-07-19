@@ -5,6 +5,7 @@ export * from './encrypted-note-key-session';
 export * from './portable-name';
 export * from './project-catalog-store';
 export * from './project-format';
+export * from './project-note-activity-store';
 export * from './project-repository';
 export * from './project-service';
 export * from './project-storage-adapters';

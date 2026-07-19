@@ -379,7 +379,7 @@ export function useProjectPageProperties({
   const lockNode = useCallback(
     async (
       nodeId: string,
-      nextSecurityState: PageSecurityState | undefined = 'locked',
+      nextSecurityState: PageSecurityState | undefined,
     ): Promise<ProjectResult<null>> => {
       const operation = getApi().lockProjectPage;
       if (!operation) {
@@ -416,7 +416,7 @@ export function useProjectPageProperties({
   const lock = useCallback(
     (): Promise<ProjectResult<null>> =>
       targetNodeId
-        ? lockNode(targetNodeId)
+        ? lockNode(targetNodeId, 'locked')
         : Promise.resolve(
             unavailable<null>(translate('projects.operationFailed')),
           ),
@@ -439,6 +439,11 @@ export function useProjectPageProperties({
       }
       return result;
     },
+    [lockNode],
+  );
+  const lockProtectedDocument = useCallback(
+    (nodeId: string): Promise<ProjectResult<null>> =>
+      lockNode(nodeId, 'locked'),
     [lockNode],
   );
 
@@ -473,6 +478,15 @@ export function useProjectPageProperties({
       ),
     [security],
   );
+  const unlockedProtectedNodeIds = useMemo(
+    () =>
+      new Set(
+        [...security].flatMap(([nodeId, pageState]) =>
+          pageState === 'unlocked' ? [nodeId] : [],
+        ),
+      ),
+    [security],
+  );
 
   return {
     acceptProperties,
@@ -483,6 +497,7 @@ export function useProjectPageProperties({
     load,
     lock,
     lockedNodeIds,
+    lockProtectedDocument,
     logicalPath,
     markPasswordRequired,
     node,
@@ -494,5 +509,6 @@ export function useProjectPageProperties({
     state,
     unlock,
     unlockDocument,
+    unlockedProtectedNodeIds,
   };
 }

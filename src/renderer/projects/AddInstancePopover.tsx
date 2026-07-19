@@ -10,7 +10,7 @@ import {
 } from 'react';
 import { createPortal } from 'react-dom';
 
-import folderIcon from '../../../public/images/icons/instances/folder.svg';
+import folderIcon from '../../../public/images/icons/instances/folder-solid.svg';
 import { MaskedIcon } from '../components/MaskedIcon';
 import type { Translate } from '../pages/page-types';
 import { listProjectPageTypeDefinitions } from './project-page-type-registry';

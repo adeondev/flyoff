@@ -9,6 +9,7 @@ import {
 } from './project-page-type-registry';
 
 export interface ProjectContentPageProps {
+  active: boolean;
   displayPath?: string;
   node?: ProjectTreeNode;
   nodeId: string;
@@ -19,9 +20,11 @@ export interface ProjectContentPageProps {
   onScrollChange: (scrollTop: number) => void;
   onStateChange: (state: PageSessionState) => void;
   translate: Translate;
+  viewId?: string;
 }
 
 export function ProjectContentPage({
+  active,
   displayPath,
   node,
   nodeId,
@@ -32,6 +35,7 @@ export function ProjectContentPage({
   onScrollChange,
   onStateChange,
   translate,
+  viewId,
 }: ProjectContentPageProps) {
   const definition = getProjectPageTypeDefinition(pageType);
 
@@ -52,6 +56,7 @@ export function ProjectContentPage({
   const Page = definition.Page;
   return (
     <Page
+      active={active}
       displayPath={displayPath}
       key={`${nodeId}:${
         pageType === 'markdown' && runtime.markdown.lockedNodeIds.has(nodeId)
@@ -66,6 +71,7 @@ export function ProjectContentPage({
       onScrollChange={onScrollChange}
       onStateChange={onStateChange}
       translate={translate}
+      viewId={viewId}
     />
   );
 }

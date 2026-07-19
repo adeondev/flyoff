@@ -30,6 +30,11 @@ export const PROJECT_IPC_CHANNELS = {
   copyPath: 'flyoff:projects:path:copy',
   readMarkdown: 'flyoff:projects:markdown:read',
   saveMarkdown: 'flyoff:projects:markdown:save',
+  listLinkTargets: 'flyoff:projects:links:targets:list',
+  getGraph: 'flyoff:projects:graph:get',
+  resolveInternalLink: 'flyoff:projects:links:resolve',
+  listBacklinks: 'flyoff:projects:links:backlinks:list',
+  search: 'flyoff:projects:search',
   getPageProperties: 'flyoff:projects:pages:properties:get',
   setPageReadOnly: 'flyoff:projects:pages:read-only:set',
   protectPage: 'flyoff:projects:pages:protection:enable',
@@ -159,12 +164,100 @@ export interface TrashProjectNodeRequest {
   nodeId: string;
 }
 
+export interface ProjectNodeMutationOutcome {
+  node: ProjectTreeNode;
+  updatedDocumentNodeIds: readonly string[];
+  skippedLockedNodeIds: readonly string[];
+}
+
 export interface ProjectPathRequest {
   nodeId: string | null;
 }
 
 export interface TrashProjectNodeOutcome {
   nodeIds: readonly string[];
+}
+
+export type ProjectInternalLinkSyntax = 'markdown' | 'wikilink';
+
+export interface ProjectInternalLinkRequest {
+  sourceNodeId: string;
+  path: string;
+  headingPath: readonly string[];
+  syntax: ProjectInternalLinkSyntax;
+}
+
+export interface ProjectLinkTarget {
+  nodeId: string;
+  name: string;
+  path: string;
+}
+
+export interface ProjectGraphNode extends ProjectLinkTarget {
+  connectionCount: number;
+}
+
+export interface ProjectGraphEdge {
+  sourceNodeId: string;
+  targetNodeId: string;
+  weight: number;
+}
+
+export interface ProjectGraphSnapshot {
+  nodes: readonly ProjectGraphNode[];
+  edges: readonly ProjectGraphEdge[];
+}
+
+export interface ProjectInternalLinkHeading {
+  line: number;
+  offset: number;
+  path: readonly string[];
+}
+
+export interface ProjectInternalLinkTarget extends ProjectLinkTarget {
+  locked: boolean;
+  heading?: ProjectInternalLinkHeading;
+}
+
+export type ProjectInternalLinkResolution =
+  | { status: 'missing' }
+  | { status: 'ambiguous'; candidates: readonly ProjectLinkTarget[] }
+  | { status: 'resolved'; target: ProjectInternalLinkTarget };
+
+export interface ListProjectBacklinksRequest {
+  targetNodeId: string;
+}
+
+export interface ProjectReference {
+  sourceNodeId: string;
+  sourceName: string;
+  sourcePath: string;
+  line: number;
+  column: number;
+  start: number;
+  end: number;
+  excerpt: string;
+}
+
+export interface ProjectBacklinksOutcome {
+  references: readonly ProjectReference[];
+  skippedLockedNodeIds: readonly string[];
+}
+
+export interface ProjectSearchRequest {
+  query: string;
+}
+
+export interface ProjectSearchPreview {
+  nodeId: string;
+  line: number;
+  excerpt: string;
+}
+
+export interface ProjectSearchOutcome {
+  nodeIds: readonly string[];
+  previews: readonly ProjectSearchPreview[];
+  skippedLockedNodeIds: readonly string[];
 }
 
 export interface ReadMarkdownDocumentRequest {
@@ -571,6 +664,29 @@ export function isTrashProjectNodeRequest(
   return isRecord(value) && isProjectIdentifier(value.nodeId);
 }
 
+export function isProjectNodeMutationOutcome(
+  value: unknown,
+): value is ProjectNodeMutationOutcome {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, [
+      'node',
+      'updatedDocumentNodeIds',
+      'skippedLockedNodeIds',
+    ]) &&
+    isProjectTreeNode(value.node) &&
+    Array.isArray(value.updatedDocumentNodeIds) &&
+    value.updatedDocumentNodeIds.length <= 250_000 &&
+    value.updatedDocumentNodeIds.every(isProjectIdentifier) &&
+    new Set(value.updatedDocumentNodeIds).size ===
+      value.updatedDocumentNodeIds.length &&
+    Array.isArray(value.skippedLockedNodeIds) &&
+    value.skippedLockedNodeIds.length <= 250_000 &&
+    value.skippedLockedNodeIds.every(isProjectIdentifier) &&
+    new Set(value.skippedLockedNodeIds).size === value.skippedLockedNodeIds.length
+  );
+}
+
 export function isProjectPathRequest(
   value: unknown,
 ): value is ProjectPathRequest {
@@ -593,6 +709,300 @@ export function isTrashProjectNodeOutcome(
     nodeIds.length <= 250_000 &&
     nodeIds.every(isProjectIdentifier) &&
     new Set(nodeIds).size === nodeIds.length
+  );
+}
+
+function isProjectLinkText(value: unknown, maximumLength: number): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length <= maximumLength &&
+    isWellFormedUnicode(value) &&
+    !value.includes('\0')
+  );
+}
+
+function isProjectLinkHeadingPath(
+  value: unknown,
+): value is readonly string[] {
+  return (
+    Array.isArray(value) &&
+    value.length <= 6 &&
+    value.every(
+      (part) => isProjectLinkText(part, 512) && part.trim().length > 0,
+    )
+  );
+}
+
+export function isProjectInternalLinkRequest(
+  value: unknown,
+): value is ProjectInternalLinkRequest {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ['sourceNodeId', 'path', 'headingPath', 'syntax']) &&
+    isProjectIdentifier(value.sourceNodeId) &&
+    isProjectLinkText(value.path, 4_096) &&
+    isProjectLinkHeadingPath(value.headingPath) &&
+    (value.syntax === 'markdown' || value.syntax === 'wikilink') &&
+    (value.path.trim().length > 0 || value.headingPath.length > 0)
+  );
+}
+
+function hasProjectLinkTargetFields(
+  value: unknown,
+): value is ProjectLinkTarget & Record<string, unknown> {
+  return (
+    isRecord(value) &&
+    isProjectIdentifier(value.nodeId) &&
+    isPortableProjectName(value.name) &&
+    isProjectLinkText(value.path, 4_096) &&
+    value.path.length > 0
+  );
+}
+
+export function isProjectLinkTarget(value: unknown): value is ProjectLinkTarget {
+  return (
+    hasProjectLinkTargetFields(value) &&
+    hasExactKeys(value, ['nodeId', 'name', 'path'])
+  );
+}
+
+export function isProjectLinkTargetList(
+  value: unknown,
+): value is readonly ProjectLinkTarget[] {
+  return (
+    Array.isArray(value) &&
+    value.length <= 250_000 &&
+    value.every(isProjectLinkTarget)
+  );
+}
+
+export function isProjectGraphNode(value: unknown): value is ProjectGraphNode {
+  return (
+    hasProjectLinkTargetFields(value) &&
+    hasExactKeys(value, ['nodeId', 'name', 'path', 'connectionCount']) &&
+    Number.isSafeInteger(value.connectionCount) &&
+    (value.connectionCount as number) >= 0 &&
+    (value.connectionCount as number) <= 1_000_000
+  );
+}
+
+export function isProjectGraphEdge(value: unknown): value is ProjectGraphEdge {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ['sourceNodeId', 'targetNodeId', 'weight']) &&
+    isProjectIdentifier(value.sourceNodeId) &&
+    isProjectIdentifier(value.targetNodeId) &&
+    value.sourceNodeId !== value.targetNodeId &&
+    Number.isSafeInteger(value.weight) &&
+    (value.weight as number) >= 1 &&
+    (value.weight as number) <= 1_000_000
+  );
+}
+
+export function isProjectGraphSnapshot(
+  value: unknown,
+): value is ProjectGraphSnapshot {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ['nodes', 'edges']) ||
+    !Array.isArray(value.nodes) ||
+    value.nodes.length > 250_000 ||
+    !value.nodes.every(isProjectGraphNode) ||
+    !Array.isArray(value.edges) ||
+    value.edges.length > 1_000_000 ||
+    !value.edges.every(isProjectGraphEdge)
+  ) {
+    return false;
+  }
+
+  const nodeIds = new Set(
+    (value.nodes as ProjectGraphNode[]).map(({ nodeId }) => nodeId),
+  );
+  return (
+    nodeIds.size === value.nodes.length &&
+    (value.edges as ProjectGraphEdge[]).every(
+      ({ sourceNodeId, targetNodeId }) =>
+        nodeIds.has(sourceNodeId) && nodeIds.has(targetNodeId),
+    )
+  );
+}
+
+function isProjectInternalLinkHeading(
+  value: unknown,
+): value is ProjectInternalLinkHeading {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ['line', 'offset', 'path']) &&
+    Number.isSafeInteger(value.line) &&
+    (value.line as number) >= 1 &&
+    Number.isSafeInteger(value.offset) &&
+    (value.offset as number) >= 0 &&
+    isProjectLinkHeadingPath(value.path)
+  );
+}
+
+export function isProjectInternalLinkTarget(
+  value: unknown,
+): value is ProjectInternalLinkTarget {
+  if (!hasProjectLinkTargetFields(value)) {
+    return false;
+  }
+  const target = value as ProjectLinkTarget &
+    Record<string, unknown> & {
+      heading?: unknown;
+      locked?: unknown;
+    };
+  return (
+    hasExactKeys(
+      value,
+      target.heading === undefined
+        ? ['nodeId', 'name', 'path', 'locked']
+        : ['nodeId', 'name', 'path', 'locked', 'heading'],
+    ) &&
+    typeof target.locked === 'boolean' &&
+    (target.heading === undefined ||
+      isProjectInternalLinkHeading(target.heading))
+  );
+}
+
+export function isProjectInternalLinkResolution(
+  value: unknown,
+): value is ProjectInternalLinkResolution {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (value.status === 'missing') {
+    return hasExactKeys(value, ['status']);
+  }
+  if (value.status === 'ambiguous') {
+    return (
+      hasExactKeys(value, ['status', 'candidates']) &&
+      isProjectLinkTargetList(value.candidates) &&
+      value.candidates.length > 1
+    );
+  }
+  return (
+    value.status === 'resolved' &&
+    hasExactKeys(value, ['status', 'target']) &&
+    isProjectInternalLinkTarget(value.target)
+  );
+}
+
+export function isListProjectBacklinksRequest(
+  value: unknown,
+): value is ListProjectBacklinksRequest {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ['targetNodeId']) &&
+    isProjectIdentifier(value.targetNodeId)
+  );
+}
+
+export function isProjectReference(value: unknown): value is ProjectReference {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, [
+      'sourceNodeId',
+      'sourceName',
+      'sourcePath',
+      'line',
+      'column',
+      'start',
+      'end',
+      'excerpt',
+    ]) &&
+    isProjectIdentifier(value.sourceNodeId) &&
+    isPortableProjectName(value.sourceName) &&
+    isProjectLinkText(value.sourcePath, 4_096) &&
+    Number.isSafeInteger(value.line) &&
+    (value.line as number) >= 1 &&
+    Number.isSafeInteger(value.column) &&
+    (value.column as number) >= 1 &&
+    Number.isSafeInteger(value.start) &&
+    (value.start as number) >= 0 &&
+    Number.isSafeInteger(value.end) &&
+    (value.end as number) >= (value.start as number) &&
+    isProjectLinkText(value.excerpt, 240)
+  );
+}
+
+export function isProjectBacklinksOutcome(
+  value: unknown,
+): value is ProjectBacklinksOutcome {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ['references', 'skippedLockedNodeIds']) &&
+    Array.isArray(value.references) &&
+    value.references.length <= 1_000_000 &&
+    value.references.every(isProjectReference) &&
+    Array.isArray(value.skippedLockedNodeIds) &&
+    value.skippedLockedNodeIds.length <= 250_000 &&
+    value.skippedLockedNodeIds.every(isProjectIdentifier)
+  );
+}
+
+export function isProjectSearchRequest(
+  value: unknown,
+): value is ProjectSearchRequest {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ['query']) &&
+    isProjectLinkText(value.query, 2_048) &&
+    value.query.trim().length > 0
+  );
+}
+
+function isProjectSearchPreview(
+  value: unknown,
+  nodeIds: readonly string[],
+): value is ProjectSearchPreview {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ['nodeId', 'line', 'excerpt']) &&
+    isProjectIdentifier(value.nodeId) &&
+    nodeIds.includes(value.nodeId) &&
+    typeof value.line === 'number' &&
+    Number.isSafeInteger(value.line) &&
+    value.line >= 1 &&
+    value.line <= 10_000_000 &&
+    typeof value.excerpt === 'string' &&
+    value.excerpt.length > 0 &&
+    value.excerpt.length <= 240 &&
+    isWellFormedUnicode(value.excerpt)
+  );
+}
+
+export function isProjectSearchOutcome(
+  value: unknown,
+): value is ProjectSearchOutcome {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ['nodeIds', 'previews', 'skippedLockedNodeIds']) ||
+    !Array.isArray(value.nodeIds) ||
+    value.nodeIds.length > 250_000 ||
+    !value.nodeIds.every(isProjectIdentifier) ||
+    new Set(value.nodeIds).size !== value.nodeIds.length ||
+    !Array.isArray(value.previews) ||
+    value.previews.length > value.nodeIds.length ||
+    !Array.isArray(value.skippedLockedNodeIds) ||
+    value.skippedLockedNodeIds.length > 250_000 ||
+    !value.skippedLockedNodeIds.every(isProjectIdentifier) ||
+    new Set(value.skippedLockedNodeIds).size !==
+      value.skippedLockedNodeIds.length
+  ) {
+    return false;
+  }
+
+  const nodeIds = value.nodeIds as string[];
+  return (
+    value.previews.every((preview) =>
+      isProjectSearchPreview(preview, nodeIds),
+    ) &&
+    new Set(
+      value.previews.map(
+        (preview) => (preview as ProjectSearchPreview).nodeId,
+      ),
+    ).size === value.previews.length
   );
 }
 

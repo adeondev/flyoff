@@ -5,6 +5,8 @@ export * from './locales';
 export * from './menu';
 export * from './native-core';
 export * from './platform';
+export * from './preferences';
+export * from './project-note-activity';
 export * from './projects';
 export * from './spellcheck';
 export * from './tab-session';

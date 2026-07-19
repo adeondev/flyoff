@@ -12,7 +12,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { App } from '../../src/renderer/App';
 import {
-  TAB_SESSION_VERSION,
   WORKSPACE_SESSION_VERSION,
   type BootstrapState,
   type CloseRequest,
@@ -39,14 +38,18 @@ function createSession(
   return {
     version: WORKSPACE_SESSION_VERSION,
     home: {
-      version: TAB_SESSION_VERSION,
-      tabs: pages.map((pageId) => ({
-        tabId: `page:${pageId}`,
-        target: { type: 'internal', pageId },
-        scrollTop: 0,
-        pageState: { version: 1, data: {} },
-      })),
-      activeTabId,
+      root: {
+        kind: 'pane',
+        paneId: 'home-pane-1',
+        tabs: pages.map((pageId) => ({
+          tabId: `page:${pageId}`,
+          target: { type: 'internal', pageId },
+          scrollTop: 0,
+          pageState: { version: 1, data: {} },
+        })),
+        activeTabId,
+      },
+      activePaneId: 'home-pane-1',
     },
     project: null,
   };
@@ -101,7 +104,7 @@ afterEach(() => {
 });
 
 describe('tab workspace', () => {
-  it('opens singleton pages, closes them predictably and recreates Home', async () => {
+  it('opens singleton pages and restores Home after closing the last one', async () => {
     installApi();
     render(<App />);
 
@@ -210,7 +213,11 @@ describe('tab workspace', () => {
           requestId: 'close:2',
           decision: 'confirm',
           session: expect.objectContaining({
-            home: expect.objectContaining({ activeTabId: 'page:settings' }),
+            home: expect.objectContaining({
+              root: expect.objectContaining({
+                activeTabId: 'page:settings',
+              }),
+            }),
           }),
         }),
       ),
@@ -289,7 +296,9 @@ describe('tab workspace', () => {
     expect(bridge.api.resolveRestorableTabSession).toHaveBeenCalledWith(
       'ignore',
       expect.objectContaining({
-        home: expect.objectContaining({ activeTabId: 'page:home' }),
+        home: expect.objectContaining({
+          root: expect.objectContaining({ activeTabId: 'page:home' }),
+        }),
       }),
     );
   });
@@ -314,7 +323,9 @@ describe('tab workspace', () => {
     expect(bridge.api.resolveRestorableTabSession).toHaveBeenCalledWith(
       'ignore',
       expect.objectContaining({
-        home: expect.objectContaining({ activeTabId: 'page:home' }),
+        home: expect.objectContaining({
+          root: expect.objectContaining({ activeTabId: 'page:home' }),
+        }),
       }),
     );
   });

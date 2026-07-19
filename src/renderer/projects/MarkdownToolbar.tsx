@@ -14,7 +14,10 @@ import { getTooltipTargetProps } from '../components/tooltip';
 import type { Translate } from '../pages/page-types';
 import { MARKDOWN_ACTIONS, type MarkdownAction } from './markdown-actions';
 
-const ACTION_LABEL_KEYS: Record<MarkdownAction, Parameters<Translate>[0]> = {
+export const MARKDOWN_ACTION_LABEL_KEYS: Record<
+  MarkdownAction,
+  Parameters<Translate>[0]
+> = {
   bold: 'toolbar.bold',
   italic: 'toolbar.italic',
   strike: 'toolbar.strike',
@@ -28,7 +31,7 @@ const ACTION_LABEL_KEYS: Record<MarkdownAction, Parameters<Translate>[0]> = {
   divider: 'toolbar.divider',
 };
 
-const ACTION_ICONS: Record<MarkdownAction, string> = {
+export const MARKDOWN_ACTION_ICONS: Record<MarkdownAction, string> = {
   bold: boldIcon,
   italic: italicIcon,
   strike: strikeIcon,
@@ -60,7 +63,7 @@ export function MarkdownToolbar({
       role="toolbar"
     >
       {MARKDOWN_ACTIONS.map((action) => {
-        const label = translate(ACTION_LABEL_KEYS[action]);
+        const label = translate(MARKDOWN_ACTION_LABEL_KEYS[action]);
 
         return (
           <button
@@ -74,7 +77,7 @@ export function MarkdownToolbar({
           >
             <MaskedIcon
               className="markdown-toolbar__icon"
-              icon={ACTION_ICONS[action]}
+          icon={MARKDOWN_ACTION_ICONS[action]}
             />
           </button>
         );

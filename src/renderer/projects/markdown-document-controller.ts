@@ -40,6 +40,7 @@ export interface MarkdownDocumentControllerOptions {
   ) => Promise<ProjectResult<MarkdownDocument>>;
   debounceMs?: number;
   onSaveError?: (error: ProjectFailureDetails, nodeId: string) => void;
+  onSaveSuccess?: (document: MarkdownDocument) => void;
 }
 
 interface MarkdownBufferEntry {
@@ -76,17 +77,20 @@ function rejectedOperation(message: string): ProjectFailureDetails {
 export class MarkdownDocumentController {
   private readonly buffers = new Map<string, MarkdownBufferEntry>();
   private readonly editorStates = new Map<string, SourceEditorState>();
+  private readonly viewSelections = new Map<string, SourceSelection>();
   private readonly history = new MarkdownHistoryStore();
   private readonly mutationLocks = new Set<string>();
-  private readonly debounceMs: number;
+  private debounceMs: number;
   private readonly saveDocument: MarkdownDocumentControllerOptions['save'];
   private readonly reloadDocument: MarkdownDocumentControllerOptions['reload'];
   private onSaveError?: MarkdownDocumentControllerOptions['onSaveError'];
+  private onSaveSuccess?: MarkdownDocumentControllerOptions['onSaveSuccess'];
   private disposed = false;
 
   constructor({
     debounceMs = DEFAULT_AUTOSAVE_DELAY,
     onSaveError,
+    onSaveSuccess,
     reload,
     save,
   }: MarkdownDocumentControllerOptions) {
@@ -94,9 +98,13 @@ export class MarkdownDocumentController {
     this.reloadDocument = reload;
     this.saveDocument = save;
     this.onSaveError = onSaveError;
+    this.onSaveSuccess = onSaveSuccess;
   }
 
-  open(document: MarkdownDocument): MarkdownBufferSnapshot {
+  open(
+    document: MarkdownDocument,
+    viewId = document.nodeId,
+  ): MarkdownBufferSnapshot {
     const existing = this.buffers.get(document.nodeId);
 
     if (existing) {
@@ -109,7 +117,8 @@ export class MarkdownDocumentController {
         this.replaceFromDocument(existing, document);
       }
 
-      return existing.snapshot;
+      this.ensureViewSelection(document.nodeId, viewId, existing.snapshot);
+      return this.snapshotForView(existing.snapshot, viewId);
     }
 
     const entry: MarkdownBufferEntry = {
@@ -139,17 +148,50 @@ export class MarkdownDocumentController {
       selection: entry.snapshot.selection,
     });
     this.buffers.set(document.nodeId, entry);
-    return entry.snapshot;
+    this.ensureViewSelection(document.nodeId, viewId, entry.snapshot);
+    return this.snapshotForView(entry.snapshot, viewId);
   }
 
-  getSnapshot(nodeId: string): MarkdownBufferSnapshot | undefined {
-    return this.buffers.get(nodeId)?.snapshot;
+  getSnapshot(
+    nodeId: string,
+    viewId = nodeId,
+  ): MarkdownBufferSnapshot | undefined {
+    const snapshot = this.buffers.get(nodeId)?.snapshot;
+    return snapshot ? this.snapshotForView(snapshot, viewId) : undefined;
   }
 
   setOnSaveError(
     onSaveError?: MarkdownDocumentControllerOptions['onSaveError'],
   ): void {
     this.onSaveError = onSaveError;
+  }
+
+  setOnSaveSuccess(
+    onSaveSuccess?: MarkdownDocumentControllerOptions['onSaveSuccess'],
+  ): void {
+    this.onSaveSuccess = onSaveSuccess;
+  }
+
+  setDebounceMs(debounceMs: number): void {
+    const nextDelay = Math.max(0, debounceMs);
+    if (nextDelay === this.debounceMs) {
+      return;
+    }
+    this.debounceMs = nextDelay;
+    for (const entry of this.buffers.values()) {
+      if (!entry.timer) {
+        continue;
+      }
+      this.clearTimer(entry);
+      if (
+        entry.snapshot.dirty &&
+        entry.snapshot.status !== 'conflict' &&
+        !entry.snapshot.readOnly &&
+        !entry.savePromise
+      ) {
+        this.scheduleSave(entry);
+      }
+    }
   }
 
   subscribe(nodeId: string, listener: () => void): () => void {
@@ -174,6 +216,7 @@ export class MarkdownDocumentController {
   commitEditorTransaction(
     nodeId: string,
     transaction: SourceEditTransaction,
+    viewId = nodeId,
   ): void {
     const entry = this.getEntry(nodeId);
     if (entry.snapshot.readOnly || this.mutationLocks.has(nodeId)) {
@@ -203,16 +246,21 @@ export class MarkdownDocumentController {
       this.history.reset(nodeId);
     }
 
-    this.updateContent(entry, after.content, after.selection);
+    this.updateContent(entry, after.content, after.selection, viewId);
   }
 
-  setEditorSelection(nodeId: string, selection: SourceSelection): void {
+  setEditorSelection(
+    nodeId: string,
+    selection: SourceSelection,
+    viewId = nodeId,
+  ): void {
     const entry = this.buffers.get(nodeId);
     if (!entry) {
       return;
     }
     const next = clampSelection(selection, entry.snapshot.content.length);
-    const previous = entry.snapshot.selection;
+    const key = this.viewSelectionKey(nodeId, viewId);
+    const previous = this.viewSelections.get(key) ?? entry.snapshot.selection;
     if (
       previous.start !== next.start ||
       previous.end !== next.end ||
@@ -220,31 +268,34 @@ export class MarkdownDocumentController {
     ) {
       this.history.breakCoalescing(nodeId);
     }
-    entry.snapshot = { ...entry.snapshot, selection: next };
-    this.editorStates.set(nodeId, {
-      content: entry.snapshot.content,
-      selection: next,
-    });
+    this.viewSelections.set(key, next);
+    if (viewId === nodeId) {
+      entry.snapshot = { ...entry.snapshot, selection: next };
+      this.editorStates.set(nodeId, {
+        content: entry.snapshot.content,
+        selection: next,
+      });
+    }
   }
 
-  undo(nodeId: string): SourceEditorState | undefined {
+  undo(nodeId: string, viewId = nodeId): SourceEditorState | undefined {
     if (
       this.getEntry(nodeId).snapshot.readOnly ||
       this.mutationLocks.has(nodeId)
     ) {
       return undefined;
     }
-    return this.applyHistory(nodeId, 'undo');
+    return this.applyHistory(nodeId, 'undo', viewId);
   }
 
-  redo(nodeId: string): SourceEditorState | undefined {
+  redo(nodeId: string, viewId = nodeId): SourceEditorState | undefined {
     if (
       this.getEntry(nodeId).snapshot.readOnly ||
       this.mutationLocks.has(nodeId)
     ) {
       return undefined;
     }
-    return this.applyHistory(nodeId, 'redo');
+    return this.applyHistory(nodeId, 'redo', viewId);
   }
 
   canUndo(nodeId: string): boolean {
@@ -267,6 +318,7 @@ export class MarkdownDocumentController {
     entry: MarkdownBufferEntry,
     content: string,
     selection: SourceSelection,
+    viewId = entry.snapshot.nodeId,
   ): void {
     if (
       entry.snapshot.readOnly ||
@@ -295,6 +347,10 @@ export class MarkdownDocumentController {
         : {}),
     });
     this.editorStates.set(entry.snapshot.nodeId, { content, selection });
+    this.viewSelections.set(
+      this.viewSelectionKey(entry.snapshot.nodeId, viewId),
+      selection,
+    );
 
     this.clearTimer(entry);
     if (dirty && !blockedByConflict && !saveInProgress) {
@@ -473,6 +529,11 @@ export class MarkdownDocumentController {
       this.buffers.delete(nodeId);
     }
     const editorStateRemoved = this.editorStates.delete(nodeId);
+    for (const key of this.viewSelections.keys()) {
+      if (key.startsWith(`${nodeId}\u0000`)) {
+        this.viewSelections.delete(key);
+      }
+    }
     this.history.reset(nodeId);
     const mutationLockRemoved = this.mutationLocks.delete(nodeId);
     return Boolean(entry) || editorStateRemoved || mutationLockRemoved;
@@ -486,6 +547,7 @@ export class MarkdownDocumentController {
     }
     this.buffers.clear();
     this.editorStates.clear();
+    this.viewSelections.clear();
     this.history.clear();
     this.mutationLocks.clear();
   }
@@ -582,6 +644,7 @@ export class MarkdownDocumentController {
       status: changedWhileSaving ? 'dirty' : 'saved',
       selection: entry.snapshot.selection,
     });
+    this.onSaveSuccess?.(result.value);
 
     if (changedWhileSaving) {
       this.scheduleSave(entry);
@@ -613,6 +676,14 @@ export class MarkdownDocumentController {
       entry.snapshot.selection,
       document.content.length,
     );
+    for (const [key, viewSelection] of this.viewSelections) {
+      if (key.startsWith(`${document.nodeId}\u0000`)) {
+        this.viewSelections.set(
+          key,
+          clampSelection(viewSelection, document.content.length),
+        );
+      }
+    }
     this.setSnapshot(entry, {
       nodeId: document.nodeId,
       content: document.content,
@@ -631,18 +702,49 @@ export class MarkdownDocumentController {
   private applyHistory(
     nodeId: string,
     direction: 'undo' | 'redo',
+    viewId: string,
   ): SourceEditorState | undefined {
     const entry = this.getEntry(nodeId);
     const current: SourceEditorState = {
       content: entry.snapshot.content,
-      selection: entry.snapshot.selection,
+      selection:
+        this.viewSelections.get(this.viewSelectionKey(nodeId, viewId)) ??
+        entry.snapshot.selection,
     };
     const next = this.history[direction](nodeId, current);
     if (!next) {
       return undefined;
     }
-    this.updateContent(entry, next.content, next.selection);
+    this.updateContent(entry, next.content, next.selection, viewId);
     return next;
+  }
+
+  private viewSelectionKey(nodeId: string, viewId: string): string {
+    return `${nodeId}\u0000${viewId}`;
+  }
+
+  private ensureViewSelection(
+    nodeId: string,
+    viewId: string,
+    snapshot: MarkdownBufferSnapshot,
+  ): void {
+    const key = this.viewSelectionKey(nodeId, viewId);
+    if (!this.viewSelections.has(key)) {
+      this.viewSelections.set(key, snapshot.selection);
+    }
+  }
+
+  private snapshotForView(
+    snapshot: MarkdownBufferSnapshot,
+    viewId: string,
+  ): MarkdownBufferSnapshot {
+    const selection =
+      this.viewSelections.get(
+        this.viewSelectionKey(snapshot.nodeId, viewId),
+      ) ?? snapshot.selection;
+    return selection === snapshot.selection
+      ? snapshot
+      : { ...snapshot, selection };
   }
 
   private clearTimer(entry: MarkdownBufferEntry): void {

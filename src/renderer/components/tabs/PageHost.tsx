@@ -19,6 +19,8 @@ import type {
 } from '../../pages/page-types';
 
 interface PageHostProps {
+  paneId?: string;
+  activePane?: boolean;
   activeTabId: string | null;
   tabs: readonly TabDescriptor[];
   translate: Translate;
@@ -54,7 +56,9 @@ class PageErrorBoundary extends Component<
 }
 
 interface PagePanelProps {
+  paneId: string;
   active: boolean;
+  pageActive: boolean;
   descriptor: TabDescriptor;
   presentation: TabPresentation;
   translate: Translate;
@@ -95,6 +99,7 @@ function activeOnlyRetentionState(
 }
 
 function renderPanelPage(
+  active: boolean,
   descriptor: TabDescriptor,
   presentation: TabPresentation,
   translate: Translate,
@@ -103,6 +108,7 @@ function renderPanelPage(
   onScrollChange: (scrollTop: number) => void,
 ): ReactNode {
   return renderPage({
+    active,
     descriptor,
     onStateChange,
     title: presentation.title,
@@ -113,6 +119,8 @@ function renderPanelPage(
 
 function PagePanel({
   active,
+  pageActive,
+  paneId,
   descriptor,
   presentation,
   translate,
@@ -139,10 +147,10 @@ function PagePanel({
 
   return (
     <section
-      aria-labelledby={`page-tab-${descriptor.tabId}`}
+      aria-labelledby={`page-tab-${paneId}-${descriptor.tabId}`}
       className="page-panel"
       hidden={!active}
-      id={`page-panel-${descriptor.tabId}`}
+      id={`page-panel-${paneId}-${descriptor.tabId}`}
       onScroll={handleScroll}
       ref={panelRef}
       role="tabpanel"
@@ -156,6 +164,7 @@ function PagePanel({
         }
       >
         {renderPanelPage(
+          pageActive,
           descriptor,
           presentation,
           translate,
@@ -169,6 +178,8 @@ function PagePanel({
 }
 
 export function PageHost({
+  paneId = 'primary',
+  activePane = true,
   activeTabId,
   tabs,
   translate,
@@ -213,7 +224,9 @@ export function PageHost({
         <PagePanel
           active={descriptor.tabId === activeTabId}
           descriptor={descriptor}
-          key={descriptor.tabId}
+          key={`${paneId}:${descriptor.tabId}`}
+          paneId={paneId}
+          pageActive={activePane && descriptor.tabId === activeTabId}
           onPageStateChange={onPageStateChange}
           onScrollChange={onScrollChange}
           presentation={getPresentation(descriptor)}

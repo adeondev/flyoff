@@ -2,31 +2,39 @@ import { describe, expect, it } from 'vitest';
 
 import {
   createEditorModeState,
-  isEditorMode,
   readEditorMode,
+  updateEditorModeState,
 } from '../../src/renderer/projects/editor-mode';
 
-describe('note editor mode state', () => {
-  it('accepts only the known modes', () => {
-    expect(isEditorMode('edit')).toBe(true);
-    expect(isEditorMode('reading')).toBe(true);
-    expect(isEditorMode('split')).toBe(true);
-    expect(isEditorMode('wysiwyg')).toBe(false);
-    expect(isEditorMode(2)).toBe(false);
+describe('editor view state', () => {
+  it('reads modes from current and legacy editor sessions', () => {
+    expect(
+      readEditorMode({ version: 1, data: { mode: 'split' } }),
+    ).toBe('split');
+    expect(
+      readEditorMode({
+        version: 2,
+        data: { mode: 'reading', toolbarCollapsed: true },
+      }),
+    ).toBe('reading');
   });
 
-  it('round-trips a mode through page session state', () => {
-    expect(readEditorMode(createEditorModeState('split'))).toBe('split');
-    expect(createEditorModeState('reading')).toEqual({
-      version: 1,
+  it('stores only the mode and drops legacy per-tab toolbar state', () => {
+    const reading = updateEditorModeState(
+      {
+        version: 2,
+        data: { mode: 'edit', toolbarCollapsed: true },
+      },
+      'reading',
+    );
+
+    expect(reading).toEqual({
+      version: 3,
       data: { mode: 'reading' },
     });
-  });
-
-  it('falls back to edit for missing or invalid state', () => {
-    expect(readEditorMode(undefined)).toBe('edit');
-    expect(readEditorMode({ version: 1, data: null })).toBe('edit');
-    expect(readEditorMode({ version: 1, data: { mode: 'nope' } })).toBe('edit');
-    expect(readEditorMode({ version: 1, data: [] })).toBe('edit');
+    expect(createEditorModeState('split')).toEqual({
+      version: 3,
+      data: { mode: 'split' },
+    });
   });
 });

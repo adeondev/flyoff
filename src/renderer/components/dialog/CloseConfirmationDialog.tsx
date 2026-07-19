@@ -18,11 +18,15 @@ export function CloseConfirmationDialog({
   pending,
 }: CloseConfirmationDialogProps) {
   const title =
-    intent === 'quit-application'
+    intent === 'restart-application'
+      ? translate('closeConfirmation.restartTitle')
+      : intent === 'quit-application'
       ? translate('closeConfirmation.quitTitle')
       : translate('closeConfirmation.closeWindowTitle');
   const confirmLabel =
-    intent === 'quit-application'
+    intent === 'restart-application'
+      ? translate('closeConfirmation.restart')
+      : intent === 'quit-application'
       ? translate('closeConfirmation.quit')
       : translate('closeConfirmation.closeWindow');
 

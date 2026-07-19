@@ -1,4 +1,10 @@
-import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
+import {
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -18,9 +24,18 @@ const repositoryRoot = path.resolve(__dirname, '../..');
 interface Labels {
   addInstance: string;
   chooseLocation: string;
+  collapseToolbar: string;
+  copyAddress: string;
   create: string;
+  duplicateLine: string;
   edit: string;
   editor: string;
+  editorModeMenu: string;
+  expandToolbar: string;
+  findReferences: string;
+  goToDefinition: string;
+  line: string;
+  linkPreview: string;
   name: string;
   newNote: string;
   note: string;
@@ -28,7 +43,12 @@ interface Labels {
   projectName: string;
   reading: string;
   redo: string;
+  rename: string;
+  renameSymbol: string;
+  replaceOccurrences: string;
   split: string;
+  peekDefinition: string;
+  unmarkTask: string;
   undo: string;
 }
 
@@ -37,33 +57,61 @@ function labelsFor(locale: string): Labels {
       ? {
         addInstance: 'Add instance',
         chooseLocation: 'Choose location',
+        collapseToolbar: 'Collapse formatting toolbar',
+        copyAddress: 'Copy address',
         create: 'Create',
+        duplicateLine: 'Duplicate line',
         edit: 'Edit',
         editor: 'Markdown editor',
+        editorModeMenu: 'Note options',
+        expandToolbar: 'Show formatting toolbar',
+        findReferences: 'Find references',
+        goToDefinition: 'Go to definition',
+        line: 'Line',
+        linkPreview: 'Preview',
         name: 'Name',
         newNote: 'New note',
         note: 'Note',
-        newProject: 'New Project',
-        projectName: 'Project name',
+        newProject: 'New den',
+        projectName: 'Den name',
         reading: 'Reading',
         redo: 'Redo',
+        rename: 'Rename',
+        renameSymbol: 'Rename symbol',
+        replaceOccurrences: 'Change links in this note',
         split: 'Split',
+        peekDefinition: 'Peek',
+        unmarkTask: 'Unmark task',
         undo: 'Undo',
       }
       : {
         addInstance: 'Adicionar instância',
         chooseLocation: 'Escolher local',
+        copyAddress: 'Copiar endereço',
+        collapseToolbar: 'Recolher barra de formata\u00e7\u00e3o',
         create: 'Criar',
+        duplicateLine: 'Duplicar linha',
         edit: 'Editar',
+        expandToolbar: 'Mostrar barra de formata\u00e7\u00e3o',
         editor: 'Editor Markdown',
+        editorModeMenu: 'Op\u00e7\u00f5es da nota',
+        findReferences: 'Localizar refer\u00eancias',
+        goToDefinition: 'Ir para defini\u00e7\u00e3o',
+        line: 'Linha',
+        linkPreview: 'Pr\u00e9-visualiza\u00e7\u00e3o',
         name: 'Nome',
         newNote: 'Nova nota',
         note: 'Nota',
-        newProject: 'Novo Projeto',
-        projectName: 'Nome do projeto',
+        newProject: 'Nova toca',
+        projectName: 'Nome da toca',
         reading: 'Leitura',
         redo: 'Refazer',
+        rename: 'Renomear',
+        renameSymbol: 'Renomear s\u00edmbolo',
+        replaceOccurrences: 'Alterar links nesta nota',
         split: 'Dividido',
+        peekDefinition: 'Espiar',
+        unmarkTask: 'Desmarcar tarefa',
         undo: 'Desfazer',
       };
 }
@@ -135,6 +183,29 @@ async function clickSourceText(
   await page.mouse.click(point.x, point.y, { clickCount });
 }
 
+async function addMarkdownNote(
+  page: Page,
+  labels: Labels,
+  name: string,
+): Promise<ReturnType<Page['locator']>> {
+  await page.getByRole('button', { name: labels.addInstance }).click();
+  await page
+    .getByRole('dialog', { name: labels.addInstance })
+    .getByRole('option', { name: new RegExp(`^${labels.note}`) })
+    .click();
+  const nameInput = page.getByRole('textbox', { name: labels.name });
+  await nameInput.fill(name);
+  await nameInput.press('Enter');
+  await expect(page.getByRole('tab', { name })).toHaveAttribute(
+    'aria-selected',
+    'true',
+  );
+  const editor = page.locator('.markdown-source__editor:visible');
+  await expect(editor).toBeVisible();
+  await expect(editor).toBeFocused();
+  return editor;
+}
+
 test('stabilizes Markdown editing, history, gutters and note zoom', async () => {
   test.setTimeout(90_000);
   const appPath = locatePackagedAsar(repositoryRoot);
@@ -149,6 +220,15 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
   let app: ElectronApplication | undefined;
 
   try {
+    await writeFile(
+      path.join(userDataPath, 'preferences.json'),
+      JSON.stringify({
+        general: {
+          focusEditorOnOpen: false,
+        },
+      }),
+      'utf8',
+    );
     app = await electron.launch({
       args: [
         appPath,
@@ -195,15 +275,83 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
     await nameInput.fill(noteName);
     await nameInput.press('Enter');
 
-    let editor = page.getByRole('textbox', { name: labels.editor });
+    let editor = page.locator('.markdown-source__editor:visible');
+    await expect(editor).not.toBeFocused();
+    await expect(editor.locator(':scope > .md-line')).toHaveCount(1);
+    await expect(editor.locator('[data-md-gutter]')).toHaveText('1');
+    await expect(editor.locator('[data-md-placeholder]')).toHaveCount(1);
+
+    const toolbarRegion = () =>
+      page
+        .getByRole('tabpanel')
+        .locator('.markdown-editor__toolbar-region');
+    await page
+      .getByRole('button', { name: labels.collapseToolbar })
+      .click();
+    await expect(toolbarRegion()).toHaveAttribute('data-collapsed', 'true');
+
+    await page.getByRole('button', { name: labels.addInstance }).click();
+    await page
+      .getByRole('dialog', { name: labels.addInstance })
+      .getByRole('option', { name: new RegExp(`^${labels.note}`) })
+      .click();
+    const syncedNoteName = 'Toolbar sync';
+    const syncedNameInput = page.getByRole('textbox', {
+      name: labels.name,
+    });
+    await syncedNameInput.fill(syncedNoteName);
+    await syncedNameInput.press('Enter');
+    await expect(toolbarRegion()).toHaveAttribute('data-collapsed', 'true');
+
+    await page.getByRole('tab', { name: noteName }).click();
+    await expect(toolbarRegion()).toHaveAttribute('data-collapsed', 'true');
+    await page
+      .getByRole('button', { name: labels.expandToolbar })
+      .click();
+    await expect(toolbarRegion()).not.toHaveAttribute('data-collapsed');
+    await page.getByRole('tab', { name: syncedNoteName }).click();
+    await expect(toolbarRegion()).not.toHaveAttribute('data-collapsed');
+    await page.getByRole('tab', { name: noteName }).click();
+
+    const shelfGeometry = await page
+      .getByRole('tabpanel')
+      .locator('.markdown-editor__shelf-frame')
+      .evaluate((frame) => {
+        const outlines = frame.querySelectorAll<SVGGeometryElement>(
+          '.markdown-editor__shelf-outline',
+        );
+        const curve = outlines[0];
+        const curveLength = curve?.getTotalLength() ?? 0;
+        const start = curve?.getPointAtLength(0);
+        const end = curve?.getPointAtLength(curveLength);
+        return {
+          curveEnd: end ? { x: end.x, y: end.y } : undefined,
+          curveStart: start ? { x: start.x, y: start.y } : undefined,
+          lowerStart: {
+            x: outlines[2]?.getAttribute('x1'),
+            y: outlines[2]?.getAttribute('y1'),
+          },
+          upperStart: {
+            x: outlines[1]?.getAttribute('x1'),
+            y: outlines[1]?.getAttribute('y1'),
+          },
+        };
+      });
+    expect(shelfGeometry).toMatchObject({
+      curveEnd: { x: 0.5, y: 25.5 },
+      curveStart: { x: 24, y: 0.5 },
+      lowerStart: { x: '.5', y: '25.5' },
+      upperStart: { x: '24', y: '.5' },
+    });
+
     await editor.click();
     await page.keyboard.type('a');
     await page.keyboard.press('Enter');
     await page.keyboard.press('Enter');
     await expect.poll(() => sourceOf(editor)).toBe('a\n\n');
-    await page.keyboard.press('Backspace');
+    await editor.press('Backspace');
     await expect.poll(() => sourceOf(editor)).toBe('a\n');
-    await page.keyboard.press('Backspace');
+    await editor.press('Backspace');
     await expect.poll(() => sourceOf(editor)).toBe('a');
     await editor.selectText();
     await page.keyboard.insertText('==uau==');
@@ -211,6 +359,13 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
     await page.keyboard.insertText('[text](https://x.dev)');
     const sample = '==uau==\n[text](https://x.dev)';
     await expect.poll(() => sourceOf(editor)).toBe(sample);
+    await editor.locator('.md-source-link').click({ button: 'right' });
+    await page
+      .getByRole('menuitem', { name: labels.copyAddress })
+      .click();
+    await expect.poll(() =>
+      app!.evaluate(({ clipboard }) => clipboard.readText()),
+    ).toBe('https://x.dev');
 
     await clickSourceText(page, editor, 'text', 2);
     await expect.poll(() => page.evaluate(() => getSelection()?.toString())).toBe(
@@ -241,7 +396,12 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
     await expect.poll(() => page.evaluate(() => getSelection()?.toString())).toBe(
       '[text](https://x.dev)',
     );
-    await page.getByRole('button', { name: labels.split }).click();
+    await page
+      .getByRole('button', { name: labels.editorModeMenu })
+      .click();
+    await page
+      .getByRole('menuitemcheckbox', { name: labels.split })
+      .click();
     const reading = page.getByRole('document', { name: labels.reading });
     await expect(reading.locator('mark')).toHaveText('uau');
     await expect(reading.locator('br')).toHaveCount(1);
@@ -254,6 +414,7 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
     await page.getByRole('tab', { name: projectName }).click();
     await page.getByRole('tab', { name: noteName }).click();
     editor = page.getByRole('textbox', { name: labels.editor });
+    await expect(editor).not.toBeFocused();
     await editor.focus();
     await page.keyboard.press(
       process.platform === 'darwin' ? 'Meta+Z' : 'Control+Z',
@@ -264,21 +425,16 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
     );
     await expect.poll(() => sourceOf(editor)).toBe(sample);
 
-    if (process.platform === 'darwin') {
-      await app.evaluate(({ BrowserWindow, Menu }) => {
-        const item = Menu.getApplicationMenu()?.getMenuItemById('editor.undo');
-        const window = BrowserWindow.getAllWindows()[0];
-        if (item && window) {
-          item.click?.(item, window, {} as never);
-        }
-      });
-    } else {
-      await page.getByRole('menuitem', { name: labels.edit, exact: true }).click();
-      await page
-        .locator('.flyoff-menu')
-        .getByRole('menuitem', { name: new RegExp(`^${labels.undo}`) })
-        .click();
-    }
+    await expect(
+      page.getByRole('menuitem', { name: labels.edit, exact: true }),
+    ).toHaveCount(0);
+    await app.evaluate(({ BrowserWindow, Menu }) => {
+      const item = Menu.getApplicationMenu()?.getMenuItemById('editor.undo');
+      const window = BrowserWindow.getAllWindows()[0];
+      if (item && window) {
+        item.click?.(item, window, {} as never);
+      }
+    });
     await expect.poll(() => sourceOf(editor)).toBe('==uau==\n');
     await page.keyboard.press(
       process.platform === 'darwin' ? 'Meta+Shift+Z' : 'Control+Y',
@@ -484,6 +640,56 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
     await page.keyboard.press(`${primary}+V`);
     await expect.poll(() => sourceOf(editor)).toBe(sample);
 
+    await app.evaluate(
+      ({ clipboard }) => clipboard.writeText('- [x] done'),
+    );
+    await expect
+      .poll(() => app!.evaluate(({ clipboard }) => clipboard.readText()))
+      .toBe('- [x] done');
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => resolve()),
+        ),
+    );
+    await editor.selectText();
+    await page.keyboard.press(`${primary}+V`);
+    await expect.poll(() => sourceOf(editor)).toBe('- [x] done');
+    let task = editor.locator('.md-tok-task--checked');
+    await expect(task).toHaveCount(1);
+    await expect(task.locator('.md-tok-task__box')).toHaveCSS(
+      'border-style',
+      'solid',
+    );
+
+    await task.click({ button: 'right' });
+    await page.getByRole('menuitem', { name: labels.line }).click();
+    await page
+      .getByRole('menuitem', { name: labels.duplicateLine })
+      .click();
+    await expect.poll(() => sourceOf(editor)).toBe(
+      '- [x] done\n- [x] done',
+    );
+
+    task = editor.locator('.md-tok-task--checked').first();
+    await task.click({ button: 'right' });
+    const toggleTask = page.getByRole('menuitemcheckbox', {
+      name: labels.unmarkTask,
+    });
+    await expect(toggleTask).toHaveAttribute('aria-checked', 'true');
+    await toggleTask.click();
+    await expect.poll(() => sourceOf(editor)).toBe(
+      '- [ ] done\n- [x] done',
+    );
+
+    await app.evaluate(
+      ({ clipboard }, text) => clipboard.writeText(text),
+      sample,
+    );
+    await editor.selectText();
+    await page.keyboard.press(`${primary}+V`);
+    await expect.poll(() => sourceOf(editor)).toBe(sample);
+
     const longLine = `long ${'wrapped '.repeat(100)}`;
     const layoutContent = [
       '# Heading',
@@ -520,6 +726,72 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
     await expect
       .poll(() => editor.evaluate((root) => root.scrollTop))
       .toBeLessThan(pageDownScroll);
+
+    await editor.evaluate((root) => {
+      root.scrollTop = (root.scrollHeight - root.clientHeight) * 0.45;
+      root.dispatchEvent(new Event('scroll', { bubbles: true }));
+    });
+    await expect
+      .poll(async () => {
+        const [sourceRatio, readingRatio] = await Promise.all([
+          editor.evaluate(
+            (root) =>
+              root.scrollTop /
+              Math.max(1, root.scrollHeight - root.clientHeight),
+          ),
+          reading.evaluate(
+            (root) =>
+              root.scrollTop /
+              Math.max(1, root.scrollHeight - root.clientHeight),
+          ),
+        ]);
+        return Math.abs(sourceRatio - readingRatio);
+      })
+      .toBeLessThan(0.03);
+
+    await reading.evaluate((root) => {
+      root.dispatchEvent(new WheelEvent('wheel', { bubbles: true }));
+      root.scrollTop = 12;
+    });
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+        ),
+    );
+    expect(await reading.evaluate((root) => root.scrollTop)).toBe(12);
+    await editor.evaluate((root) => {
+      root.scrollTop = (root.scrollHeight - root.clientHeight) * 0.8;
+      root.dispatchEvent(new Event('scroll', { bubbles: true }));
+    });
+    await expect
+      .poll(async () => {
+        const [sourceRatio, readingRatio] = await Promise.all([
+          editor.evaluate(
+            (root) =>
+              root.scrollTop /
+              Math.max(1, root.scrollHeight - root.clientHeight),
+          ),
+          reading.evaluate(
+            (root) =>
+              root.scrollTop /
+              Math.max(1, root.scrollHeight - root.clientHeight),
+          ),
+        ]);
+        return Math.abs(sourceRatio - readingRatio);
+      })
+      .toBeLessThan(0.03);
+
+    const scrollbar = await editor.evaluate((root) => ({
+      button: getComputedStyle(root, '::-webkit-scrollbar-button').display,
+      thumb: getComputedStyle(root, '::-webkit-scrollbar-thumb')
+        .backgroundColor,
+      track: getComputedStyle(root, '::-webkit-scrollbar-track')
+        .backgroundColor,
+    }));
+    expect(scrollbar.button).toBe('none');
+    expect(scrollbar.thumb).not.toBe('rgba(0, 0, 0, 0)');
+    expect(scrollbar.track).toBe('rgba(0, 0, 0, 0)');
 
     let currentScale = 1;
     for (const targetScale of [0.6, 1, 2, 2.6]) {
@@ -599,9 +871,11 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
       expect(metrics.readingFontSize).toBeCloseTo(metrics.fontSize, 1);
       expect(metrics.sourceFontFamily).toContain('Arial');
       expect(metrics.readingFontFamily).toBe(metrics.sourceFontFamily);
-      expect(metrics.gutterLeft).toBeCloseTo(28, 1);
+      expect(metrics.gutterLeft).toBeCloseTo(28 * targetScale, 1);
       expect(metrics.gutterOverlap).toBe(false);
-      expect(metrics.contentOffset).toBeGreaterThan(28 + metrics.fontSize * 2);
+      expect(metrics.contentOffset).toBeGreaterThan(
+        28 * targetScale + metrics.fontSize * 2,
+      );
       expect(metrics.sourcePadding).toBe(0);
       expect(metrics.readingPadding).toBeCloseTo(28 * targetScale, 1);
       expect(metrics.lineCount).toBe(1_001);
@@ -616,6 +890,7 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
     await page.getByRole('tab', { name: projectName }).click();
     await page.getByRole('tab', { name: noteName }).click();
     editor = page.getByRole('textbox', { name: labels.editor });
+    await expect(editor).not.toBeFocused();
     await editor.focus();
     await page.keyboard.press(
       process.platform === 'darwin' ? 'Meta+Z' : 'Control+Z',
@@ -629,6 +904,170 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
     await expect.poll(() => page.evaluate(() => getSelection()?.toString())).toBe(
       '1000',
     );
+  } finally {
+    await stopApplication(app);
+    await rm(userDataPath, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
+    await rm(projectParent, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
+  }
+});
+
+test('navigates, previews and rewrites internal note links', async () => {
+  test.setTimeout(90_000);
+  const appPath = locatePackagedAsar(repositoryRoot);
+  const userDataPath = await mkdtemp(path.join(os.tmpdir(), 'flyoff-links-e2e-'));
+  const projectParent = await mkdtemp(
+    path.join(os.tmpdir(), 'flyoff-links-project-'),
+  );
+  const canonicalParent = await realpath(projectParent);
+  const projectName = 'Links E2E';
+  const projectRoot = path.join(canonicalParent, projectName);
+  let app: ElectronApplication | undefined;
+
+  try {
+    app = await electron.launch({
+      args: [
+        appPath,
+        ...(process.platform === 'linux' && process.env.CI
+          ? ['--no-sandbox']
+          : []),
+      ],
+      env: {
+        ...process.env,
+        FLYOFF_E2E: '1',
+        FLYOFF_E2E_PROJECT_CREATE_PARENT: canonicalParent,
+        FLYOFF_E2E_PROJECT_OPEN_ROOT: projectRoot,
+        FLYOFF_E2E_USER_DATA: userDataPath,
+      },
+    });
+    const page = await app.firstWindow();
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForFunction(() =>
+      ['pt-BR', 'en-US'].includes(document.documentElement.lang),
+    );
+    const labels = labelsFor(
+      await page.evaluate(() => document.documentElement.lang),
+    );
+    await page.getByRole('button', { name: labels.newProject }).click();
+    const projectDialog = page.getByRole('dialog');
+    await projectDialog
+      .getByRole('textbox', { name: labels.projectName })
+      .fill(projectName);
+    await projectDialog
+      .getByRole('button', { name: labels.chooseLocation })
+      .click();
+    await projectDialog.getByRole('button', { name: labels.create }).click();
+
+    let editor = await addMarkdownNote(page, labels, 'Target');
+    const targetContent = '# Parent\n\n## Child\n\nTarget body';
+    await editor.click();
+    await page.keyboard.insertText(targetContent);
+    await expect
+      .poll(() =>
+        readFile(path.join(projectRoot, 'Target.md'), 'utf8').catch(() => ''),
+      )
+      .toBe(targetContent);
+
+    editor = await addMarkdownNote(page, labels, 'Other');
+    await editor.click();
+    await page.keyboard.insertText('# Other');
+    await expect
+      .poll(() =>
+        readFile(path.join(projectRoot, 'Other.md'), 'utf8').catch(() => ''),
+      )
+      .toBe('# Other');
+
+    editor = await addMarkdownNote(page, labels, 'Source');
+    const sourceContent =
+      '[go](Target.md#Parent#Child)\n[[Target#Parent#Child|wiki]]';
+    await editor.click();
+    await page.keyboard.insertText(sourceContent);
+    await expect
+      .poll(() =>
+        readFile(path.join(projectRoot, 'Source.md'), 'utf8').catch(() => ''),
+      )
+      .toBe(sourceContent);
+
+    await editor.locator('.md-source-link').first().click({ button: 'right' });
+    await page
+      .getByRole('menuitem', { name: labels.peekDefinition })
+      .click();
+    const preview = page.getByRole('dialog', { name: labels.linkPreview });
+    await expect(preview).toContainText('Target body');
+    await expect(
+      page.getByRole('tab', { name: 'Source' }),
+    ).toHaveAttribute('aria-selected', 'true');
+    await page.keyboard.press('Escape');
+
+    await editor.locator('.md-source-link').first().click({ button: 'right' });
+    await page
+      .getByRole('menuitem', { name: labels.goToDefinition })
+      .click();
+    await expect(
+      page.getByRole('tab', { name: 'Target' }),
+    ).toHaveAttribute('aria-selected', 'true');
+    editor = page.locator('.markdown-source__editor:visible');
+    await expect.poll(() => sourceOf(editor)).toBe(targetContent);
+
+    await page.getByRole('tab', { name: 'Source' }).click();
+    editor = page.locator('.markdown-source__editor:visible');
+    await editor.locator('.md-source-link').first().click({ button: 'right' });
+    await page
+      .getByRole('menuitem', { name: labels.findReferences })
+      .click();
+    const backlinks = page.getByRole('dialog', {
+      name: new RegExp('Target'),
+    });
+    await expect(backlinks).toContainText('/Source:1:1');
+    await expect(backlinks).toContainText('/Source:2:1');
+    await page.keyboard.press('Escape');
+
+    await editor.locator('.md-source-link').first().click({ button: 'right' });
+    await page
+      .getByRole('menuitem', { name: labels.renameSymbol })
+      .click();
+    const renameDialog = page.getByRole('dialog');
+    const renameInput = renameDialog.getByRole('textbox', {
+      name: labels.name,
+    });
+    await renameInput.fill('Renamed');
+    await renameDialog
+      .getByRole('button', { name: labels.rename })
+      .click();
+    const renamedContent =
+      '[go](Renamed.md#Parent#Child)\n[[Renamed#Parent#Child|wiki]]';
+    await expect.poll(() => sourceOf(editor)).toBe(renamedContent);
+    await expect
+      .poll(() =>
+        readFile(path.join(projectRoot, 'Renamed.md'), 'utf8').catch(() => ''),
+      )
+      .toBe(targetContent);
+
+    const firstLink = await sourceTextPoint(editor, 'Renamed.md');
+    await page.mouse.click(firstLink.x, firstLink.y);
+    await page.keyboard.press(
+      process.platform === 'darwin' ? 'Meta+F2' : 'Control+F2',
+    );
+    const replaceDialog = page.getByRole('dialog', {
+      name: labels.replaceOccurrences,
+    });
+    await replaceDialog.getByRole('button', { name: /Other/ }).click();
+    const replacedContent =
+      '[go](Other.md#Parent#Child)\n[[Other#Parent#Child|wiki]]';
+    await expect.poll(() => sourceOf(editor)).toBe(replacedContent);
+    await page.keyboard.press(
+      process.platform === 'darwin' ? 'Meta+Z' : 'Control+Z',
+    );
+    await expect.poll(() => sourceOf(editor)).toBe(renamedContent);
   } finally {
     await stopApplication(app);
     await rm(userDataPath, {

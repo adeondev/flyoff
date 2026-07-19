@@ -10,7 +10,10 @@ import {
 
 import flyoffLogo from '../../public/images/flyoff/flyoff-logo.svg';
 import sidebarToggleIcon from '../../public/images/icons/actions/sidebar-toggle.svg';
-import markdownPageIcon from '../../public/images/icons/instances/note.svg';
+import closeMenuIcon from '../../public/images/icons/actions/close-pane.svg';
+import infoMenuIcon from '../../public/images/icons/actions/info.svg';
+import refreshMenuIcon from '../../public/images/icons/actions/refresh.svg';
+import markdownPageIcon from '../../public/images/icons/instances/note-solid.svg';
 import projectOverviewIcon from '../../public/images/icons/instances/project.svg';
 import {
   APPLICATION_MENU_COMMANDS,
@@ -35,9 +38,19 @@ import {
   type FlyoffPlatform,
   type InternalPageId,
   type MarkdownDocument,
+  type ProjectBacklinksOutcome,
+  type ProjectInternalLinkRequest,
+  type ProjectInternalLinkResolution,
+  type ProjectInternalLinkTarget,
+  type ProjectLinkTarget,
+  type ProjectPageNode,
   type ProjectLocationSelection,
+  type ProjectNoteActivityEntry,
   type ProjectFailureDetails,
+  type ProjectGraphNode,
+  type ProjectGraphSnapshot,
   type ProjectResult,
+  type ProjectSearchOutcome,
   type ProjectSummary,
   type ProjectTreeNode,
   type RendererMenuCommand,
@@ -47,8 +60,6 @@ import {
   type TranslationCatalog,
   type TranslationKey,
   type TrashProjectNodeOutcome,
-  type WindowControlAction,
-  type WindowState,
 } from '../shared';
 import { CloseConfirmationDialog } from './components/dialog/CloseConfirmationDialog';
 import { SessionRestoreToast } from './components/dialog/SessionRestoreToast';
@@ -69,8 +80,11 @@ import {
   resolveRailView,
 } from './components/rail';
 import { GlobalSidebar } from './components/Sidebar';
-import { PageHost } from './components/tabs/PageHost';
-import { TabBar } from './components/tabs/TabBar';
+import { collectPanes } from './components/tabs/pane-state';
+import {
+  WorkspacePaneHost,
+  type WorkspacePaneHostHandle,
+} from './components/tabs/WorkspacePaneHost';
 import { TooltipHost, getTooltipTargetProps } from './components/tooltip';
 import {
   adoptWorkspaceSnapshot,
@@ -81,13 +95,19 @@ import {
   serializeWorkspace,
   workspaceReducer,
   type WorkspaceAction,
+  type WorkspaceState,
 } from './components/tabs/workspace-state';
-import {
-  WindowControls,
-  type WindowControlLabels,
-} from './components/WindowControls';
 import { initializeRendererI18n } from './i18n';
+import {
+  FlyoffPreferencesProvider,
+  useFlyoffPreferencesController,
+} from './preferences';
 import { HomePage } from './pages/HomePage';
+import {
+  NewTabPage,
+  type NewTabNoteItem,
+  type NewTabSearchOutcome,
+} from './pages/NewTabPage';
 import {
   getPageDefinition,
   renderRegisteredInternalPage,
@@ -103,16 +123,22 @@ import {
   MarkdownDocumentController,
   ProjectContentPage,
   ProjectEmptyState,
+  ProjectGraphPanel,
   ProjectOverview,
   ProjectPagePropertiesDialog,
   ProjectSidebar,
   getProjectPageTypeDefinition,
   type ProjectSidebarHandle,
+  type MarkdownLinkNavigation,
   projectNodeDisplayName,
   projectNodeLogicalPath,
   resolveProjectNodeLineage,
   useProjectPageProperties,
 } from './projects';
+import {
+  createEditorModeState,
+  type EditorMode,
+} from './projects/editor-mode';
 
 function translateCatalog(
   catalog: TranslationCatalog,
@@ -127,6 +153,13 @@ function translateCatalog(
 }
 
 const fallbackTranslate: Translate = (key) => translateCatalog(ptBR, key);
+
+const APPLICATION_MENU_ICONS: Readonly<Record<string, string>> = {
+  'file.close-tab': closeMenuIcon,
+  'window.close': closeMenuIcon,
+  'view.reset-zoom': refreshMenuIcon,
+  'help.about': infoMenuIcon,
+};
 
 function createMenuItems(
   entries: readonly ApplicationMenuEntryDefinition[],
@@ -152,6 +185,7 @@ function createMenuItems(
       kind: 'action',
       label: translate(entry.labelKey),
       shortcut: entry.shortcut?.display,
+      icon: APPLICATION_MENU_ICONS[entry.command],
     };
   });
 }
@@ -169,11 +203,8 @@ interface TitlebarProps {
   platform?: FlyoffPlatform;
   sidebarCollapsed: boolean;
   toggleSidebarLabel: string;
-  windowControlLabels: WindowControlLabels;
-  windowState: WindowState;
   onMenuAction: (id: string) => void;
   onToggleSidebar: () => void;
-  onWindowAction: (action: WindowControlAction) => void;
 }
 
 function Titlebar({
@@ -181,11 +212,8 @@ function Titlebar({
   platform,
   sidebarCollapsed,
   toggleSidebarLabel,
-  windowControlLabels,
-  windowState,
   onMenuAction,
   onToggleSidebar,
-  onWindowAction,
 }: TitlebarProps) {
   const isMacOS = platform === 'darwin';
 
@@ -217,11 +245,6 @@ function Titlebar({
         />
       ) : null}
       <div className="titlebar__drag-space" />
-      <WindowControls
-        labels={windowControlLabels}
-        maximized={windowState.maximized}
-        onAction={onWindowAction}
-      />
     </header>
   );
 }
@@ -235,6 +258,25 @@ function unavailableProjectResult<T>(message: string): ProjectResult<T> {
     ok: false,
     error: { code: 'invalid-operation', message },
   };
+}
+
+function applyDefaultProjectPageState(
+  action: WorkspaceAction,
+  mode: EditorMode,
+): WorkspaceAction {
+  if (
+    (action.type === 'open-target' ||
+      action.type === 'move-or-open-target' ||
+      action.type === 'split-pane-with-target') &&
+    action.target.type === 'project-content' &&
+    action.initialPageState === undefined
+  ) {
+    return {
+      ...action,
+      initialPageState: createEditorModeState(mode),
+    };
+  }
+  return action;
 }
 
 function createMarkdownController(
@@ -261,16 +303,120 @@ function createMarkdownController(
   });
 }
 
+type AppWorkspaceAction =
+  | WorkspaceAction
+  | { type: 'replace-workspace-state'; state: WorkspaceState };
+
+function appWorkspaceReducer(
+  state: WorkspaceState,
+  action: AppWorkspaceAction,
+): WorkspaceState {
+  return action.type === 'replace-workspace-state'
+    ? action.state
+    : workspaceReducer(state, action);
+}
+
+function collapsingPaneId(
+  state: WorkspaceState,
+  action: WorkspaceAction,
+): string | undefined {
+  const workspace = state.project ?? state.home;
+  const panes = collectPanes(workspace.root);
+  if (panes.length <= 1) {
+    return undefined;
+  }
+  if (action.type === 'close-pane') {
+    return panes.some(({ paneId }) => paneId === action.paneId)
+      ? action.paneId
+      : undefined;
+  }
+  if (action.type !== 'close-tab') {
+    return undefined;
+  }
+  const paneId = action.paneId ?? workspace.activePaneId;
+  const pane = panes.find((candidate) => candidate.paneId === paneId);
+  return pane?.tabs.length === 1 &&
+    pane.tabs[0]?.tabId === action.tabId
+    ? paneId
+    : undefined;
+}
+
+function workspaceExitTarget(
+  state: WorkspaceState,
+  action: WorkspaceAction,
+):
+  | { kind: 'pane'; paneId: string }
+  | { kind: 'tab-and-pane'; paneId: string; tabId: string }
+  | { kind: 'tab'; paneId: string; tabId: string }
+  | undefined {
+  const paneId = collapsingPaneId(state, action);
+  if (paneId) {
+    return action.type === 'close-tab'
+      ? { kind: 'tab-and-pane', paneId, tabId: action.tabId }
+      : { kind: 'pane', paneId };
+  }
+  if (action.type !== 'close-tab') {
+    return undefined;
+  }
+  const workspace = state.project ?? state.home;
+  const resolvedPaneId = action.paneId ?? workspace.activePaneId;
+  const pane = collectPanes(workspace.root).find(
+    (candidate) => candidate.paneId === resolvedPaneId,
+  );
+  return pane?.tabs.some(({ tabId }) => tabId === action.tabId)
+    ? { kind: 'tab', paneId: resolvedPaneId, tabId: action.tabId }
+    : undefined;
+}
+
+function activeProjectNodeId(state: WorkspaceState): string | undefined {
+  const workspace = state.project;
+  if (!workspace) {
+    return undefined;
+  }
+  const pane = collectPanes(workspace.root).find(
+    ({ paneId }) => paneId === workspace.activePaneId,
+  );
+  const activeTab = pane?.tabs.find(
+    ({ tabId }) => tabId === pane.activeTabId,
+  );
+  return activeTab?.target.type === 'project-content' &&
+    activeTab.target.pageType === 'markdown'
+    ? activeTab.target.nodeId
+    : undefined;
+}
+
+function projectDocumentNodeIds(state: WorkspaceState): ReadonlySet<string> {
+  return new Set(
+    state.project
+      ? collectPanes(state.project.root).flatMap(({ tabs }) =>
+          tabs.flatMap(({ target }) =>
+            target.type === 'project-content' &&
+            target.pageType === 'markdown'
+              ? [target.nodeId]
+              : [],
+          ),
+        )
+      : [],
+  );
+}
+
+function tracksProjectActivation(action: WorkspaceAction): boolean {
+  return (
+    action.type === 'open-target' ||
+    action.type === 'move-or-open-target' ||
+    action.type === 'split-pane-with-target' ||
+    action.type === 'select-tab' ||
+    action.type === 'select-pane'
+  );
+}
+
 export function App() {
   const [platform, setPlatform] = useState<FlyoffPlatform>();
   const [translator, setTranslator] = useState<{ translate: Translate }>({
     translate: fallbackTranslate,
   });
-  const [windowState, setWindowState] = useState<WindowState>({
-    maximized: false,
-  });
   const [workspaceState, dispatchWorkspace] = useReducer(
-    workspaceReducer,
+    appWorkspaceReducer,
     undefined,
     createInitialWorkspaceState,
   );
@@ -278,6 +424,13 @@ export function App() {
   const [projectNodes, setProjectNodes] = useState<
     ReadonlyMap<string, ProjectTreeNode>
   >(() => new Map());
+  const [projectNoteActivity, setProjectNoteActivity] = useState<
+    readonly ProjectNoteActivityEntry[]
+  >([]);
+  const [activityNoteTargets, setActivityNoteTargets] = useState<
+    ReadonlyMap<string, ProjectLinkTarget>
+  >(() => new Map());
+  const [graphDocumentRevision, setGraphDocumentRevision] = useState(0);
   const { dismissToast, pushToast, toasts } = useToastQueue();
   const notifyProjectError = useCallback(
     (message: string): void => pushToast(message, 'error'),
@@ -291,6 +444,8 @@ export function App() {
     createMarkdownController(),
   );
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
+  const [linkNavigation, setLinkNavigation] =
+    useState<MarkdownLinkNavigation>();
   const [restoreCandidate, setRestoreCandidate] =
     useState<WorkspaceSessionSnapshot | null>(null);
   const [restorePending, setRestorePending] = useState(false);
@@ -308,6 +463,10 @@ export function App() {
   );
   const documentControllerRef = useRef(documentController);
   const projectSidebarRef = useRef<ProjectSidebarHandle>(null);
+  const workspacePaneHostRef = useRef<WorkspacePaneHostHandle>(null);
+  const pendingWorkspaceExitRef = useRef(
+    new Map<string, Promise<boolean>>(),
+  );
   const restoreCandidateRef = useRef<WorkspaceSessionSnapshot | null>(null);
   const restorePendingRef = useRef(false);
   const closeRequestRef = useRef<CloseRequest | null>(null);
@@ -315,11 +474,14 @@ export function App() {
   const userInteractedRef = useRef(false);
   const restoreRequestStartedRef = useRef(false);
   const workspaceTransitionRef = useRef<Promise<void>>(Promise.resolve());
+  const linkNavigationSequenceRef = useRef(0);
   const workspaceRef = useRef<HTMLDivElement>(null);
   const lastEditableTargetRef = useRef<
     { kind: 'markdown'; nodeId: string } | { kind: 'native' }
   >(undefined);
   const layout = useWorkspaceLayout();
+  const preferencesController = useFlyoffPreferencesController();
+  const setRailViewId = layout.setRailViewId;
   const adjustNoteFontScale = layout.adjustNoteFontScale;
   const translate = translator.translate;
   const pageProperties = useProjectPageProperties({
@@ -331,10 +493,12 @@ export function App() {
     closeProtectedPage,
     discardRemoved: discardRemovedPageData,
     lockedNodeIds,
+    lockProtectedDocument,
     markPasswordRequired,
     open: openPageProperties,
     reset: resetPageProperties,
     unlockDocument,
+    unlockedProtectedNodeIds,
   } = pageProperties;
   const handleMarkdownSaveError = useCallback(
     (error: ProjectFailureDetails, nodeId: string): void => {
@@ -351,17 +515,64 @@ export function App() {
     return () => documentController.setOnSaveError(undefined);
   }, [documentController, handleMarkdownSaveError]);
 
+  useEffect(() => {
+    documentController.setOnSaveSuccess(() =>
+      setGraphDocumentRevision((current) => current + 1),
+    );
+    return () => documentController.setOnSaveSuccess(undefined);
+  }, [documentController]);
+
+  const graphRefreshSignal = useMemo(
+    () => ({ graphDocumentRevision, projectNodes }),
+    [graphDocumentRevision, projectNodes],
+  );
+
+  useEffect(() => {
+    documentController.setDebounceMs(
+      preferencesController.preferences.general.autosaveDelayMs,
+    );
+  }, [
+    documentController,
+    preferencesController.preferences.general.autosaveDelayMs,
+  ]);
+
+  useEffect(() => {
+    if (!preferencesController.preferences.general.saveOnWindowBlur) {
+      return;
+    }
+    const handleWindowBlur = (): void => {
+      void documentControllerRef.current.flushAll();
+    };
+    window.addEventListener('blur', handleWindowBlur);
+    return () => window.removeEventListener('blur', handleWindowBlur);
+  }, [preferencesController.preferences.general.saveOnWindowBlur]);
+
+  useEffect(() => {
+    if (
+      !preferencesController.preferences.security.lockProtectedOnWindowBlur
+    ) {
+      return;
+    }
+    const handleWindowBlur = (): void => {
+      for (const nodeId of unlockedProtectedNodeIds) {
+        void lockProtectedDocument(nodeId).then((result) => {
+          if (!result.ok) {
+            notifyProjectError(result.error.message);
+          }
+        });
+      }
+    };
+    window.addEventListener('blur', handleWindowBlur);
+    return () => window.removeEventListener('blur', handleWindowBlur);
+  }, [
+    lockProtectedDocument,
+    notifyProjectError,
+    preferencesController.preferences.security.lockProtectedOnWindowBlur,
+    unlockedProtectedNodeIds,
+  ]);
+
   const menus = useMemo(
     () => createMenuBarItems(translate),
-    [translate],
-  );
-  const windowControlLabels = useMemo<WindowControlLabels>(
-    () => ({
-      minimize: translate('windowControls.minimize'),
-      maximize: translate('windowControls.maximize'),
-      restore: translate('windowControls.restore'),
-      close: translate('windowControls.close'),
-    }),
     [translate],
   );
 
@@ -373,6 +584,21 @@ export function App() {
       }
       projectNodesRef.current = next;
       setProjectNodes(next);
+      setActivityNoteTargets((current) => {
+        const updated = new Map(current);
+        for (const node of nodes) {
+          if (node.kind === 'page' && node.pageType === 'markdown') {
+            updated.set(node.nodeId, {
+              nodeId: node.nodeId,
+              name: projectNodeDisplayName(node),
+              path:
+                projectNodeLogicalPath(next, node.nodeId) ??
+                `/${projectNodeDisplayName(node)}`,
+            });
+          }
+        }
+        return updated;
+      });
     },
     [],
   );
@@ -430,6 +656,8 @@ export function App() {
       setProject(summary);
       projectNodesRef.current = new Map();
       setProjectNodes(new Map());
+      setProjectNoteActivity([]);
+      setActivityNoteTargets(new Map());
       resetPageProperties();
       replaceDocumentController();
     },
@@ -452,13 +680,45 @@ export function App() {
       setRestoreCandidate(null);
 
       if (decision === 'restore') {
-        workspaceStateRef.current = adoptWorkspaceSnapshot(resolved);
-        dispatchWorkspace({ type: 'restore-workspace', snapshot: resolved });
+        const restored = adoptWorkspaceSnapshot(resolved);
+        workspaceStateRef.current = restored;
+        dispatchWorkspace({
+          type: 'replace-workspace-state',
+          state: restored,
+        });
       }
 
       const api = getApi();
       void api
         .resolveRestorableTabSession?.(decision, resolved)
+        .catch(() => undefined);
+    },
+    [],
+  );
+
+  const recordProjectActivity = useCallback(
+    (type: 'activated' | 'closed', nodeId: string): void => {
+      const operation = getApi().recordProjectNoteActivity;
+      const expectedProjectId = projectRef.current?.projectId;
+      if (!operation || !expectedProjectId) {
+        return;
+      }
+      void operation({ type, nodeId })
+        .then((result) => {
+          if (
+            !result.ok ||
+            projectRef.current?.projectId !== expectedProjectId ||
+            result.value.projectId !== expectedProjectId
+          ) {
+            return;
+          }
+          setProjectNoteActivity((current) => {
+            const next = current.filter(
+              (entry) => entry.nodeId !== result.value.nodeId,
+            );
+            return [result.value, ...next];
+          });
+        })
         .catch(() => undefined);
     },
     [],
@@ -470,8 +730,12 @@ export function App() {
         return;
       }
 
+      const resolvedAction = applyDefaultProjectPageState(
+        action,
+        preferencesController.preferences.editor.defaultMode,
+      );
       const current = workspaceStateRef.current;
-      const next = workspaceReducer(current, action);
+      const next = workspaceReducer(current, resolvedAction);
 
       if (next === current) {
         return;
@@ -480,9 +744,20 @@ export function App() {
       userInteractedRef.current = true;
       resolveRestoreCandidate('ignore', serializeWorkspace(next));
       workspaceStateRef.current = next;
-      dispatchWorkspace(action);
+      dispatchWorkspace({ type: 'replace-workspace-state', state: next });
+      if (tracksProjectActivation(resolvedAction)) {
+        const previousNodeId = activeProjectNodeId(current);
+        const nextNodeId = activeProjectNodeId(next);
+        if (nextNodeId && nextNodeId !== previousNodeId) {
+          recordProjectActivity('activated', nextNodeId);
+        }
+      }
     },
-    [resolveRestoreCandidate],
+    [
+      preferencesController.preferences.editor.defaultMode,
+      recordProjectActivity,
+      resolveRestoreCandidate,
+    ],
   );
 
   const flushProjectDocuments = useCallback(async (): Promise<boolean> => {
@@ -511,7 +786,8 @@ export function App() {
       }
 
       if (
-        action.type === 'open-target' &&
+        (action.type === 'open-target' ||
+          action.type === 'move-or-open-target') &&
         isProjectTarget(action.target) &&
         projectRef.current?.projectId !== action.target.projectId
       ) {
@@ -519,19 +795,45 @@ export function App() {
       }
 
       const initial = workspaceStateRef.current;
+      const reduced = workspaceReducer(initial, action);
 
-      if (workspaceReducer(initial, action) === initial) {
+      if (reduced === initial) {
         return true;
       }
+      const nextProjectNodeIds = projectDocumentNodeIds(reduced);
+      const removedProjectNodeIds =
+        action.type === 'close-tab' ||
+        action.type === 'close-pane' ||
+        action.type === 'close-all-project-tabs'
+          ? [...projectDocumentNodeIds(initial)].filter(
+              (nodeId) => !nextProjectNodeIds.has(nodeId),
+            )
+          : [];
 
       if (action.type === 'close-tab') {
-        const closingTab = selectActiveTabs(initial).tabs.find(
+        const workspace = initial.project ?? initial.home;
+        const pane =
+          collectPanes(workspace.root).find(
+            ({ paneId }) =>
+              paneId === (action.paneId ?? workspace.activePaneId),
+          );
+        const closingTab = pane?.tabs.find(
           ({ tabId }) => tabId === action.tabId,
         );
         const target = closingTab?.target;
         if (
           target?.type === 'project-content' &&
-          target.pageType === 'markdown'
+          target.pageType === 'markdown' &&
+          collectPanes(workspace.root).reduce(
+            (count, currentPane) =>
+              count +
+              currentPane.tabs.filter(
+                ({ target: currentTarget }) =>
+                  currentTarget.type === 'project-content' &&
+                  currentTarget.nodeId === target.nodeId,
+              ).length,
+            0,
+          ) === 1
         ) {
           const result = await closeProtectedPage(target.nodeId);
           if (!result.ok) {
@@ -541,13 +843,76 @@ export function App() {
         }
       }
 
+      if (action.type === 'close-pane' && initial.project) {
+        const closingPane = collectPanes(initial.project.root).find(
+          ({ paneId }) => paneId === action.paneId,
+        );
+        const remainingPanes = collectPanes(initial.project.root).filter(
+          ({ paneId }) => paneId !== action.paneId,
+        );
+        const nodesToClose = new Set(
+          closingPane?.tabs.flatMap(({ target }) =>
+            target.type === 'project-content' &&
+            target.pageType === 'markdown' &&
+            !remainingPanes.some(({ tabs }) =>
+              tabs.some(
+                ({ target: current }) =>
+                  current.type === 'project-content' &&
+                  current.nodeId === target.nodeId,
+              ),
+            )
+              ? [target.nodeId]
+              : [],
+          ) ?? [],
+        );
+        for (const nodeId of nodesToClose) {
+          const result = await closeProtectedPage(nodeId);
+          if (!result.ok) {
+            notifyProjectError(result.error.message);
+            return false;
+          }
+        }
+      }
+
+      if (action.type === 'close-all-project-tabs' && initial.project) {
+        for (const nodeId of projectDocumentNodeIds(initial)) {
+          const result = await closeProtectedPage(nodeId);
+          if (!result.ok) {
+            notifyProjectError(result.error.message);
+            return false;
+          }
+        }
+      }
+
+      if (action.type === 'close-all-project-tabs') {
+        await workspacePaneHostRef.current?.animateAllTabsAndPanesExit();
+      } else {
+        const exit = workspaceExitTarget(initial, action);
+        if (exit?.kind === 'pane') {
+          await workspacePaneHostRef.current?.animatePaneExit(exit.paneId);
+        } else if (exit?.kind === 'tab-and-pane') {
+          await workspacePaneHostRef.current?.animateTabAndPaneExit(
+            exit.paneId,
+            exit.tabId,
+          );
+        } else if (exit?.kind === 'tab') {
+          await workspacePaneHostRef.current?.animateTabExit(
+            exit.paneId,
+            exit.tabId,
+          );
+        }
+      }
       dispatchUserAction(action);
+      for (const nodeId of removedProjectNodeIds) {
+        recordProjectActivity('closed', nodeId);
+      }
       return true;
     },
     [
       dispatchUserAction,
       notifyProjectError,
       closeProtectedPage,
+      recordProjectActivity,
     ],
   );
 
@@ -576,8 +941,29 @@ export function App() {
   }, []);
 
   const dispatchGuardedTabAction = useCallback(
-    (action: WorkspaceAction): Promise<boolean> =>
-      performGuardedTabAction(action),
+    (action: WorkspaceAction): Promise<boolean> => {
+      const exit = workspaceExitTarget(workspaceStateRef.current, action);
+      if (!exit && action.type !== 'close-all-project-tabs') {
+        return performGuardedTabAction(action);
+      }
+      const key =
+        action.type === 'close-all-project-tabs'
+          ? 'project:close-all-tabs'
+          : exit?.kind === 'pane' || exit?.kind === 'tab-and-pane'
+          ? `pane:${exit.paneId}`
+          : `tab:${exit!.paneId}:${exit!.tabId}`;
+      const pending = pendingWorkspaceExitRef.current.get(key);
+      if (pending) {
+        return pending;
+      }
+      const operation = performGuardedTabAction(action).finally(() => {
+        if (pendingWorkspaceExitRef.current.get(key) === operation) {
+          pendingWorkspaceExitRef.current.delete(key);
+        }
+      });
+      pendingWorkspaceExitRef.current.set(key, operation);
+      return operation;
+    },
     [performGuardedTabAction],
   );
 
@@ -588,6 +974,7 @@ export function App() {
           return false;
         }
 
+        setRailViewId(RAIL_VIEW_IDS.project);
         setActiveProject(summary);
         dispatchUserAction({
           type: 'open-project-workspace',
@@ -595,7 +982,12 @@ export function App() {
         });
         return true;
       }),
-    [dispatchUserAction, enqueueWorkspaceTransition, setActiveProject],
+    [
+      dispatchUserAction,
+      enqueueWorkspaceTransition,
+      setRailViewId,
+      setActiveProject,
+    ],
   );
 
   const closeProjectWorkspace = useCallback(
@@ -640,33 +1032,15 @@ export function App() {
     [],
   );
 
-  const projectPageRuntime = useMemo(
-    () => ({
-      markdown: {
-        controller: documentController,
-        lockedNodeIds,
-        onPasswordRequired: markPasswordRequired,
-        readDocument: readMarkdownDocument,
-        unlockDocument,
-      },
-      onError: notifyProjectError,
-    }),
-    [
-      documentController,
-      notifyProjectError,
-      lockedNodeIds,
-      markPasswordRequired,
-      readMarkdownDocument,
-      unlockDocument,
-    ],
-  );
-
   const completeConsumedRestore = useCallback(
     (resolved: WorkspaceSessionSnapshot): void => {
       restorePendingRef.current = false;
       setRestorePending(false);
       workspaceStateRef.current = adoptWorkspaceSnapshot(resolved);
-      dispatchWorkspace({ type: 'restore-workspace', snapshot: resolved });
+      dispatchWorkspace({
+        type: 'replace-workspace-state',
+        state: workspaceStateRef.current,
+      });
       void getApi()
         .resolveRestorableTabSession?.('restore', resolved)
         .catch(() => undefined);
@@ -825,12 +1199,19 @@ export function App() {
         }
         const result = await operation(request);
         if (result.ok) {
-          cacheProjectNodes([result.value]);
+          cacheProjectNodes([result.value.node]);
+          await Promise.all(
+            result.value.updatedDocumentNodeIds
+              .filter((nodeId) => documentController.getSnapshot(nodeId))
+              .map((nodeId) => documentController.reload(nodeId)),
+          );
+          return { ok: true as const, value: result.value.node };
         }
         return result;
       }),
     [
       cacheProjectNodes,
+      documentController,
       enqueueWorkspaceTransition,
       flushProjectDocumentsForTreeMutation,
       translate,
@@ -854,12 +1235,19 @@ export function App() {
         }
         const result = await operation(request);
         if (result.ok) {
-          cacheProjectNodes([result.value]);
+          cacheProjectNodes([result.value.node]);
+          await Promise.all(
+            result.value.updatedDocumentNodeIds
+              .filter((nodeId) => documentController.getSnapshot(nodeId))
+              .map((nodeId) => documentController.reload(nodeId)),
+          );
+          return { ok: true as const, value: result.value.node };
         }
         return result;
       }),
     [
       cacheProjectNodes,
+      documentController,
       enqueueWorkspaceTransition,
       flushProjectDocumentsForTreeMutation,
       translate,
@@ -878,24 +1266,49 @@ export function App() {
       projectNodesRef.current = remainingNodes;
       setProjectNodes(remainingNodes);
 
-      const tabsToClose = (
-        workspaceStateRef.current.project?.tabs ?? []
-      ).filter(
-        (tab) =>
-          tab.target.type === 'project-content' &&
-          removedIds.has(tab.target.nodeId),
-      );
+      const tabsToClose = workspaceStateRef.current.project
+        ? collectPanes(workspaceStateRef.current.project.root).flatMap(
+            (pane) =>
+              pane.tabs.flatMap((tab) =>
+                tab.target.type === 'project-content' &&
+                removedIds.has(tab.target.nodeId)
+                  ? [{ paneId: pane.paneId, tab }]
+                  : [],
+              ),
+          )
+        : [];
 
-      for (const tab of tabsToClose) {
-        const action = { type: 'close-tab', tabId: tab.tabId } as const;
+      for (const { paneId, tab } of tabsToClose) {
+        const action = {
+          type: 'close-tab',
+          paneId,
+          tabId: tab.tabId,
+        } as const;
         workspaceStateRef.current = workspaceReducer(
           workspaceStateRef.current,
           action,
         );
-        dispatchWorkspace(action);
+        dispatchWorkspace({
+          type: 'replace-workspace-state',
+          state: workspaceStateRef.current,
+        });
       }
     },
     [discardRemovedPageData],
+  );
+
+  const searchProject = useCallback(
+    (request: Parameters<FlyoffApi['searchProject']>[0]) => {
+      const operation = getApi().searchProject;
+      return operation
+        ? operation(request)
+        : Promise.resolve(
+            unavailableProjectResult<ProjectSearchOutcome>(
+              translate('projects.operationFailed'),
+            ),
+          );
+    },
+    [translate],
   );
 
   const trashProjectNode = useCallback(
@@ -975,6 +1388,262 @@ export function App() {
     [cacheProjectNodes, dispatchGuardedTabAction],
   );
 
+  const listProjectLinkTargets = useCallback(() => {
+    const operation = getApi().listProjectLinkTargets;
+    return operation
+      ? operation()
+      : Promise.resolve(
+          unavailableProjectResult<readonly ProjectLinkTarget[]>(
+            translate('projects.operationFailed'),
+          ),
+        );
+  }, [translate]);
+
+  const loadProjectNoteActivity = useCallback(async (): Promise<void> => {
+    const expectedProjectId = projectRef.current?.projectId;
+    const getActivity = getApi().getProjectNoteActivity;
+    if (!expectedProjectId || !getActivity) {
+      setProjectNoteActivity([]);
+      setActivityNoteTargets(new Map());
+      return;
+    }
+    const [activityResult, targetsResult] = await Promise.all([
+      getActivity().catch(() => undefined),
+      listProjectLinkTargets().catch(() => undefined),
+    ]);
+    if (projectRef.current?.projectId !== expectedProjectId) {
+      return;
+    }
+    setProjectNoteActivity(
+      activityResult?.ok ? activityResult.value : [],
+    );
+    setActivityNoteTargets(
+      new Map(
+        targetsResult?.ok
+          ? targetsResult.value.map((target) => [target.nodeId, target])
+          : [],
+      ),
+    );
+  }, [listProjectLinkTargets]);
+
+  useEffect(() => {
+    if (!project) {
+      return;
+    }
+    void loadProjectNoteActivity();
+  }, [loadProjectNoteActivity, project]);
+
+  const loadProjectGraph = useCallback(() => {
+    const operation = getApi().getProjectGraph;
+    return operation
+      ? operation()
+      : Promise.resolve(
+          unavailableProjectResult<ProjectGraphSnapshot>(
+            translate('projects.operationFailed'),
+          ),
+        );
+  }, [translate]);
+
+  const openProjectGraphNode = useCallback(
+    async ({ nodeId }: ProjectGraphNode) => {
+      const cached = projectNodesRef.current.get(nodeId);
+      if (cached) {
+        openProjectNode(cached);
+        return;
+      }
+      const operation = getApi().getProjectNode;
+      if (!operation) {
+        notifyProjectError(translate('projects.operationFailed'));
+        return;
+      }
+      const result = await operation({ nodeId });
+      if (result.ok) {
+        openProjectNode(result.value);
+      } else {
+        notifyProjectError(result.error.message);
+      }
+    },
+    [notifyProjectError, openProjectNode, translate],
+  );
+
+  const resolveProjectInternalLink = useCallback(
+    (request: ProjectInternalLinkRequest) => {
+      const operation = getApi().resolveProjectInternalLink;
+      return operation
+        ? operation(request)
+        : Promise.resolve(
+            unavailableProjectResult<ProjectInternalLinkResolution>(
+              translate('projects.operationFailed'),
+            ),
+          );
+    },
+    [translate],
+  );
+
+  const listProjectBacklinks = useCallback(
+    (targetNodeId: string) => {
+      const operation = getApi().listProjectBacklinks;
+      return operation
+        ? operation({ targetNodeId })
+        : Promise.resolve(
+            unavailableProjectResult<ProjectBacklinksOutcome>(
+              translate('projects.operationFailed'),
+            ),
+          );
+    },
+    [translate],
+  );
+
+  const openProjectLinkTarget = useCallback(
+    async (
+      target: ProjectInternalLinkTarget | ProjectLinkTarget,
+      navigation?: { headingPath: readonly string[]; offset?: number },
+    ): Promise<void> => {
+      const currentProject = projectRef.current;
+      const getNode = getApi().getProjectNode;
+      if (!currentProject || !getNode) {
+        notifyProjectError(translate('projects.operationFailed'));
+        return;
+      }
+      const result = await getNode({ nodeId: target.nodeId });
+      if (!result.ok) {
+        notifyProjectError(result.error.message);
+        return;
+      }
+      const node = result.value;
+      if (node.kind !== 'page' || node.pageType !== 'markdown') {
+        notifyProjectError(translate('projects.operationFailed'));
+        return;
+      }
+
+      cacheProjectNodes([node]);
+      await dispatchGuardedTabAction({
+        type: 'open-target',
+        target: {
+          type: 'project-content',
+          projectId: currentProject.projectId,
+          nodeId: node.nodeId,
+          pageType: node.pageType,
+        },
+      });
+      linkNavigationSequenceRef.current += 1;
+      setLinkNavigation({
+        headingPath:
+          navigation?.headingPath ??
+          ('heading' in target && target.heading
+            ? target.heading.path
+            : []),
+        nodeId: node.nodeId,
+        offset:
+          navigation?.offset ??
+          ('heading' in target && target.heading
+            ? target.heading.offset
+            : undefined),
+        requestId: linkNavigationSequenceRef.current,
+      });
+    },
+    [
+      cacheProjectNodes,
+      dispatchGuardedTabAction,
+      notifyProjectError,
+      translate,
+    ],
+  );
+
+  const searchNewTab = useCallback(
+    async (query: string): Promise<NewTabSearchOutcome> => {
+      const [searchResult, targetsResult] = await Promise.all([
+        searchProject({ query }),
+        listProjectLinkTargets(),
+      ]);
+      if (!searchResult.ok || !targetsResult.ok) {
+        return { results: [], skippedLockedCount: 0 };
+      }
+      const targets = new Map(
+        targetsResult.value.map((target) => [target.nodeId, target]),
+      );
+      const previews = new Map(
+        searchResult.value.previews.map((preview) => [
+          preview.nodeId,
+          preview,
+        ]),
+      );
+      const results = searchResult.value.nodeIds.flatMap((nodeId) => {
+        const target = targets.get(nodeId);
+        if (!target) {
+          return [];
+        }
+        const preview = previews.get(nodeId);
+        return [{
+          ...target,
+          excerpt: preview?.excerpt,
+          line: preview?.line,
+        } satisfies NewTabNoteItem];
+      });
+      return {
+        results,
+        skippedLockedCount:
+          searchResult.value.skippedLockedNodeIds.length,
+      };
+    },
+    [listProjectLinkTargets, searchProject],
+  );
+
+  const renameProjectLinkTarget = useCallback(
+    async (
+      nodeId: string,
+      name: string,
+    ): Promise<ProjectResult<ProjectPageNode>> => {
+      const result = await renameProjectNode({ nodeId, name });
+      if (!result.ok) {
+        return result;
+      }
+      if (result.value.kind === 'page') {
+        return { ok: true, value: result.value };
+      }
+      return unavailableProjectResult<ProjectPageNode>(
+        translate('projects.operationFailed'),
+      );
+    },
+    [renameProjectNode, translate],
+  );
+
+  const projectPageRuntime = useMemo(
+    () => ({
+      markdown: {
+        controller: documentController,
+        links: {
+          listBacklinks: ({ targetNodeId }: { targetNodeId: string }) =>
+            listProjectBacklinks(targetNodeId),
+          listTargets: listProjectLinkTargets,
+          openTarget: openProjectLinkTarget,
+          renameTarget: renameProjectLinkTarget,
+          resolve: resolveProjectInternalLink,
+        },
+        lockedNodeIds,
+        navigation: linkNavigation,
+        onPasswordRequired: markPasswordRequired,
+        readDocument: readMarkdownDocument,
+        unlockDocument,
+      },
+      onError: notifyProjectError,
+    }),
+    [
+      documentController,
+      linkNavigation,
+      listProjectBacklinks,
+      listProjectLinkTargets,
+      lockedNodeIds,
+      markPasswordRequired,
+      notifyProjectError,
+      openProjectLinkTarget,
+      readMarkdownDocument,
+      renameProjectLinkTarget,
+      resolveProjectInternalLink,
+      unlockDocument,
+    ],
+  );
+
   const closeActiveTab = useCallback((): void => {
     const activeTabId = selectActiveTabs(workspaceStateRef.current).activeTabId;
 
@@ -1006,16 +1675,26 @@ export function App() {
         documentControllerRef.current.getSnapshot(activeNodeId)
       ) {
         if (command === RENDERER_MENU_COMMANDS.undo) {
-          documentControllerRef.current.undo(activeNodeId);
+          documentControllerRef.current.undo(
+            activeNodeId,
+            activeTab?.tabId,
+          );
         } else if (command === RENDERER_MENU_COMMANDS.redo) {
-          documentControllerRef.current.redo(activeNodeId);
+          documentControllerRef.current.redo(
+            activeNodeId,
+            activeTab?.tabId,
+          );
         }
         requestAnimationFrame(() => {
           const editor = [
             ...document.querySelectorAll<HTMLElement>(
               '[data-markdown-node-id]',
             ),
-          ].find(({ dataset }) => dataset.markdownNodeId === activeNodeId);
+          ].find(
+            ({ dataset }) =>
+              dataset.markdownNodeId === activeNodeId &&
+              dataset.markdownViewId === activeTab?.tabId,
+          );
           editor?.focus();
         });
         return;
@@ -1028,16 +1707,6 @@ export function App() {
       void getApi().executeMenuCommand?.(fallback).catch(() => undefined);
     },
     [closeActiveTab],
-  );
-
-  const controlWindow = useCallback(
-    (action: WindowControlAction): void => {
-      void getApi()
-        .controlWindow?.(action)
-        .then(setWindowState)
-        .catch(() => undefined);
-    },
-    [],
   );
 
   const executeMenuCommand = useCallback(
@@ -1193,8 +1862,10 @@ export function App() {
     if (getNode) {
       const pendingNodeIds = [
         ...new Set(
-          projectSnapshot.tabs.flatMap(({ target }) =>
-            target.type === 'project-content' ? [target.nodeId] : [],
+          collectPanes(projectSnapshot.root).flatMap(({ tabs }) =>
+            tabs.flatMap(({ target }) =>
+              target.type === 'project-content' ? [target.nodeId] : [],
+            ),
           ),
         ),
       ];
@@ -1237,21 +1908,6 @@ export function App() {
   ]);
 
   useEffect(() => {
-    const removeStateListener = getApi().onWindowStateChanged?.((state) => {
-      setWindowState(state);
-    });
-
-    void getApi()
-      .getWindowState?.()
-      .then(setWindowState)
-      .catch(() => undefined);
-
-    return () => {
-      removeStateListener?.();
-    };
-  }, []);
-
-  useEffect(() => {
     let active = true;
 
     void getApi()
@@ -1280,12 +1936,17 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    if (restoreRequestStartedRef.current) {
+    if (
+      !preferencesController.ready ||
+      restoreRequestStartedRef.current
+    ) {
       return;
     }
 
     restoreRequestStartedRef.current = true;
     const api = getApi();
+    const startupBehavior =
+      preferencesController.preferences.general.startupBehavior;
 
     if (!api.getRestorableTabSession) {
       return;
@@ -1310,13 +1971,30 @@ export function App() {
           return;
         }
 
+        if (startupBehavior === 'fresh') {
+          void api
+            .resolveRestorableTabSession?.(
+              'ignore',
+              serializeWorkspace(workspaceStateRef.current),
+            )
+            .catch(() => undefined);
+          return;
+        }
+
         restoreCandidateRef.current = candidate;
         setRestoreCandidate(candidate);
+        if (startupBehavior === 'restore') {
+          void restorePreviousSession();
+        }
       })
       .catch(() => {
         setSessionReady(true);
       });
-  }, []);
+  }, [
+    preferencesController.preferences.general.startupBehavior,
+    preferencesController.ready,
+    restorePreviousSession,
+  ]);
 
   useEffect(() => {
     if (!restoreCandidate) {
@@ -1473,6 +2151,9 @@ export function App() {
       if (event.ctrlKey && event.key === 'Tab') {
         event.preventDefault();
         const state = selectActiveTabs(workspaceStateRef.current);
+        if (state.tabs.length === 0) {
+          return;
+        }
         const activeIndex = state.tabs.findIndex(
           ({ tabId }) => tabId === state.activeTabId,
         );
@@ -1606,11 +2287,76 @@ export function App() {
     [project, projectNodes, translate],
   );
 
+  const frequentNewTabNotes = useMemo(() => {
+    return [...projectNoteActivity]
+      .filter(
+        (entry) =>
+          entry.activationCount >= 2 &&
+          activityNoteTargets.has(entry.nodeId),
+      )
+      .sort(
+        (left, right) =>
+          right.activationCount - left.activationCount ||
+          Date.parse(right.lastActivatedAt ?? '1970-01-01T00:00:00.000Z') -
+            Date.parse(
+              left.lastActivatedAt ?? '1970-01-01T00:00:00.000Z',
+            ),
+      )
+      .slice(0, 6)
+      .flatMap((entry) => {
+        const target = activityNoteTargets.get(entry.nodeId);
+        return target ? [target satisfies NewTabNoteItem] : [];
+      });
+  }, [activityNoteTargets, projectNoteActivity]);
+
+  const recentNewTabNotes = useMemo(() => {
+    const openedNodeIds = projectDocumentNodeIds(workspaceState);
+    const frequentNodeIds = new Set(
+      frequentNewTabNotes.map(({ nodeId }) => nodeId),
+    );
+    return [...projectNoteActivity]
+      .filter(
+        (entry) =>
+          entry.lastClosedAt &&
+          !openedNodeIds.has(entry.nodeId) &&
+          !frequentNodeIds.has(entry.nodeId) &&
+          activityNoteTargets.has(entry.nodeId),
+      )
+      .sort(
+        (left, right) =>
+          Date.parse(right.lastClosedAt ?? '1970-01-01T00:00:00.000Z') -
+          Date.parse(left.lastClosedAt ?? '1970-01-01T00:00:00.000Z'),
+      )
+      .slice(0, 6)
+      .flatMap((entry) => {
+        const target = activityNoteTargets.get(entry.nodeId);
+        return target ? [target satisfies NewTabNoteItem] : [];
+      });
+  }, [
+    activityNoteTargets,
+    frequentNewTabNotes,
+    projectNoteActivity,
+    workspaceState,
+  ]);
+
   const renderPage = useCallback(
     (props: PageRenderProps) => {
       const target = props.descriptor.target;
 
       if (target.type === 'internal') {
+        if (target.pageId === INTERNAL_PAGE_IDS.newTab) {
+          return (
+            <NewTabPage
+              {...(props as InternalPageProps)}
+              frequentNotes={frequentNewTabNotes}
+              onOpenNote={(note) =>
+                void openProjectLinkTarget(note)
+              }
+              onSearch={project ? searchNewTab : undefined}
+              recentNotes={recentNewTabNotes}
+            />
+          );
+        }
         if (target.pageId === INTERNAL_PAGE_IDS.home) {
           return (
             <HomePage
@@ -1648,7 +2394,12 @@ export function App() {
       const node = projectNodes.get(target.nodeId);
       return (
         <ProjectContentPage
-          displayPath={projectNodeLogicalPath(projectNodes, target.nodeId)}
+          active={props.active}
+          displayPath={
+            preferencesController.preferences.documents.showPath
+              ? projectNodeLogicalPath(projectNodes, target.nodeId)
+              : undefined
+          }
           node={node}
           nodeId={target.nodeId}
           pageState={props.descriptor.pageState}
@@ -1658,16 +2409,22 @@ export function App() {
           onScrollChange={props.onScrollChange}
           onStateChange={props.onStateChange}
           translate={translate}
+          viewId={props.descriptor.tabId}
         />
       );
     },
     [
       openCreateProjectDialog,
       openProject,
+      openProjectLinkTarget,
+      frequentNewTabNotes,
       project,
       projectNodes,
       projectPageRuntime,
+      preferencesController.preferences.documents.showPath,
       requestRootCreation,
+      recentNewTabNotes,
+      searchNewTab,
       translate,
     ],
   );
@@ -1683,8 +2440,6 @@ export function App() {
       : INTERNAL_PAGE_IDS.home;
   const activeProjectTarget =
     activeTab?.target.type !== 'internal' ? activeTab?.target : undefined;
-  const isEmptyProjectWorkspace =
-    workspaceContext === 'project' && activeTabs.tabs.length === 0;
   const activeProjectNodePath = useMemo(() => {
     if (activeProjectTarget?.type !== 'project-content') {
       return [];
@@ -1702,20 +2457,22 @@ export function App() {
       : [];
   }, [activeProjectTarget, projectNodes]);
   return (
-    <div className="app-shell">
-      <Titlebar
-        menus={menus}
-        platform={platform}
-        sidebarCollapsed={layout.collapsed}
-        toggleSidebarLabel={translate(
-          layout.collapsed ? 'layout.expandSidebar' : 'layout.collapseSidebar',
-        )}
-        windowControlLabels={windowControlLabels}
-        windowState={windowState}
-        onMenuAction={executeMenuCommand}
-        onToggleSidebar={layout.toggleCollapsed}
-        onWindowAction={controlWindow}
-      />
+    <FlyoffPreferencesProvider value={preferencesController}>
+      <div className="app-shell" data-context={workspaceContext}>
+      {workspaceContext === 'home' ? (
+        <Titlebar
+          menus={menus}
+          platform={platform}
+          sidebarCollapsed={layout.collapsed}
+          toggleSidebarLabel={translate(
+            layout.collapsed
+              ? 'layout.expandSidebar'
+              : 'layout.collapseSidebar',
+          )}
+          onMenuAction={executeMenuCommand}
+          onToggleSidebar={layout.toggleCollapsed}
+        />
+      ) : null}
       <div
         className="workspace"
         data-collapsed={layout.collapsed || undefined}
@@ -1740,7 +2497,9 @@ export function App() {
         ) : (
           <IconRail
             activeViewId={layout.railViewId}
-            onSelect={layout.setRailViewId}
+            onSelect={setRailViewId}
+            onToggleSidebar={layout.toggleCollapsed}
+            sidebarCollapsed={layout.collapsed}
             translate={translate}
             views={RAIL_VIEWS}
           />
@@ -1763,9 +2522,16 @@ export function App() {
             onNodeChanged={(node) => cacheProjectNodes([node])}
             onNotice={notifyProjectInfo}
             onCloseProject={() => void closeProjectWorkspace()}
-            onOpenNode={openProjectNode}
+            onOpenAbout={() =>
+              executeMenuCommand(APPLICATION_MENU_COMMANDS.about)
+            }
+            onOpenNode={(node) => {
+              setRailViewId(RAIL_VIEW_IDS.project);
+              openProjectNode(node);
+            }}
             onRequestProperties={openPageProperties}
-            onOpenOverview={() =>
+            onOpenOverview={() => {
+              setRailViewId(RAIL_VIEW_IDS.project);
               void dispatchGuardedTabAction({
                 type: 'open-target',
                 target: {
@@ -1773,21 +2539,44 @@ export function App() {
                   projectId: project.projectId,
                 },
               })
-            }
+            }}
+            onOpenSettings={() => {
+              setRailViewId(RAIL_VIEW_IDS.project);
+              void dispatchGuardedTabAction({
+                type: 'open-page',
+                pageId: INTERNAL_PAGE_IDS.settings,
+              });
+            }}
             onRevealPath={revealProjectPath}
             onRenameNode={renameProjectNode}
+            onSearch={searchProject}
             onTrashNode={trashProjectNode}
             overviewActive={
+              layout.railViewId !== RAIL_VIEW_IDS.settings &&
               activeProjectTarget?.type === 'project-overview'
             }
             project={project}
             platform={platform}
             ref={projectSidebarRef}
+            settingsActive={
+              activePageId === INTERNAL_PAGE_IDS.settings
+            }
             translate={translate}
           />
         ) : null}
         {workspaceContext === 'project' &&
-        layout.railViewId !== RAIL_VIEW_IDS.project ? (
+        layout.railViewId === RAIL_VIEW_IDS.graph ? (
+          <ProjectGraphPanel
+            loadGraph={loadProjectGraph}
+            onError={notifyProjectError}
+            onOpenNode={(node) => void openProjectGraphNode(node)}
+            refreshSignal={graphRefreshSignal}
+            translate={translate}
+          />
+        ) : null}
+        {workspaceContext === 'project' &&
+        layout.railViewId !== RAIL_VIEW_IDS.project &&
+        layout.railViewId !== RAIL_VIEW_IDS.graph ? (
           <PlaceholderPanel
             hint={translate('rail.comingSoon')}
             icon={resolveRailView(layout.railViewId).icon}
@@ -1795,49 +2584,147 @@ export function App() {
           />
         ) : null}
         <div className="page-workspace">
-          <TabBar
-            activeTabId={activeTabs.activeTabId}
+          <WorkspacePaneHost
+            activePaneId={
+              workspaceState.project?.activePaneId ??
+              workspaceState.home.activePaneId
+            }
+            canCloseSoleTab={workspaceContext === 'project'}
             closeLabel={translate('pages.closeTab')}
-            getPresentation={getTabPresentation}
-            navigationLabel={translate('pages.bar')}
-            onClose={(tabId) =>
-              void dispatchGuardedTabAction({ type: 'close-tab', tabId })
-            }
-            onMove={(tabId, toIndex) =>
-              dispatchUserAction({ type: 'move-tab', tabId, toIndex })
-            }
-            onSelect={(tabId) =>
-              void dispatchGuardedTabAction({ type: 'select-tab', tabId })
-            }
-            tabs={activeTabs.tabs}
-          />
-          <PageHost
-            activeTabId={activeTabs.activeTabId}
-            emptyState={
-              isEmptyProjectWorkspace ? (
+            emptyState={() =>
+              workspaceContext === 'project' ? (
                 <ProjectEmptyState
-                  onCloseProject={() => void closeProjectWorkspace()}
+                  onCreateNote={() => requestRootCreation('page')}
+                  onSearch={() =>
+                    document
+                      .querySelector<HTMLInputElement>(
+                        '.project-sidebar__search input',
+                      )
+                      ?.focus()
+                  }
                   translate={translate}
                 />
               ) : null
             }
             getPresentation={getTabPresentation}
-            onPageStateChange={(tabId, pageState) =>
+            navigationLabel={translate('pages.bar')}
+            ref={workspacePaneHostRef}
+            onClosePane={(paneId) =>
+              void dispatchGuardedTabAction({ type: 'close-pane', paneId })
+            }
+            onCloseAllTabs={
+              workspaceContext === 'project'
+                ? () =>
+                    void dispatchGuardedTabAction({
+                      type: 'close-all-project-tabs',
+                    })
+                : undefined
+            }
+            onCloseTab={(paneId, tabId) =>
+              void dispatchGuardedTabAction({
+                type: 'close-tab',
+                paneId,
+                tabId,
+              })
+            }
+            onMoveTab={(paneId, tabId, toIndex) =>
+              dispatchUserAction({
+                type: 'move-tab',
+                paneId,
+                tabId,
+                toIndex,
+              })
+            }
+            onMoveTabBetweenPanes={(fromPaneId, toPaneId, tabId) =>
+              dispatchUserAction({
+                type: 'move-tab-between-panes',
+                fromPaneId,
+                toPaneId,
+                tabId,
+              })
+            }
+            onOpenTarget={(paneId, target) =>
+              void dispatchGuardedTabAction({
+                type: 'move-or-open-target',
+                paneId,
+                target,
+              })
+            }
+            onNewTab={(paneId) =>
+              dispatchUserAction({
+                type: 'open-target',
+                paneId,
+                target: {
+                  type: 'internal',
+                  pageId: INTERNAL_PAGE_IDS.newTab,
+                  instanceKey: crypto.randomUUID(),
+                },
+              })
+            }
+            onPageStateChange={(paneId, tabId, pageState) =>
               dispatchUserAction({
                 type: 'update-page-state',
+                paneId,
                 tabId,
                 pageState,
               })
             }
-            onScrollChange={(tabId, scrollTop) =>
+            onResizeSplit={(splitId, ratio) =>
+              dispatchUserAction({ type: 'resize-split', splitId, ratio })
+            }
+            onScrollChange={(paneId, tabId, scrollTop) =>
               dispatchUserAction({
                 type: 'update-scroll',
+                paneId,
                 tabId,
                 scrollTop,
               })
             }
+            onSelectPane={(paneId) =>
+              dispatchUserAction({ type: 'select-pane', paneId })
+            }
+            onSelectTab={(paneId, tabId) =>
+              void dispatchGuardedTabAction({
+                type: 'select-tab',
+                paneId,
+                tabId,
+              })
+            }
+            onSplitPane={(paneId, direction) =>
+              dispatchUserAction({ type: 'split-pane', paneId, direction })
+            }
+            onSplitPaneWithTab={(
+              fromPaneId,
+              targetPaneId,
+              tabId,
+              direction,
+              before,
+            ) =>
+              dispatchUserAction({
+                type: 'split-pane-with-tab',
+                fromPaneId,
+                targetPaneId,
+                tabId,
+                direction,
+                before,
+              })
+            }
+            onSplitPaneWithTarget={(
+              targetPaneId,
+              target,
+              direction,
+              before,
+            ) =>
+              dispatchUserAction({
+                type: 'split-pane-with-target',
+                targetPaneId,
+                target,
+                direction,
+                before,
+              })
+            }
             renderPage={renderPage}
-            tabs={activeTabs.tabs}
+            root={workspaceState.project?.root ?? workspaceState.home.root}
             translate={translate}
           />
         </div>
@@ -1928,6 +2815,7 @@ export function App() {
           translate={translate}
         />
       ) : null}
-    </div>
+      </div>
+    </FlyoffPreferencesProvider>
   );
 }

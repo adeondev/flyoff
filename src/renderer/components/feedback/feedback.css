@@ -1,5 +1,3 @@
-/* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 · macrostructure: component-scope anchored notice rail · genre: utilitarian · tone: austere · anchor: purple · contrast: pass (40–41) · slop: pass */
-
 .toast-host {
   position: fixed;
   right: var(--space-md);
@@ -97,6 +95,12 @@
   animation-play-state: var(--toast-progress-state);
 }
 
+:root[data-density='compact'] .toast {
+  min-height: 44px;
+  gap: 8px;
+  padding: 8px;
+}
+
 @keyframes toast-enter {
   from {
     transform: translateX(calc(100% + var(--space-md)));
@@ -116,12 +120,12 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .toast,
-  .toast--exiting {
+  :root:not([data-motion='full']) .toast,
+  :root:not([data-motion='full']) .toast--exiting {
     animation: none;
   }
 
-  .toast__progress {
+  :root:not([data-motion='full']) .toast__progress {
     display: none;
   }
 }

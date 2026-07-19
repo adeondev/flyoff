@@ -62,8 +62,20 @@ describe('markdown DOM renderer', () => {
     expect(image.hasAttribute('title')).toBe(false);
   });
 
-  it.each(['[relative](/note)', '[app](flyoff://app/note)', '[bad](not-a-url)'])(
-    'keeps non-external links inert: %s',
+  it.each(['[relative](/note)', '[relative](not-a-url)', '[[Folder/Note#Title|wiki]]'])(
+    'marks internal links as keyboard-accessible: %s',
+    (source) => {
+      const anchor = render(source).querySelector('a')!;
+
+      expect(anchor.hasAttribute('href')).toBe(false);
+      expect(anchor.getAttribute('role')).toBe('link');
+      expect(anchor.tabIndex).toBe(0);
+      expect(anchor.dataset.markdownInternalPath).toBeTruthy();
+    },
+  );
+
+  it.each(['[app](flyoff://app/note)', '[bad](javascript:alert(1))'])(
+    'keeps unsupported link targets inert: %s',
     (source) => {
       const anchor = render(source).querySelector('a')!;
 
@@ -83,6 +95,7 @@ describe('markdown DOM renderer', () => {
     const checkbox = container.querySelector('input[type="checkbox"]');
 
     expect(checkbox).toBeTruthy();
+    expect(checkbox?.classList.contains('flyoff-checkbox')).toBe(true);
     expect((checkbox as HTMLInputElement).checked).toBe(true);
     expect((checkbox as HTMLInputElement).disabled).toBe(true);
   });

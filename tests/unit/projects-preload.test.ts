@@ -6,6 +6,16 @@ import type {
   ProjectPageProperties,
 } from '../../src/shared/contracts';
 import { PROJECT_IPC_CHANNELS, projectSuccess } from '../../src/shared/contracts';
+import {
+  createDefaultFlyoffPreferences,
+  GET_PREFERENCES_CHANNEL,
+  SAVE_PREFERENCES_CHANNEL,
+  ADD_SPELLCHECK_WORD_CHANNEL,
+  APPLY_WINDOW_THEME_CHANNEL,
+  CHECK_SPELLCHECK_WORDS_CHANNEL,
+  GET_SPELLCHECK_SUGGESTIONS_CHANNEL,
+  RESTART_APPLICATION_CHANNEL,
+} from '../../src/shared/contracts';
 import '../../src/preload/index';
 
 const electronMocks = vi.hoisted(() => ({
@@ -13,6 +23,7 @@ const electronMocks = vi.hoisted(() => ({
   invoke: vi.fn(),
   on: vi.fn(),
   removeListener: vi.fn(),
+  getWordSuggestions: vi.fn(),
 }));
 
 vi.mock('electron/renderer', () => ({
@@ -23,6 +34,9 @@ vi.mock('electron/renderer', () => ({
     invoke: electronMocks.invoke,
     on: electronMocks.on,
     removeListener: electronMocks.removeListener,
+  },
+  webFrame: {
+    getWordSuggestions: electronMocks.getWordSuggestions,
   },
 }));
 
@@ -77,6 +91,88 @@ describe('project preload bridge', () => {
       PROJECT_IPC_CHANNELS.copyPath,
       { nodeId },
     );
+  });
+
+  it('validates preferences in both directions', async () => {
+    const api = flyoffApi as FlyoffApi;
+    const preferences = createDefaultFlyoffPreferences();
+    const snapshot = {
+      preferences,
+      runtime: { hardwareAccelerationEnabled: true },
+      spellcheck: {
+        provider: 'chromium-hunspell' as const,
+        canSelectLanguages: true,
+        downloadsDictionaries: true,
+        availableLanguages: ['en-US', 'pt-BR'],
+        activeLanguages: ['pt-BR'],
+      },
+    };
+
+    electronMocks.invoke.mockResolvedValueOnce(snapshot);
+    await expect(api.getPreferences()).resolves.toEqual(snapshot);
+    expect(electronMocks.invoke).toHaveBeenLastCalledWith(
+      GET_PREFERENCES_CHANNEL,
+    );
+
+    electronMocks.invoke.mockResolvedValueOnce(snapshot);
+    await expect(api.savePreferences(preferences)).resolves.toEqual(snapshot);
+    expect(electronMocks.invoke).toHaveBeenLastCalledWith(
+      SAVE_PREFERENCES_CHANNEL,
+      preferences,
+    );
+
+    await expect(
+      api.savePreferences({ ...preferences, version: 99 } as never),
+    ).rejects.toThrow('Invalid Flyoff preferences');
+    electronMocks.invoke.mockResolvedValueOnce({ ...snapshot, extra: true });
+    await expect(api.getPreferences()).rejects.toThrow('invalid preferences');
+
+    electronMocks.invoke.mockResolvedValueOnce(undefined);
+    await expect(api.applyWindowTheme('basalt')).resolves.toBeUndefined();
+    expect(electronMocks.invoke).toHaveBeenLastCalledWith(
+      APPLY_WINDOW_THEME_CHANNEL,
+      'basalt',
+    );
+
+    electronMocks.invoke.mockResolvedValueOnce(undefined);
+    await expect(api.restartApplication()).resolves.toBeUndefined();
+    expect(electronMocks.invoke).toHaveBeenLastCalledWith(
+      RESTART_APPLICATION_CHANNEL,
+    );
+  });
+
+  it('exposes bounded spellcheck suggestions and dictionary updates', async () => {
+    const api = flyoffApi as FlyoffApi;
+    electronMocks.invoke.mockResolvedValueOnce([
+      'configura\u00e7\u00e3o',
+    ]);
+
+    await expect(
+      api.getSpellcheckSuggestions({ word: 'configurass\u00e3o' }),
+    ).resolves.toEqual(['configura\u00e7\u00e3o']);
+    expect(electronMocks.invoke).toHaveBeenLastCalledWith(
+      GET_SPELLCHECK_SUGGESTIONS_CHANNEL,
+      { word: 'configurass\u00e3o' },
+    );
+    electronMocks.invoke.mockResolvedValueOnce(['configurass\u00e3o']);
+    await expect(
+      api.checkSpellcheckWords({ words: ['configurass\u00e3o'] }),
+    ).resolves.toEqual(['configurass\u00e3o']);
+    expect(electronMocks.invoke).toHaveBeenLastCalledWith(
+      CHECK_SPELLCHECK_WORDS_CHANNEL,
+      { words: ['configurass\u00e3o'] },
+    );
+    electronMocks.invoke.mockResolvedValueOnce(true);
+    await expect(
+      api.addSpellcheckWord({ word: 'Flyoff' }),
+    ).resolves.toBe(true);
+    expect(electronMocks.invoke).toHaveBeenLastCalledWith(
+      ADD_SPELLCHECK_WORD_CHANNEL,
+      { word: 'Flyoff' },
+    );
+    await expect(
+      api.getSpellcheckSuggestions({ word: 'duas palavras' }),
+    ).rejects.toThrow('Invalid spellcheck word request');
   });
 
   it('forwards typed property and protection operations on dedicated channels', async () => {
@@ -150,6 +246,93 @@ describe('project preload bridge', () => {
     expect(electronMocks.invoke).toHaveBeenLastCalledWith(
       PROJECT_IPC_CHANNELS.lockPage,
       { nodeId },
+    );
+  });
+
+  it('validates internal link requests and results across the bridge', async () => {
+    const api = flyoffApi as FlyoffApi;
+    const target = { name: 'Nota', nodeId, path: 'Pasta/Nota' };
+    const request = {
+      headingPath: ['Título'],
+      path: 'Pasta/Nota',
+      sourceNodeId: nodeId,
+      syntax: 'wikilink' as const,
+    };
+
+    electronMocks.invoke.mockResolvedValueOnce(projectSuccess([target]));
+    await expect(api.listProjectLinkTargets()).resolves.toEqual(
+      projectSuccess([target]),
+    );
+    expect(electronMocks.invoke).toHaveBeenLastCalledWith(
+      PROJECT_IPC_CHANNELS.listLinkTargets,
+    );
+
+    const graph = {
+      nodes: [{ ...target, connectionCount: 0 }],
+      edges: [],
+    };
+    electronMocks.invoke.mockResolvedValueOnce(projectSuccess(graph));
+    await expect(api.getProjectGraph()).resolves.toEqual(projectSuccess(graph));
+    expect(electronMocks.invoke).toHaveBeenLastCalledWith(
+      PROJECT_IPC_CHANNELS.getGraph,
+    );
+
+    electronMocks.invoke.mockResolvedValueOnce(
+      projectSuccess({
+        status: 'resolved',
+        target: { ...target, locked: false },
+      }),
+    );
+    await expect(api.resolveProjectInternalLink(request)).resolves.toMatchObject(
+      { ok: true, value: { status: 'resolved' } },
+    );
+    expect(electronMocks.invoke).toHaveBeenLastCalledWith(
+      PROJECT_IPC_CHANNELS.resolveInternalLink,
+      request,
+    );
+
+    const backlinks = { references: [], skippedLockedNodeIds: [] };
+    electronMocks.invoke.mockResolvedValueOnce(projectSuccess(backlinks));
+    await expect(
+      api.listProjectBacklinks({ targetNodeId: nodeId }),
+    ).resolves.toEqual(projectSuccess(backlinks));
+    expect(electronMocks.invoke).toHaveBeenLastCalledWith(
+      PROJECT_IPC_CHANNELS.listBacklinks,
+      { targetNodeId: nodeId },
+    );
+
+    const search = {
+      nodeIds: [nodeId],
+      previews: [],
+      skippedLockedNodeIds: [],
+    };
+    electronMocks.invoke.mockResolvedValueOnce(projectSuccess(search));
+    await expect(
+      api.searchProject({ query: 'tag:work' }),
+    ).resolves.toEqual(projectSuccess(search));
+    expect(electronMocks.invoke).toHaveBeenLastCalledWith(
+      PROJECT_IPC_CHANNELS.search,
+      { query: 'tag:work' },
+    );
+
+    await expect(
+      api.resolveProjectInternalLink({
+        ...request,
+        sourceNodeId: 'invalid',
+      }),
+    ).rejects.toThrow('Invalid project internal link request');
+    await expect(api.searchProject({ query: ' ' })).rejects.toThrow(
+      'Invalid project search request',
+    );
+
+    electronMocks.invoke.mockResolvedValueOnce(
+      projectSuccess({
+        nodes: [{ ...target, connectionCount: -1 }],
+        edges: [],
+      }),
+    );
+    await expect(api.getProjectGraph()).rejects.toThrow(
+      'invalid project graph',
     );
   });
 

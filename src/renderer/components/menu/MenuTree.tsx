@@ -31,6 +31,7 @@ interface MenuTreeProps {
   onAction: (id: string) => void;
   onClose: (restoreFocus: boolean) => void;
   onNavigateMenu?: (direction: Direction) => void;
+  placement?: MenuPlacement;
 }
 
 interface MenuSurfaceProps extends MenuTreeProps {
@@ -49,15 +50,17 @@ interface OpenSubmenu {
 
 function isInteractive(
   item: MenuItem,
-): item is Exclude<MenuItem, { kind: 'separator' }> {
-  return item.kind !== 'separator';
+): item is Extract<MenuItem, { kind: 'action' | 'submenu' }> {
+  return item.kind === 'action' || item.kind === 'submenu';
 }
 
 function isDisabled(item: MenuItem): boolean {
-  return item.kind !== 'separator' && Boolean(item.disabled);
+  return isInteractive(item) && Boolean(item.disabled);
 }
 
-function itemId(item: Exclude<MenuItem, { kind: 'separator' }>): string {
+function itemId(
+  item: Extract<MenuItem, { kind: 'action' | 'submenu' }>,
+): string {
   return item.id;
 }
 
@@ -287,7 +290,7 @@ function MenuSurface({
   }
 
   function activateItem(
-    item: Exclude<MenuItem, { kind: 'separator' }>,
+    item: Extract<MenuItem, { kind: 'action' | 'submenu' }>,
     element: HTMLButtonElement,
   ): void {
     if (isDisabled(item)) {
@@ -299,13 +302,13 @@ function MenuSurface({
       return;
     }
 
-    onClose(true);
     onAction(item.id);
+    onClose(true);
   }
 
   function handleItemKeyDown(
     event: KeyboardEvent<HTMLButtonElement>,
-    item: Exclude<MenuItem, { kind: 'separator' }>,
+    item: Extract<MenuItem, { kind: 'action' | 'submenu' }>,
   ): void {
     if (handleTypeahead(event)) {
       return;
@@ -393,6 +396,13 @@ function MenuSurface({
             />
           );
         }
+        if (item.kind === 'label') {
+          return (
+            <div className="flyoff-menu__label" key={item.id} role="presentation">
+              {item.label}
+            </div>
+          );
+        }
 
         const disabled = isDisabled(item);
         const hasSubmenu = item.kind === 'submenu';
@@ -400,12 +410,19 @@ function MenuSurface({
 
         return (
           <button
+            aria-checked={
+              item.kind === 'action' && item.checked !== undefined
+                ? item.checked
+                : undefined
+            }
             aria-disabled={disabled || undefined}
             aria-controls={hasSubmenu ? `${id}-${item.id}` : undefined}
             aria-expanded={hasSubmenu ? isSubmenuOpen : undefined}
             aria-haspopup={hasSubmenu ? 'menu' : undefined}
             aria-keyshortcuts={
-              item.kind === 'action' ? item.shortcut : undefined
+              item.kind === 'action'
+                ? item.keyShortcut ?? item.shortcut
+                : undefined
             }
             className={`flyoff-menu__item${
               item.kind === 'action' && item.tone === 'danger'
@@ -431,10 +448,22 @@ function MenuSurface({
                 itemRefs.current.delete(item.id);
               }
             }}
-            role="menuitem"
+            role={
+              item.kind === 'action' && item.checked !== undefined
+                ? 'menuitemcheckbox'
+                : 'menuitem'
+            }
             tabIndex={activeId === item.id ? 0 : -1}
             type="button"
           >
+            <span aria-hidden="true" className="flyoff-menu__check">
+              {!(item.kind === 'action' && item.checked) && item.icon ? (
+                <MaskedIcon
+                  className="flyoff-menu__item-icon"
+                  icon={item.icon}
+                />
+              ) : null}
+            </span>
             <span className="flyoff-menu__item-label">{item.label}</span>
             {item.kind === 'action' && item.shortcut ? (
               <span aria-hidden="true" className="flyoff-menu__shortcut">
@@ -480,6 +509,7 @@ export function MenuTree({
   onAction,
   onClose,
   onNavigateMenu,
+  placement = 'bottom-start',
 }: MenuTreeProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
 
@@ -538,7 +568,7 @@ export function MenuTree({
       onRootElement={(element) => {
         rootRef.current = element;
       }}
-      placement="bottom-start"
+      placement={placement}
     />,
     document.body,
   );

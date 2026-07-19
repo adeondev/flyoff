@@ -19,7 +19,6 @@ import {
 
 const PROJECT_ID = '11111111-1111-4111-8111-111111111111';
 const NODE_ID = '22222222-2222-4222-8222-222222222222';
-const NODE_ID_2 = '33333333-3333-4333-8333-333333333333';
 
 function createProjectTab(nodeId: string): TabDescriptor {
   return {
@@ -229,7 +228,11 @@ describe('tab session contracts', () => {
   it('validates close handshakes and renderer-owned commands', () => {
     const session = {
       version: WORKSPACE_SESSION_VERSION,
-      home: createSnapshot(['home', 'settings']),
+      home: paneWorkspace(
+        createSnapshot(['home', 'settings']).tabs,
+        'page:home',
+        'home-pane-1',
+      ),
       project: null,
     };
 
@@ -251,15 +254,31 @@ describe('tab session contracts', () => {
   });
 });
 
+function paneWorkspace(
+  tabs: readonly TabDescriptor[],
+  activeTabId: string | null,
+  paneId: string,
+) {
+  return {
+    root: { kind: 'pane' as const, paneId, tabs, activeTabId },
+    activePaneId: paneId,
+  };
+}
+
 describe('workspace session contracts', () => {
-  it('round-trips a version 3 workspace snapshot', () => {
+  it('round-trips a version 4 pane workspace snapshot', () => {
+    const home = createSnapshot(['home', 'settings']);
+    const projectTab = createProjectTab(NODE_ID);
     const snapshot = {
       version: WORKSPACE_SESSION_VERSION,
-      home: createSnapshot(['home', 'settings']),
+      home: paneWorkspace(home.tabs, home.activeTabId, 'home-pane-1'),
       project: {
         projectId: PROJECT_ID,
-        tabs: [createProjectTab(NODE_ID)],
-        activeTabId: `project:${PROJECT_ID}:node:${NODE_ID}`,
+        ...paneWorkspace(
+          [projectTab],
+          projectTab.tabId,
+          'project-pane-1',
+        ),
       },
     };
 
@@ -268,89 +287,132 @@ describe('workspace session contracts', () => {
     expect(hasRestorableWorkspaceSnapshot(snapshot)).toBe(true);
   });
 
-  it('accepts an empty project workspace and treats it as restorable', () => {
+  it('persists application settings inside a project pane', () => {
+    const home = createSnapshot(['home']);
+    const settings = createSnapshot(['settings']).tabs[0]!;
     const snapshot = {
       version: WORKSPACE_SESSION_VERSION,
-      home: createSnapshot(),
-      project: { projectId: PROJECT_ID, tabs: [], activeTabId: null },
+      home: paneWorkspace(home.tabs, home.activeTabId, 'home-pane-1'),
+      project: {
+        projectId: PROJECT_ID,
+        ...paneWorkspace([settings], settings.tabId, 'project-pane-1'),
+      },
     };
 
     expect(isWorkspaceSessionSnapshot(snapshot)).toBe(true);
     expect(normalizeWorkspaceSessionSnapshot(snapshot)).toEqual(snapshot);
-    expect(hasRestorableWorkspaceSnapshot(snapshot)).toBe(true);
-    expect(
-      hasRestorableWorkspaceSnapshot({
-        version: WORKSPACE_SESSION_VERSION,
-        home: createSnapshot(),
-        project: null,
-      }),
-    ).toBe(false);
   });
 
-  it('migrates a flat snapshot by splitting home and project tabs', () => {
+  it('migrates a version 3 workspace without losing tabs', () => {
     const home = createSnapshot(['home', 'settings']);
-    const flat: TabSessionSnapshot = {
-      version: TAB_SESSION_VERSION,
-      tabs: [...home.tabs, createProjectTab(NODE_ID)],
-      activeTabId: `project:${PROJECT_ID}:node:${NODE_ID}`,
-    };
-
-    expect(normalizeWorkspaceSessionSnapshot(flat)).toEqual({
-      version: WORKSPACE_SESSION_VERSION,
+    const projectTab = createProjectTab(NODE_ID);
+    const migrated = normalizeWorkspaceSessionSnapshot({
+      version: 3,
       home,
       project: {
         projectId: PROJECT_ID,
-        tabs: [createProjectTab(NODE_ID)],
-        activeTabId: `project:${PROJECT_ID}:node:${NODE_ID}`,
+        tabs: [projectTab],
+        activeTabId: projectTab.tabId,
       },
+    });
+
+    expect(migrated?.version).toBe(WORKSPACE_SESSION_VERSION);
+    expect(migrated?.home.root).toMatchObject({
+      kind: 'pane',
+      tabs: home.tabs,
+      activeTabId: home.activeTabId,
+    });
+    expect(migrated?.project?.root).toMatchObject({
+      kind: 'pane',
+      tabs: [projectTab],
+      activeTabId: projectTab.tabId,
     });
   });
 
-  it('seeds a home tab when a flat snapshot only has project tabs', () => {
-    const flat = {
-      version: TAB_SESSION_VERSION,
-      tabs: [createProjectTab(NODE_ID), createProjectTab(NODE_ID_2)],
-      activeTabId: `project:${PROJECT_ID}:node:${NODE_ID_2}`,
-    };
-
-    const migrated = normalizeWorkspaceSessionSnapshot(flat);
-
-    expect(migrated?.home.tabs).toEqual([
-      {
-        tabId: 'page:home',
-        target: { type: 'internal', pageId: 'home' },
-        scrollTop: 0,
-        pageState: { version: 1, data: null },
+  it('accepts a split workspace and clamps recoverable ratios', () => {
+    const home = createSnapshot();
+    const settings = createSnapshot(['settings']).tabs[0]!;
+    const normalized = normalizeWorkspaceSessionSnapshot({
+      version: WORKSPACE_SESSION_VERSION,
+      home: {
+        activePaneId: 'left',
+        root: {
+          kind: 'split',
+          splitId: 'split-1',
+          direction: 'row',
+          ratio: 2,
+          first: {
+            kind: 'pane',
+            paneId: 'left',
+            tabs: home.tabs,
+            activeTabId: home.activeTabId,
+          },
+          second: {
+            kind: 'pane',
+            paneId: 'right',
+            tabs: [settings],
+            activeTabId: settings.tabId,
+          },
+        },
       },
-    ]);
-    expect(migrated?.project?.activeTabId).toBe(
-      `project:${PROJECT_ID}:node:${NODE_ID_2}`,
-    );
+      project: null,
+    });
+
+    expect(normalized?.home.root).toMatchObject({
+      kind: 'split',
+      ratio: 0.9,
+    });
+    expect(isWorkspaceSessionSnapshot(normalized)).toBe(true);
   });
 
-  it('rejects malformed workspace snapshots', () => {
+  it('migrates a flat snapshot by splitting contexts into single panes', () => {
+    const home = createSnapshot(['home', 'settings']);
+    const projectTab = createProjectTab(NODE_ID);
+    const migrated = normalizeWorkspaceSessionSnapshot({
+      version: TAB_SESSION_VERSION,
+      tabs: [...home.tabs, projectTab],
+      activeTabId: projectTab.tabId,
+    });
+
+    expect(migrated?.home.root).toMatchObject({
+      kind: 'pane',
+      tabs: home.tabs,
+    });
+    expect(migrated?.project?.root).toMatchObject({
+      kind: 'pane',
+      tabs: [projectTab],
+      activeTabId: projectTab.tabId,
+    });
+  });
+
+  it('rejects duplicate pane and tab identifiers', () => {
+    const home = createSnapshot();
     expect(
       isWorkspaceSessionSnapshot({
         version: WORKSPACE_SESSION_VERSION,
-        home: createSnapshot(),
-        project: {
-          projectId: PROJECT_ID,
-          tabs: [createProjectTab(NODE_ID)],
-          activeTabId: null,
+        home: {
+          activePaneId: 'same',
+          root: {
+            kind: 'split',
+            splitId: 'split-1',
+            direction: 'row',
+            ratio: 0.5,
+            first: {
+              kind: 'pane',
+              paneId: 'same',
+              tabs: home.tabs,
+              activeTabId: home.activeTabId,
+            },
+            second: {
+              kind: 'pane',
+              paneId: 'same',
+              tabs: home.tabs,
+              activeTabId: home.activeTabId,
+            },
+          },
         },
+        project: null,
       }),
     ).toBe(false);
-    expect(
-      isWorkspaceSessionSnapshot({
-        version: WORKSPACE_SESSION_VERSION,
-        home: createSnapshot(),
-        project: {
-          projectId: PROJECT_ID,
-          tabs: [createSnapshot().tabs[0]],
-          activeTabId: 'page:home',
-        },
-      }),
-    ).toBe(false);
-    expect(isWorkspaceSessionSnapshot(createSnapshot())).toBe(false);
   });
 });

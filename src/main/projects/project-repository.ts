@@ -41,6 +41,7 @@ import {
 } from './encrypted-note-format';
 import { assertPortableProjectName } from './portable-name';
 import { ProjectFileSystem } from './project-filesystem';
+import { ProjectLinkMaintenanceStore } from './project-link-maintenance';
 import type { ProjectFileIdentity } from './project-filesystem';
 import {
   toProjectTreeNode,
@@ -242,6 +243,7 @@ function sortEntries(entries: readonly ContentIndexEntry[]): ContentIndexEntry[]
 
 export class ProjectRepository {
   readonly rootPath: string;
+  readonly linkMaintenance: ProjectLinkMaintenanceStore;
 
   private index: ProjectContentIndex;
   private manifest: ProjectManifest;
@@ -258,6 +260,10 @@ export class ProjectRepository {
     options: ProjectRepositoryOptions,
   ) {
     this.rootPath = rootPath;
+    this.linkMaintenance = new ProjectLinkMaintenanceStore(
+      rootPath,
+      manifest.projectId,
+    );
     this.manifest = manifest;
     this.index = index;
     this.trashItem = options.trashItem;
@@ -319,6 +325,14 @@ export class ProjectRepository {
     const entry = this.requireEntry(nodeId);
     await this.fileSystem.resolveExistingEntry(entry);
     return toProjectTreeNode(entry);
+  }
+
+  listIndexedNodes(): readonly ProjectTreeNode[] {
+    return this.index.entries.map(toProjectTreeNode);
+  }
+
+  projectRelativePath(nodeId: string): string {
+    return this.requireEntry(nodeId).locator.replaceAll('\\', '/');
   }
 
   async resolvePath(nodeId: string | null): Promise<string> {
@@ -931,8 +945,42 @@ export class ProjectRepository {
     force = false,
     key?: EncryptedNoteKey,
   ): Promise<MarkdownDocument> {
+    return this.writeMarkdown(
+      nodeId,
+      content,
+      expectedRevision,
+      force,
+      key,
+      false,
+    );
+  }
+
+  async saveMarkdownForMaintenance(
+    nodeId: string,
+    content: string,
+    expectedRevision: string,
+    key?: EncryptedNoteKey,
+  ): Promise<MarkdownDocument> {
+    return this.writeMarkdown(
+      nodeId,
+      content,
+      expectedRevision,
+      false,
+      key,
+      true,
+    );
+  }
+
+  private async writeMarkdown(
+    nodeId: string,
+    content: string,
+    expectedRevision: string,
+    force: boolean,
+    key: EncryptedNoteKey | undefined,
+    allowReadOnly: boolean,
+  ): Promise<MarkdownDocument> {
     const entry = this.requireMarkdownEntry(nodeId);
-    if (entry.attributes?.readOnly) {
+    if (entry.attributes?.readOnly && !allowReadOnly) {
       throw new ProjectOperationError('read-only', 'This note is read-only.');
     }
     const absolutePath = await this.fileSystem.resolveExistingEntry(entry);
@@ -1194,6 +1242,7 @@ export class ProjectRepository {
 
     await visit(undefined);
     await this.persistIndex();
+    await this.linkMaintenance.reset();
   }
 
   private async createNode(

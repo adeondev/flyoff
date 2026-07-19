@@ -1,7 +1,7 @@
 import graphIcon from '../../../../public/images/icons/navigation/graph.svg';
 import mediaIcon from '../../../../public/images/icons/navigation/media.svg';
 import projectIcon from '../../../../public/images/icons/instances/project.svg';
-import settingsIcon from '../../../../public/images/icons/homepage/configuration.svg';
+import settingsIcon from '../../../../public/images/icons/actions/settings-outline.svg';
 import type { Translate } from '../../pages/page-types';
 
 export const RAIL_VIEW_IDS = {

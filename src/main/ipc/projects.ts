@@ -16,9 +16,12 @@ import {
   isGetProjectNodeRequest,
   isGetProjectPagePropertiesRequest,
   isListProjectChildrenRequest,
+  isListProjectBacklinksRequest,
   isMoveProjectNodeRequest,
   isProjectPathRequest,
   isReadMarkdownDocumentRequest,
+  isProjectInternalLinkRequest,
+  isProjectSearchRequest,
   isLockProjectPageRequest,
   isProtectProjectPageRequest,
   isRemoveProjectPagePasswordRequest,
@@ -309,6 +312,46 @@ export function registerProjectHandlers({
       return projectService.saveMarkdown(senderKey, value);
     },
   );
+
+  ipcMain.handle(PROJECT_IPC_CHANNELS.listLinkTargets, (event) => {
+    const { senderKey } = trustedSender(event, 'Project link target listing');
+    return projectService.listLinkTargets(senderKey);
+  });
+
+  ipcMain.handle(PROJECT_IPC_CHANNELS.getGraph, (event) => {
+    const { senderKey } = trustedSender(event, 'Project graph');
+    return projectService.getGraph(senderKey);
+  });
+
+  ipcMain.handle(
+    PROJECT_IPC_CHANNELS.resolveInternalLink,
+    (event, value: unknown) => {
+      const { senderKey } = trustedSender(event, 'Project link resolution');
+      if (!isProjectInternalLinkRequest(value)) {
+        throw new TypeError('Invalid project internal link request.');
+      }
+      return projectService.resolveInternalLink(senderKey, value);
+    },
+  );
+
+  ipcMain.handle(
+    PROJECT_IPC_CHANNELS.listBacklinks,
+    (event, value: unknown) => {
+      const { senderKey } = trustedSender(event, 'Project backlink listing');
+      if (!isListProjectBacklinksRequest(value)) {
+        throw new TypeError('Invalid project backlink request.');
+      }
+      return projectService.listBacklinks(senderKey, value);
+    },
+  );
+
+  ipcMain.handle(PROJECT_IPC_CHANNELS.search, (event, value: unknown) => {
+    const { senderKey } = trustedSender(event, 'Project search');
+    if (!isProjectSearchRequest(value)) {
+      throw new TypeError('Invalid project search request.');
+    }
+    return projectService.searchProject(senderKey, value);
+  });
 
   ipcMain.handle(
     PROJECT_IPC_CHANNELS.getPageProperties,

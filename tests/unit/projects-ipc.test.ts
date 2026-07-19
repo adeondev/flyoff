@@ -116,6 +116,56 @@ function createService(): ProjectService {
     ),
     readMarkdown: vi.fn(),
     saveMarkdown: vi.fn(),
+    listLinkTargets: vi.fn(() =>
+      Promise.resolve(
+        projectSuccess([{ name: 'Nota', nodeId, path: 'Pasta/Nota' }]),
+      ),
+    ),
+    getGraph: vi.fn(() =>
+      Promise.resolve(
+        projectSuccess({
+          nodes: [
+            {
+              connectionCount: 0,
+              name: 'Nota',
+              nodeId,
+              path: 'Pasta/Nota',
+            },
+          ],
+          edges: [],
+        }),
+      ),
+    ),
+    resolveInternalLink: vi.fn(() =>
+      Promise.resolve(
+        projectSuccess({
+          status: 'resolved' as const,
+          target: {
+            locked: false,
+            name: 'Nota',
+            nodeId,
+            path: 'Pasta/Nota',
+          },
+        }),
+      ),
+    ),
+    listBacklinks: vi.fn(() =>
+      Promise.resolve(
+        projectSuccess({
+          references: [],
+          skippedLockedNodeIds: [],
+        }),
+      ),
+    ),
+    searchProject: vi.fn(() =>
+      Promise.resolve(
+        projectSuccess({
+          nodeIds: [nodeId],
+          previews: [],
+          skippedLockedNodeIds: [],
+        }),
+      ),
+    ),
     getPageProperties: vi.fn(() => Promise.resolve(projectSuccess(properties))),
     setPageReadOnly: vi.fn(() => Promise.resolve(projectSuccess(properties))),
     protectPage: vi.fn(() => Promise.resolve(projectSuccess(properties))),
@@ -182,6 +232,41 @@ describe('project IPC', () => {
       error: { code: 'cancelled' },
     });
     expect(service.selectCreateLocation).not.toHaveBeenCalled();
+  });
+
+  it('forwards internal link resolution and backlink operations', async () => {
+    const service = createService();
+    registerProjectHandlers({
+      isAllowedUrl: () => true,
+      projectService: service,
+    });
+    const event = createEvent();
+    const request = {
+      headingPath: ['Título'],
+      path: 'Pasta/Nota',
+      sourceNodeId: nodeId,
+      syntax: 'wikilink' as const,
+    };
+
+    await handlerFor(PROJECT_IPC_CHANNELS.listLinkTargets)(event);
+    await handlerFor(PROJECT_IPC_CHANNELS.getGraph)(event);
+    await handlerFor(PROJECT_IPC_CHANNELS.resolveInternalLink)(event, request);
+    await handlerFor(PROJECT_IPC_CHANNELS.listBacklinks)(event, {
+      targetNodeId: nodeId,
+    });
+    await handlerFor(PROJECT_IPC_CHANNELS.search)(event, {
+      query: 'tag:work',
+    });
+
+    expect(service.listLinkTargets).toHaveBeenCalledWith(42);
+    expect(service.getGraph).toHaveBeenCalledWith(42);
+    expect(service.resolveInternalLink).toHaveBeenCalledWith(42, request);
+    expect(service.listBacklinks).toHaveBeenCalledWith(42, {
+      targetNodeId: nodeId,
+    });
+    expect(service.searchProject).toHaveBeenCalledWith(42, {
+      query: 'tag:work',
+    });
   });
 
   it('returns a typed failure when a native directory dialog fails', async () => {

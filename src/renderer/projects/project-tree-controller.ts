@@ -227,6 +227,33 @@ export class ProjectTreeController {
     return results.every(Boolean);
   }
 
+  async loadAll(limit = PROJECT_TREE_EXPAND_LIMIT): Promise<boolean> {
+    const queue: (string | null)[] = [null];
+    const visited = new Set<string>();
+    let processed = 0;
+
+    while (queue.length > 0 && processed < limit) {
+      const parentId = queue.shift() ?? null;
+      const key = branchKey(parentId);
+      if (visited.has(key)) {
+        continue;
+      }
+      visited.add(key);
+      processed += 1;
+
+      if (!(await this.load(parentId))) {
+        return false;
+      }
+      for (const node of this.getBranch(parentId).nodes) {
+        if (node.kind === 'folder') {
+          queue.push(node.nodeId);
+        }
+      }
+    }
+
+    return queue.length === 0;
+  }
+
   findNode(nodeId: string): ProjectTreeNode | undefined {
     for (const branch of this.branches.values()) {
       const match = branch.nodes.find((node) => node.nodeId === nodeId);

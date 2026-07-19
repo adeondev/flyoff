@@ -4,6 +4,7 @@ import flyoffLogo from '../../../public/images/flyoff/flyoff-logo.svg';
 import configurationIcon from '../../../public/images/icons/homepage/configuration.svg';
 import folderOpenIcon from '../../../public/images/icons/instances/folder-open.svg';
 import refreshIcon from '../../../public/images/icons/actions/refresh.svg';
+import plusIcon from '../../../public/images/icons/actions/plus.svg';
 import documentationIcon from '../../../public/images/icons/site/documentation.svg';
 import {
   createEditorModeState,
@@ -18,12 +19,14 @@ import {
 } from '../../shared/contracts';
 import type { TranslationKey } from '../../shared/i18n';
 import { HomePage } from './HomePage';
+import { NewTabPage } from './NewTabPage';
 import type {
   InternalPageProps,
   PageRenderProps,
   PageRetention,
 } from './page-types';
 import { PlaceholderPage } from './PlaceholderPage';
+import { SettingsPage } from './SettingsPage';
 
 export interface InternalPageDefinition {
   id: InternalPageId;
@@ -35,6 +38,7 @@ export interface InternalPageDefinition {
   component: ComponentType<InternalPageProps>;
   createInitialState: () => PageSessionState;
   migrateState: (state: PageSessionState) => PageSessionState;
+  availableInProject?: boolean;
 }
 
 export interface ProjectPageDefinition {
@@ -93,9 +97,10 @@ export const PAGE_REGISTRY = {
     singleton: true,
     retention: 'keep-alive',
     stateVersion: 1,
-    component: PlaceholderPage,
+    component: SettingsPage,
     createInitialState: createEmptyState,
     migrateState: migrateEmptyState,
+    availableInProject: true,
   },
   [INTERNAL_PAGE_IDS.help]: {
     id: INTERNAL_PAGE_IDS.help,
@@ -119,6 +124,18 @@ export const PAGE_REGISTRY = {
     createInitialState: createEmptyState,
     migrateState: migrateEmptyState,
   },
+  [INTERNAL_PAGE_IDS.newTab]: {
+    id: INTERNAL_PAGE_IDS.newTab,
+    titleKey: 'pages.newTab',
+    icon: plusIcon,
+    singleton: false,
+    retention: 'active-only',
+    stateVersion: 1,
+    component: NewTabPage,
+    createInitialState: createEmptyState,
+    migrateState: migrateEmptyState,
+    availableInProject: true,
+  },
 } as const satisfies Record<InternalPageId, InternalPageDefinition>;
 
 export const PAGE_NAVIGATION_ORDER = [
@@ -140,7 +157,7 @@ export const PROJECT_PAGE_REGISTRY = {
   'project-content': {
     targetType: 'project-content',
     retention: 'active-only',
-    stateVersion: 1,
+    stateVersion: 3,
     createInitialState: () => createEditorModeState('edit'),
     migrateState: (state) => createEditorModeState(readEditorMode(state)),
   },

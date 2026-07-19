@@ -103,6 +103,31 @@ function highlightInline(text: string): string {
       }
     }
 
+    if (
+      char === '[' &&
+      text[index + 1] === '[' &&
+      text[index - 1] !== '!'
+    ) {
+      const tail = text.indexOf(']]', index + 2);
+      if (tail !== -1) {
+        flush();
+        const inside = text.slice(index + 2, tail);
+        const aliasAt = inside.indexOf('|');
+        const destination =
+          aliasAt === -1 ? inside : inside.slice(0, aliasAt);
+        const alias = aliasAt === -1 ? '' : inside.slice(aliasAt);
+        out += span(
+          'md-source-link',
+          mark('[[') +
+            span('md-tok-link', escapeHtml(destination)) +
+            (alias ? span('md-tok-attr', escapeHtml(alias)) : '') +
+            mark(']]'),
+        );
+        index = tail + 2;
+        continue;
+      }
+    }
+
     if (char === '[' || (char === '!' && text[index + 1] === '[')) {
       const bracketStart = char === '!' ? index + 1 : index;
       const labelEnd = findBracket(text, bracketStart + 1, ']');
@@ -114,12 +139,14 @@ function highlightInline(text: string): string {
           flush();
           const label = text.slice(bracketStart + 1, labelEnd);
           const attr = text.slice(labelEnd + 1, tail + 1);
-          out +=
+          out += span(
+            'md-source-link',
             (char === '!' ? mark('!') : '') +
-            mark('[') +
-            span('md-tok-link', highlightInline(label)) +
-            mark(']') +
-            span('md-tok-attr', escapeHtml(attr));
+              mark('[') +
+              span('md-tok-link', highlightInline(label)) +
+              mark(']') +
+              span('md-tok-attr', escapeHtml(attr)),
+          );
           index = tail + 1;
           continue;
         }
@@ -205,7 +232,15 @@ function highlightLine(line: string): string {
       escapeHtml(list[1]!) +
       span('md-tok-list', escapeHtml(list[2]!)) +
       escapeHtml(list[3]!) +
-      (list[4] ? span('md-tok-task', escapeHtml(list[4])) : '') +
+      (list[4]
+        ? span(
+            `md-tok-task md-tok-task--${
+              /\[[xX]\]/.test(list[4]) ? 'checked' : 'unchecked'
+            }`,
+            '<span aria-hidden="true" class="md-tok-task__box" contenteditable="false"><span class="md-tok-task__check"></span></span>' +
+              escapeHtml(list[4]),
+          )
+        : '') +
       highlightInline(list[5]!)
     );
   }
@@ -222,6 +257,9 @@ const CACHE_LIMIT = 4000;
 const lineCache = new Map<string, string>();
 
 export interface HighlightedSourceLine {
+  code: boolean;
+  fenceAfter: boolean;
+  fenceBefore: boolean;
   html: string;
   key: string;
   source: string;
@@ -244,30 +282,41 @@ function highlightCachedLine(key: string, compute: () => string): string {
   return html;
 }
 
+export function highlightSourceLine(
+  source: string,
+  fenceBefore: boolean,
+): HighlightedSourceLine {
+  const isFence = FENCE_LINE.test(source);
+  const state = isFence ? 'f' : fenceBefore ? 'c' : 'n';
+  const key = `${state}\u0000${source}`;
+  const html = highlightCachedLine(key, () =>
+    isFence
+      ? span('md-tok-fence', escapeHtml(source))
+      : fenceBefore
+        ? span('md-tok-code', escapeHtml(source))
+        : highlightLine(source),
+  );
+
+  return {
+    code: state !== 'n',
+    fenceAfter: isFence ? !fenceBefore : fenceBefore,
+    fenceBefore,
+    html,
+    key,
+    source,
+  };
+}
+
 export function highlightSourceLines(
   source: string,
 ): readonly HighlightedSourceLine[] {
-  const lines = source.split('\n');
   const output: HighlightedSourceLine[] = [];
   let inFence = false;
 
-  for (const line of lines) {
-    const isFence = FENCE_LINE.test(line);
-    const state = isFence ? 'f' : inFence ? 'c' : 'n';
-    const key = `${state}\u0000${line}`;
-    const html = highlightCachedLine(key, () =>
-      isFence
-        ? span('md-tok-fence', escapeHtml(line))
-        : inFence
-          ? span('md-tok-code', escapeHtml(line))
-          : highlightLine(line),
-    );
-
-    if (isFence) {
-      inFence = !inFence;
-    }
-
-    output.push({ html, key, source: line });
+  for (const line of source.split('\n')) {
+    const highlighted = highlightSourceLine(line, inFence);
+    output.push(highlighted);
+    inFence = highlighted.fenceAfter;
   }
 
   return output;
@@ -276,8 +325,8 @@ export function highlightSourceLines(
 export function highlightSource(source: string): string {
   return highlightSourceLines(source)
     .map(
-      ({ html }, index) =>
-        `<span class="md-line" data-line="${index + 1}"><span aria-hidden="true" class="md-line__gutter" contenteditable="false" data-md-gutter>${index + 1}</span><span class="md-line__content">${html || '<br data-md-placeholder>'}</span></span>`,
+      ({ code, html }, index) =>
+        `<span class="md-line${code ? ' md-line--code' : ''}" data-line="${index + 1}"><span aria-hidden="true" class="md-line__gutter" contenteditable="false" data-md-gutter>${index + 1}</span><span class="md-line__content">${html || '<br data-md-placeholder>'}</span></span>`,
     )
     .join('');
 }

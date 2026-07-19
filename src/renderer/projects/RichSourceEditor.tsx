@@ -1,11 +1,18 @@
 import {
   useEffect,
   useRef,
+  useState,
   type KeyboardEvent,
+  type MouseEvent,
   type RefObject,
 } from 'react';
 
+import type { FlyoffApi } from '../../shared/contracts';
 import type { SourceEditTransaction } from './markdown-history';
+import {
+  hasWorkspaceDrag,
+  isWorkspaceDragActive,
+} from '../components/tabs/workspace-drag';
 import {
   normalizeSourceText,
   sourceTextFromTransfer,
@@ -21,18 +28,39 @@ import {
   installSourceMouseSelection,
   revealSourceSelectionAfterNavigation,
 } from './source-interaction';
-import { reconcileSource } from './source-renderer';
+import {
+  reconcileSource,
+  getSourceChangeRange,
+  getSourceDocumentModel,
+  updateActiveSourceLine,
+} from './source-renderer';
+import {
+  clearSourceSpellingErrors,
+  collectSourceSpellcheckWordsFromLines,
+  PERSONAL_DICTIONARY_CHANGED_EVENT,
+  renderSourceSpellingErrors,
+} from './source-spellcheck';
+import { SOURCE_SPELLCHECK_IDLE_MS } from './editor-performance';
 import { resolveSourceInput } from './source-input';
+import {
+  createSourceMenuRequest,
+  type SourceMenuRequest,
+} from './source-context-actions';
 
 export interface RichSourceEditorProps {
   ariaLabel: string;
   autoFocus?: boolean;
   editorRef: RefObject<HTMLDivElement | null>;
   nodeId: string;
+  viewId?: string;
   readOnly?: boolean;
+  spellCheck?: boolean;
+  checkCodeBlocks?: boolean;
+  spellcheckScope?: string;
   selection: SourceSelection;
   value: string;
   onKeyDown?: (event: KeyboardEvent<HTMLDivElement>) => void;
+  onContextMenuRequest?: (request: SourceMenuRequest) => void;
   onRedo: () => void;
   onScroll?: (scrollTop: number) => void;
   onSelectionChange: (selection: SourceSelection) => void;
@@ -55,17 +83,26 @@ export function RichSourceEditor({
   autoFocus = false,
   editorRef,
   nodeId,
+  viewId,
   readOnly = false,
+  spellCheck = false,
+  checkCodeBlocks = false,
   onKeyDown,
+  onContextMenuRequest,
   onRedo,
   onScroll,
   onSelectionChange,
   onTransaction,
   onUndo,
   selection,
+  spellcheckScope = '',
   value,
 }: RichSourceEditorProps) {
   const composingRef = useRef(false);
+  const [spellcheckRevision, setSpellcheckRevision] = useState(0);
+  const spellcheckCacheRef = useRef(new Map<string, boolean>());
+  const spellcheckGenerationRef = useRef(0);
+  const spellcheckScopeRef = useRef<string | undefined>(undefined);
   const compositionTimerRef = useRef<number | undefined>(undefined);
   const suppressedInputRef = useRef<string | undefined>(undefined);
   const suppressedInputTimerRef = useRef<number | undefined>(undefined);
@@ -97,17 +134,152 @@ export function RichSourceEditor({
   }, [onRedo, onSelectionChange, onTransaction, onUndo]);
 
   useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) {
+      return;
+    }
+    for (const line of editor.querySelectorAll<HTMLElement>(
+      '.md-line > .md-line__content',
+    )) {
+      line.spellcheck =
+        spellCheck &&
+        (checkCodeBlocks ||
+          !line.parentElement?.classList.contains('md-line--code'));
+    }
+  }, [checkCodeBlocks, editorRef, spellCheck]);
+
+  useEffect(() => {
+    const refresh = () => {
+      spellcheckCacheRef.current.clear();
+      setSpellcheckRevision((current) => current + 1);
+    };
+    window.addEventListener(PERSONAL_DICTIONARY_CHANGED_EVENT, refresh);
+    return () =>
+      window.removeEventListener(PERSONAL_DICTIONARY_CHANGED_EVENT, refresh);
+  }, []);
+
+  useEffect(() => {
     const root = editorRef.current;
     if (!root || composingRef.current) {
       return;
     }
 
-    if (readSource(root) !== value) {
-      reconcileSource(root, value);
-      writeSelection(root, selection);
-      stateRef.current = { content: value, selection };
+    const focused = root.ownerDocument.activeElement === root;
+    const nextSelection =
+      focused && stateRef.current.content === value
+        ? stateRef.current.selection
+        : selection;
+    reconcileSource(root, value);
+    if (focused) {
+      writeSelection(root, nextSelection);
     }
+    stateRef.current = { content: value, selection: nextSelection };
   }, [editorRef, selection, value]);
+
+  useEffect(() => {
+    const root = editorRef.current;
+    const checkWords = (window.flyoff as Partial<FlyoffApi> | undefined)
+      ?.checkSpellcheckWords;
+    if (!root || !spellCheck || !checkWords) {
+      if (root) {
+        clearSourceSpellingErrors(root);
+      }
+      spellcheckScopeRef.current = undefined;
+      return;
+    }
+
+    let active = true;
+    const generation = ++spellcheckGenerationRef.current;
+    const scope = `${spellcheckRevision}:${String(checkCodeBlocks)}:${spellcheckScope}`;
+    const fullRefresh = spellcheckScopeRef.current !== scope;
+    if (fullRefresh) {
+      spellcheckCacheRef.current.clear();
+    }
+    spellcheckScopeRef.current = scope;
+    const timeout = window.setTimeout(() => {
+      const model = getSourceDocumentModel(root);
+      if (!model || model.source !== value) {
+        return;
+      }
+      const changed = getSourceChangeRange(root);
+      const range =
+        fullRefresh || changed?.full
+          ? { startLine: 0, endLine: model.lines.length }
+          : {
+              startLine: changed?.startLine ?? 0,
+              endLine: changed?.endLine ?? model.lines.length,
+            };
+      const words = collectSourceSpellcheckWordsFromLines(
+        model.lines.slice(range.startLine, range.endLine),
+        checkCodeBlocks,
+      );
+      const unknown = words.filter(
+        (word) => !spellcheckCacheRef.current.has(word),
+      );
+      const batches: string[][] = [];
+      for (let index = 0; index < unknown.length; index += 1_024) {
+        batches.push(unknown.slice(index, index + 1_024));
+      }
+      const requests =
+        batches.length === 0
+          ? Promise.resolve<readonly (readonly string[])[]>([])
+          : Promise.all(
+              batches.map((batch) => checkWords({ words: batch })),
+            );
+      void requests
+        .then((results) => {
+          if (
+            !active ||
+            generation !== spellcheckGenerationRef.current ||
+            !editorRef.current
+          ) {
+            return;
+          }
+          const editor = editorRef.current;
+          const misspelled = new Set(results.flat());
+          for (const word of unknown) {
+            spellcheckCacheRef.current.set(word, misspelled.has(word));
+          }
+          const focused = editor.ownerDocument.activeElement === editor;
+          const currentSelection = focused ? readSelection(editor) : undefined;
+          renderSourceSpellingErrors(
+            editor,
+            words.filter(
+              (word) => spellcheckCacheRef.current.get(word) === true,
+            ),
+            checkCodeBlocks,
+            range,
+          );
+          if (currentSelection) {
+            writeSelection(editor, currentSelection);
+          }
+        })
+        .catch(() => {
+          if (active && editorRef.current) {
+            clearSourceSpellingErrors(editorRef.current);
+          }
+        });
+    }, SOURCE_SPELLCHECK_IDLE_MS);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timeout);
+    };
+  }, [
+    checkCodeBlocks,
+    editorRef,
+    spellCheck,
+    spellcheckScope,
+    spellcheckRevision,
+    value,
+  ]);
+
+  useEffect(() => {
+    const root = editorRef.current;
+    if (root) {
+      updateActiveSourceLine(root, value, selection.end);
+    }
+  }, [editorRef, selection.end, value]);
 
   useEffect(() => {
     const root = editorRef.current;
@@ -138,7 +310,7 @@ export function RichSourceEditor({
 
     function commitReplacement(inputType: string, inserted: string): void {
       const before = {
-        content: readSource(editor),
+        content: stateRef.current.content,
         selection: readSelection(editor),
       };
       const content = replaceRange(
@@ -224,6 +396,14 @@ export function RichSourceEditor({
         event.inputType === 'insertFromDrop'
       ) {
         event.preventDefault();
+        if (
+          event.inputType === 'insertFromDrop' &&
+          (isWorkspaceDragActive() ||
+            (event.dataTransfer &&
+              hasWorkspaceDrag(event.dataTransfer)))
+        ) {
+          return;
+        }
         if (suppressedInputRef.current === event.inputType) {
           return;
         }
@@ -239,7 +419,7 @@ export function RichSourceEditor({
       }
 
       const before = {
-        content: readSource(editor),
+        content: stateRef.current.content,
         selection: readSelection(editor),
       };
       const data =
@@ -317,6 +497,12 @@ export function RichSourceEditor({
         return;
       }
       event.preventDefault();
+      if (
+        isWorkspaceDragActive() ||
+        hasWorkspaceDrag(event.dataTransfer)
+      ) {
+        return;
+      }
       if (suppressedInputRef.current === 'insertFromDrop') {
         return;
       }
@@ -336,7 +522,7 @@ export function RichSourceEditor({
         return;
       }
       const before = {
-        content: readSource(editor),
+        content: stateRef.current.content,
         selection: readSelection(editor),
       };
       if (before.selection.start === before.selection.end) {
@@ -360,7 +546,7 @@ export function RichSourceEditor({
     }
 
     function handleCopy(event: ClipboardEvent): void {
-      const source = readSource(editor);
+      const source = stateRef.current.content;
       const selected = readSelection(editor);
       if (selected.start === selected.end) {
         return;
@@ -386,7 +572,7 @@ export function RichSourceEditor({
       composingRef.current = true;
       pendingRef.current = {
         before: {
-          content: readSource(editor),
+          content: stateRef.current.content,
           selection: readSelection(editor),
         },
         inputType: 'insertCompositionText',
@@ -427,6 +613,7 @@ export function RichSourceEditor({
     }
 
     const removeMouseSelection = installSourceMouseSelection(editor, {
+      getContent: () => stateRef.current.content,
       isComposing: () => composingRef.current,
       onSelectionChange: (content, nextSelection) => {
         stateRef.current = { content, selection: nextSelection };
@@ -468,14 +655,27 @@ export function RichSourceEditor({
   }, [editorRef]);
 
   useEffect(() => {
-    if (autoFocus) {
-      editorRef.current?.focus();
+    const editor = editorRef.current;
+    if (autoFocus && editor) {
+      editor.focus({ preventScroll: true });
+      writeSelection(editor, stateRef.current.selection);
     }
   }, [autoFocus, editorRef]);
 
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
     onKeyDown?.(event);
     revealSourceSelectionAfterNavigation(event.currentTarget, event);
+  }
+
+  function handleContextMenu(event: MouseEvent<HTMLDivElement>): void {
+    event.preventDefault();
+    const bounds = event.currentTarget.getBoundingClientRect();
+    onContextMenuRequest?.(
+      createSourceMenuRequest(event.currentTarget, event.target, {
+        x: event.clientX || bounds.left + 24,
+        y: event.clientY || bounds.top + 24,
+      }),
+    );
   }
 
   return (
@@ -487,11 +687,15 @@ export function RichSourceEditor({
         className="markdown-source__editor"
         contentEditable={readOnly ? false : 'plaintext-only'}
         data-markdown-node-id={nodeId}
+        data-markdown-view-id={viewId}
+        data-spellcheck-code-blocks={String(checkCodeBlocks)}
+        data-spellcheck-enabled={String(spellCheck)}
+        onContextMenu={handleContextMenu}
         onKeyDown={handleKeyDown}
         onScroll={(event) => onScroll?.(event.currentTarget.scrollTop)}
         ref={editorRef}
         role="textbox"
-        spellCheck={false}
+        spellCheck={spellCheck}
         suppressContentEditableWarning
         tabIndex={0}
       />

@@ -12,6 +12,11 @@ import type {
 } from './tab-session';
 import type { WorkspaceLayoutState } from './ui-state';
 import type {
+  FlyoffPreferences,
+  FlyoffTheme,
+  PreferencesSnapshot,
+} from './preferences';
+import type {
   WindowControlAction,
   WindowState,
 } from './window-controls';
@@ -24,11 +29,20 @@ import type {
   MarkdownDocument,
   GetProjectPagePropertiesRequest,
   LockProjectPageRequest,
+  ListProjectBacklinksRequest,
   MoveProjectNodeRequest,
+  ProjectBacklinksOutcome,
+  ProjectGraphSnapshot,
+  ProjectInternalLinkRequest,
+  ProjectInternalLinkResolution,
+  ProjectLinkTarget,
   ProjectLocationSelection,
+  ProjectNodeMutationOutcome,
   ProjectPathRequest,
   ProjectPageProperties,
   ProjectResult,
+  ProjectSearchOutcome,
+  ProjectSearchRequest,
   ProjectSummary,
   ProjectTreeNode,
   ReadMarkdownDocumentRequest,
@@ -42,6 +56,10 @@ import type {
   TrashProjectNodeRequest,
   TrashProjectNodeOutcome,
 } from './projects';
+import type {
+  ProjectNoteActivityEntry,
+  ProjectNoteActivityEvent,
+} from './project-note-activity';
 import {
   isNativeCoreHealth,
   type NativeCoreHealth,
@@ -53,6 +71,8 @@ import {
 import {
   isSpellcheckCapabilities,
   type SpellcheckCapabilities,
+  type SpellcheckWordRequest,
+  type SpellcheckWordsRequest,
 } from './spellcheck';
 
 export const BOOTSTRAP_STATE_CHANNEL = 'flyoff:bootstrap:get' as const;
@@ -80,8 +100,20 @@ export interface FlyoffApi {
   saveTabSession(session: WorkspaceSessionSnapshot): Promise<void>;
   getUiState(): Promise<WorkspaceLayoutState>;
   saveUiState(state: WorkspaceLayoutState): Promise<void>;
+  getPreferences(): Promise<PreferencesSnapshot>;
+  savePreferences(preferences: FlyoffPreferences): Promise<PreferencesSnapshot>;
+  resetPreferences(): Promise<PreferencesSnapshot>;
+  applyWindowTheme(theme: FlyoffTheme): Promise<void>;
+  checkSpellcheckWords(
+    request: SpellcheckWordsRequest,
+  ): Promise<readonly string[]>;
+  getSpellcheckSuggestions(
+    request: SpellcheckWordRequest,
+  ): Promise<readonly string[]>;
+  addSpellcheckWord(request: SpellcheckWordRequest): Promise<boolean>;
   onCloseRequested(listener: (request: CloseRequest) => void): () => void;
   respondToCloseRequest(response: CloseResponse): Promise<void>;
+  restartApplication(): Promise<void>;
   openExternalLink(
     request: OpenExternalLinkRequest,
   ): Promise<OpenExternalLinkResult>;
@@ -99,6 +131,12 @@ export interface FlyoffApi {
     request: RestoreProjectRequest,
   ): Promise<ProjectResult<ProjectSummary>>;
   closeProject(): Promise<ProjectResult<null>>;
+  getProjectNoteActivity(): Promise<
+    ProjectResult<readonly ProjectNoteActivityEntry[]>
+  >;
+  recordProjectNoteActivity(
+    event: ProjectNoteActivityEvent,
+  ): Promise<ProjectResult<ProjectNoteActivityEntry>>;
   listProjectChildren(
     request: ListProjectChildrenRequest,
   ): Promise<ProjectResult<readonly ProjectTreeNode[]>>;
@@ -110,10 +148,10 @@ export interface FlyoffApi {
   ): Promise<ProjectResult<ProjectTreeNode>>;
   renameProjectNode(
     request: RenameProjectNodeRequest,
-  ): Promise<ProjectResult<ProjectTreeNode>>;
+  ): Promise<ProjectResult<ProjectNodeMutationOutcome>>;
   moveProjectNode(
     request: MoveProjectNodeRequest,
-  ): Promise<ProjectResult<ProjectTreeNode>>;
+  ): Promise<ProjectResult<ProjectNodeMutationOutcome>>;
   trashProjectNode(
     request: TrashProjectNodeRequest,
   ): Promise<ProjectResult<TrashProjectNodeOutcome>>;
@@ -129,6 +167,19 @@ export interface FlyoffApi {
   saveMarkdownDocument(
     request: SaveMarkdownDocumentRequest,
   ): Promise<ProjectResult<MarkdownDocument>>;
+  getProjectGraph(): Promise<ProjectResult<ProjectGraphSnapshot>>;
+  listProjectLinkTargets(): Promise<
+    ProjectResult<readonly ProjectLinkTarget[]>
+  >;
+  resolveProjectInternalLink(
+    request: ProjectInternalLinkRequest,
+  ): Promise<ProjectResult<ProjectInternalLinkResolution>>;
+  listProjectBacklinks(
+    request: ListProjectBacklinksRequest,
+  ): Promise<ProjectResult<ProjectBacklinksOutcome>>;
+  searchProject(
+    request: ProjectSearchRequest,
+  ): Promise<ProjectResult<ProjectSearchOutcome>>;
   getProjectPageProperties(
     request: GetProjectPagePropertiesRequest,
   ): Promise<ProjectResult<ProjectPageProperties>>;

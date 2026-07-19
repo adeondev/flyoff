@@ -7,6 +7,7 @@ import {
   isOpenExternalLinkRequest,
   isOpenExternalLinkResult,
   isSpellcheckCapabilities,
+  isSpellcheckWordRequest,
   isUiLocale,
   isWindowControlAction,
   isWindowState,
@@ -125,6 +126,12 @@ describe('shared contract guards', () => {
         downloadsDictionaries: false,
       }),
     ).toBe(true);
+  });
+
+  it('accepts only bounded single-word spellcheck requests', () => {
+    expect(isSpellcheckWordRequest({ word: 'configura\u00e7\u00e3o' })).toBe(true);
+    expect(isSpellcheckWordRequest({ word: ' duas palavras ' })).toBe(false);
+    expect(isSpellcheckWordRequest({ word: '' })).toBe(false);
   });
 
   it('accepts only known menu command identifiers', () => {

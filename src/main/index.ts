@@ -22,6 +22,9 @@ import {
   createSystemTrashItem,
   registerExternalLinkHandler,
   registerMenuCommandHandler,
+  applySpellcheckPreferences,
+  registerPreferencesHandlers,
+  registerProjectNoteActivityHandlers,
   registerProjectHandlers,
   registerTabSessionHandlers,
   registerUiStateHandlers,
@@ -31,7 +34,15 @@ import {
 import { CloseCoordinator } from './lifecycle';
 import { createApplicationMenuTemplate } from './menu';
 import { NativeCoreClient } from './native/NativeCoreClient';
-import { ProjectCatalogStore, ProjectService } from './projects';
+import {
+  applyHardwareAccelerationPreference,
+  PreferencesStore,
+} from './preferences';
+import {
+  ProjectCatalogStore,
+  ProjectNoteActivityStore,
+  ProjectService,
+} from './projects';
 import {
   configureSessionSecurity,
   createRendererLocation,
@@ -41,10 +52,14 @@ import {
   registerFlyoffProtocol,
   registerFlyoffScheme,
 } from './security';
-import { ElectronSpellcheckService } from './services/spellcheck';
+import {
+  BundledSpellcheckService,
+  ElectronSpellcheckService,
+} from './services/spellcheck';
 import { TabSessionStore } from './session';
 import {
   createMainWindow,
+  applyWindowTheme,
   registerNavigationShortcuts,
   UiStateStore,
   WindowStateStore,
@@ -68,6 +83,9 @@ if (e2eUserDataPath) {
 
   app.setPath('userData', e2eUserDataPath);
 }
+
+const preferencesStore = new PreferencesStore(app.getPath('userData'));
+applyHardwareAccelerationPreference(app, preferencesStore.get());
 
 function createE2eProjectDirectorySelector():
   | SelectProjectDirectory
@@ -94,6 +112,8 @@ let mainWindow: BrowserWindow | undefined;
 let removeBootstrapHandler: (() => void) | undefined;
 let removeExternalLinkHandler: (() => void) | undefined;
 let removeMenuCommandHandler: (() => void) | undefined;
+let removePreferencesHandlers: (() => void) | undefined;
+let removeProjectNoteActivityHandlers: (() => void) | undefined;
 let removeProjectHandlers: (() => void) | undefined;
 let removeTabSessionHandlers: (() => void) | undefined;
 let removeUiStateHandlers: (() => void) | undefined;
@@ -134,6 +154,10 @@ function cleanupApplication(): void {
   removeExternalLinkHandler = undefined;
   removeMenuCommandHandler?.();
   removeMenuCommandHandler = undefined;
+  removePreferencesHandlers?.();
+  removePreferencesHandlers = undefined;
+  removeProjectNoteActivityHandlers?.();
+  removeProjectNoteActivityHandlers = undefined;
   removeProjectHandlers?.();
   removeProjectHandlers = undefined;
   removeTabSessionHandlers?.();
@@ -196,6 +220,7 @@ async function openMainWindow(
   tabSessionStore?.beginWindowSession();
   const window = await createMainWindow({
     ...rendererLocation,
+    theme: preferencesStore.get().appearance.theme,
     onWindowCreated: (createdWindow) => {
       closeCoordinator?.attachWindow(createdWindow);
       const removeNavigationShortcuts = registerNavigationShortcuts(
@@ -235,6 +260,7 @@ async function startApplication(): Promise<void> {
   tabSessionStore = new TabSessionStore(app.getPath('userData'));
   uiStateStore = new UiStateStore(app.getPath('userData'));
   projectService = new ProjectService({
+    activityStore: new ProjectNoteActivityStore(app.getPath('userData')),
     catalogStore: new ProjectCatalogStore(app.getPath('userData')),
     trashItem: createSystemTrashItem(),
   });
@@ -260,9 +286,19 @@ async function startApplication(): Promise<void> {
   });
 
   const nativeCore = await coreClient.start();
-  const spellcheck = new ElectronSpellcheckService(
-    session.defaultSession,
-    platform,
+  const spellcheck =
+    platform === 'darwin'
+      ? new ElectronSpellcheckService(session.defaultSession, platform)
+      : new BundledSpellcheckService(app.getPath('userData'));
+  const activeSpellcheckLanguages = spellcheck.getActiveLanguages();
+  const defaultSpellcheckLanguages =
+    activeSpellcheckLanguages.length > 0
+      ? activeSpellcheckLanguages
+      : [i18n.locale];
+  applySpellcheckPreferences(
+    spellcheck,
+    preferencesStore.get(),
+    defaultSpellcheckLanguages,
   );
 
   const state: BootstrapState = Object.freeze({
@@ -308,6 +344,20 @@ async function startApplication(): Promise<void> {
   );
   Menu.setApplicationMenu(applicationMenu);
   removeMenuCommandHandler = registerMenuCommandHandler(isAllowedUrl);
+  removePreferencesHandlers = registerPreferencesHandlers({
+    defaultSpellcheckLanguages,
+    isAllowedUrl,
+    onThemeChanged: (theme, event) => {
+      const window = BrowserWindow.fromWebContents(event.sender);
+      if (window) {
+        applyWindowTheme(window, theme);
+      }
+    },
+    spellcheck,
+    store: preferencesStore,
+    runtimeHardwareAccelerationEnabled:
+      app.isHardwareAccelerationEnabled(),
+  });
   const projectDirectorySelector = createE2eProjectDirectorySelector();
   removeProjectHandlers = registerProjectHandlers({
     dialogLabels: {
@@ -320,6 +370,10 @@ async function startApplication(): Promise<void> {
       ? { selectDirectory: projectDirectorySelector }
       : {}),
   });
+  removeProjectNoteActivityHandlers = registerProjectNoteActivityHandlers(
+    projectService,
+    isAllowedUrl,
+  );
   removeTabSessionHandlers = registerTabSessionHandlers(
     tabSessionStore,
     isAllowedUrl,

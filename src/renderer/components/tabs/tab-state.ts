@@ -29,14 +29,20 @@ export type TabAction =
     }
   | { type: 'restore-session'; session: TabSessionSnapshot };
 
-export function createDescriptor(target: TabTarget): TabDescriptor {
+export function createDescriptor(
+  target: TabTarget,
+  initialPageState?: PageSessionState,
+): TabDescriptor {
   const definition = getTabTargetPageDefinition(target);
 
   return {
     tabId: createTabIdForTarget(target),
     target,
     scrollTop: 0,
-    pageState: definition.createInitialState(),
+    pageState:
+      initialPageState === undefined
+        ? definition.createInitialState()
+        : definition.migrateState(initialPageState),
   };
 }
 

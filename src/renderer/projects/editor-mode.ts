@@ -11,12 +11,13 @@ export function isEditorMode(value: unknown): value is EditorMode {
   );
 }
 
-export function readEditorMode(state: PageSessionState | undefined): EditorMode {
+export function readEditorMode(
+  state: PageSessionState | undefined,
+): EditorMode {
   const data = state?.data;
 
   if (data && typeof data === 'object' && !Array.isArray(data)) {
     const mode = (data as Record<string, unknown>).mode;
-
     if (isEditorMode(mode)) {
       return mode;
     }
@@ -26,5 +27,15 @@ export function readEditorMode(state: PageSessionState | undefined): EditorMode 
 }
 
 export function createEditorModeState(mode: EditorMode): PageSessionState {
-  return { version: 1, data: { mode } };
+  return {
+    version: 3,
+    data: { mode },
+  };
+}
+
+export function updateEditorModeState(
+  _state: PageSessionState | undefined,
+  mode: EditorMode,
+): PageSessionState {
+  return createEditorModeState(mode);
 }

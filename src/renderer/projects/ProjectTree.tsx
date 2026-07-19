@@ -1,6 +1,5 @@
 import {
   useEffect,
-  useMemo,
   useReducer,
   useRef,
   useState,
@@ -10,16 +9,35 @@ import {
 
 import chevronRightIcon from '../../../public/images/icons/actions/chevron-right.svg';
 import ellipsisIcon from '../../../public/images/icons/actions/ellipsis.svg';
-import fileIcon from '../../../public/images/icons/instances/file.svg';
-import folderOpenIcon from '../../../public/images/icons/instances/folder-open.svg';
-import folderIcon from '../../../public/images/icons/instances/folder.svg';
-import type { ProjectPageNode, ProjectTreeNode } from '../../shared/contracts';
+import fileIcon from '../../../public/images/icons/instances/file-solid.svg';
+import folderOpenIcon from '../../../public/images/icons/instances/folder-open-solid.svg';
+import folderIcon from '../../../public/images/icons/instances/folder-solid.svg';
+import plusIcon from '../../../public/images/icons/actions/plus.svg';
+import settingsIcon from '../../../public/images/icons/actions/settings-outline.svg';
+import type {
+  ProjectPageNode,
+  ProjectSearchPreview,
+  ProjectTreeNode,
+} from '../../shared/contracts';
+import {
+  normalizeProjectSearchText,
+  parseProjectSearchQuery,
+} from '../../shared/project-search';
 import { MaskedIcon } from '../components/MaskedIcon';
 import { ContextMenu, DropdownMenu, type MenuItem } from '../components/menu';
+import {
+  beginWorkspaceProjectNodePointerDrag,
+  setWorkspaceDragActive,
+  writeWorkspaceProjectNodeDrag,
+} from '../components/tabs/workspace-drag';
 import type { Translate } from '../pages/page-types';
+import { useFlyoffPreferences } from '../preferences';
 import { getProjectPageTypeDefinition } from './project-page-type-registry';
 import { projectNodeDisplayName } from './project-node-name';
 import type { ProjectTreeController } from './project-tree-controller';
+
+const PROJECT_TREE_NODE_DRAG_TYPE =
+  'application/x-flyoff-project-tree-node';
 
 export type ProjectTreeInlineEdit =
   | {
@@ -32,7 +50,11 @@ export type ProjectTreeInlineEdit =
 
 export interface ProjectTreeProps {
   controller: ProjectTreeController;
+  projectId?: string;
   translate: Translate;
+  searchQuery?: string;
+  searchNodeIds?: ReadonlySet<string>;
+  searchPreviews?: ReadonlyMap<string, ProjectSearchPreview>;
   activeNodeId?: string;
   edit?: ProjectTreeInlineEdit;
   operationPending?: boolean;
@@ -73,17 +95,185 @@ interface VisibleNode {
 
 function collectVisibleNodes(
   controller: ProjectTreeController,
+  searchQuery = '',
   parentId: string | null = null,
   depth = 1,
   result: VisibleNode[] = [],
+  searchMatches?: ReadonlySet<string>,
 ): VisibleNode[] {
+  const normalizedQuery = normalizeSearchQuery(searchQuery);
   for (const node of controller.getBranch(parentId).nodes) {
+    const descendantNodes =
+      node.kind === 'folder'
+        ? collectVisibleNodes(
+            controller,
+            searchQuery,
+            node.nodeId,
+            depth + 1,
+            [],
+            searchMatches,
+          )
+        : [];
+    if (
+      normalizedQuery &&
+      !(searchMatches
+        ? searchMatches.has(node.nodeId)
+        : normalizeSearchQuery(projectNodeDisplayName(node)).includes(
+            normalizedQuery,
+          )) &&
+      descendantNodes.length === 0
+    ) {
+      continue;
+    }
     result.push({ node, depth, parentId });
-    if (node.kind === 'folder' && controller.isExpanded(node.nodeId)) {
-      collectVisibleNodes(controller, node.nodeId, depth + 1, result);
+    if (
+      node.kind === 'folder' &&
+      (normalizedQuery || controller.isExpanded(node.nodeId))
+    ) {
+      result.push(...descendantNodes);
     }
   }
   return result;
+}
+
+function normalizeSearchQuery(value: string): string {
+  return value
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .trim()
+    .toLocaleLowerCase();
+}
+
+function contentSearchTerms(query: string): readonly string[] {
+  return [
+    ...new Set(
+      parseProjectSearchQuery(query).flatMap((clause) => {
+        if (clause.kind === 'path' || clause.kind === 'file') {
+          return [];
+        }
+        return clause.kind === 'property'
+          ? [clause.name, ...clause.terms]
+          : clause.terms;
+      }),
+    ),
+  ];
+}
+
+interface SearchHighlightRange {
+  end: number;
+  start: number;
+}
+
+function searchHighlightRanges(
+  excerpt: string,
+  terms: readonly string[],
+): readonly SearchHighlightRange[] {
+  const offsets: SearchHighlightRange[] = [];
+  let normalizedExcerpt = '';
+  for (let start = 0; start < excerpt.length;) {
+    const character = String.fromCodePoint(excerpt.codePointAt(start)!);
+    const end = start + character.length;
+    const normalizedCharacter = normalizeProjectSearchText(character);
+    normalizedExcerpt += normalizedCharacter;
+    for (let index = 0; index < normalizedCharacter.length; index += 1) {
+      offsets.push({ end, start });
+    }
+    start = end;
+  }
+
+  const ranges: SearchHighlightRange[] = [];
+  for (const term of terms) {
+    const normalizedTerm = normalizeProjectSearchText(term);
+    if (!normalizedTerm) {
+      continue;
+    }
+    let index = normalizedExcerpt.indexOf(normalizedTerm);
+    while (index !== -1) {
+      const first = offsets[index];
+      const last = offsets[index + normalizedTerm.length - 1];
+      if (first && last) {
+        ranges.push({ end: last.end, start: first.start });
+      }
+      index = normalizedExcerpt.indexOf(normalizedTerm, index + normalizedTerm.length);
+    }
+  }
+
+  return ranges
+    .sort((left, right) => left.start - right.start || left.end - right.end)
+    .reduce<SearchHighlightRange[]>((merged, range) => {
+      const previous = merged.at(-1);
+      if (previous && range.start <= previous.end) {
+        previous.end = Math.max(previous.end, range.end);
+      } else {
+        merged.push({ ...range });
+      }
+      return merged;
+    }, []);
+}
+
+function SearchPreviewExcerpt({
+  excerpt,
+  terms,
+}: {
+  excerpt: string;
+  terms: readonly string[];
+}) {
+  const ranges = searchHighlightRanges(excerpt, terms);
+  if (ranges.length === 0) {
+    return excerpt;
+  }
+
+  const parts: React.ReactNode[] = [];
+  let offset = 0;
+  for (const range of ranges) {
+    if (range.start > offset) {
+      parts.push(excerpt.slice(offset, range.start));
+    }
+    parts.push(
+      <mark className="project-tree__preview-match" key={range.start}>
+        {excerpt.slice(range.start, range.end)}
+      </mark>,
+    );
+    offset = range.end;
+  }
+  if (offset < excerpt.length) {
+    parts.push(excerpt.slice(offset));
+  }
+  return parts;
+}
+
+function branchMatches(
+  controller: ProjectTreeController,
+  parentId: string | null,
+  normalizedQuery: string,
+  searchNodeIds?: ReadonlySet<string>,
+): Set<string> {
+  const matches = new Set<string>();
+  for (const node of controller.getBranch(parentId).nodes) {
+    const descendants =
+      node.kind === 'folder'
+        ? branchMatches(
+            controller,
+            node.nodeId,
+            normalizedQuery,
+            searchNodeIds,
+          )
+        : new Set<string>();
+    if (
+      (searchNodeIds
+        ? searchNodeIds.has(node.nodeId)
+        : normalizeSearchQuery(projectNodeDisplayName(node)).includes(
+            normalizedQuery,
+          )) ||
+      descendants.size > 0
+    ) {
+      matches.add(node.nodeId);
+      for (const nodeId of descendants) {
+        matches.add(nodeId);
+      }
+    }
+  }
+  return matches;
 }
 
 function nodeMenuItems(
@@ -98,6 +288,7 @@ function nodeMenuItems(
             id: 'add-instance',
             kind: 'action',
             label: translate('projects.addInstance'),
+            icon: plusIcon,
           },
           { id: 'create-separator', kind: 'separator' },
         ] satisfies MenuItem[])
@@ -126,6 +317,7 @@ function nodeMenuItems(
             id: 'properties',
             kind: 'action',
             label: translate('projects.properties'),
+            icon: settingsIcon,
             shortcut: 'Alt+Enter',
             disabled: !propertiesAvailable,
           },
@@ -257,8 +449,13 @@ export function ProjectTree({
   onRequestTrash,
   onSubmitEdit,
   operationPending = false,
+  projectId,
+  searchNodeIds,
+  searchPreviews,
+  searchQuery = '',
   translate,
 }: ProjectTreeProps) {
+  const { preferences } = useFlyoffPreferences();
   const [, renderVersion] = useReducer((version: number) => version + 1, 0);
   const [focusedNodeId, setFocusedNodeId] = useState<string>();
   const [draggedNodeId, setDraggedNodeId] = useState<string>();
@@ -272,6 +469,12 @@ export function ProjectTree({
   const menuRefs = useRef(new Map<string, HTMLButtonElement>());
   const expandTimerRef = useRef<number | undefined>(undefined);
   const dropTargetRef = useRef<ProjectTreeDropTarget | undefined>(undefined);
+  const displayNodeName = (node: ProjectTreeNode): string =>
+    `${projectNodeDisplayName(node)}${
+      preferences.documents.showFileExtensions && node.kind === 'page'
+        ? '.md'
+        : ''
+    }`;
 
   useEffect(() => controller.subscribe(renderVersion), [controller]);
   useEffect(() => {
@@ -286,10 +489,26 @@ export function ProjectTree({
     [],
   );
 
-  const visibleNodes = collectVisibleNodes(controller);
-  const visibleNodeIds = useMemo(
-    () => new Set(visibleNodes.map(({ node }) => node.nodeId)),
-    [visibleNodes],
+  const normalizedSearchQuery = normalizeSearchQuery(searchQuery);
+  const searchTerms = contentSearchTerms(searchQuery);
+  const searchMatches = normalizedSearchQuery
+    ? branchMatches(
+        controller,
+        null,
+        normalizedSearchQuery,
+        searchNodeIds,
+      )
+    : undefined;
+  const visibleNodes = collectVisibleNodes(
+    controller,
+    searchQuery,
+    null,
+    1,
+    [],
+    searchMatches,
+  );
+  const visibleNodeIds = new Set(
+    visibleNodes.map(({ node }) => node.nodeId),
   );
   const effectiveFocusId =
     (focusedNodeId && visibleNodeIds.has(focusedNodeId)
@@ -372,6 +591,10 @@ export function ProjectTree({
           return;
         }
         event.preventDefault();
+        if (normalizedSearchQuery) {
+          focusNode(visibleNodes[index + 1]?.node.nodeId);
+          return;
+        }
         if (!controller.isExpanded(visible.node.nodeId)) {
           void controller.setExpanded(visible.node.nodeId, true);
         } else {
@@ -380,6 +603,10 @@ export function ProjectTree({
         return;
       case 'ArrowLeft':
         event.preventDefault();
+        if (normalizedSearchQuery) {
+          focusNode(visible.parentId ?? undefined);
+          return;
+        }
         if (
           visible.node.kind === 'folder' &&
           controller.isExpanded(visible.node.nodeId)
@@ -393,7 +620,9 @@ export function ProjectTree({
       case ' ':
         event.preventDefault();
         if (visible.node.kind === 'folder') {
-          void controller.toggle(visible.node.nodeId);
+          if (!normalizedSearchQuery) {
+            void controller.toggle(visible.node.nodeId);
+          }
         } else {
           onOpenNode(visible.node);
         }
@@ -463,6 +692,7 @@ export function ProjectTree({
 
   function finishDrag(event?: DragEvent<HTMLElement>): void {
     event?.preventDefault();
+    setWorkspaceDragActive(false);
     if (expandTimerRef.current !== undefined) {
       window.clearTimeout(expandTimerRef.current);
       expandTimerRef.current = undefined;
@@ -515,14 +745,20 @@ export function ProjectTree({
 
   function renderBranch(parentId: string | null, depth: number): React.ReactNode {
     const branch = controller.getBranch(parentId);
+    const renderedNodes = searchMatches
+      ? branch.nodes.filter((node) => searchMatches.has(node.nodeId))
+      : branch.nodes;
     const createEdit =
       edit?.mode === 'create' && edit.parentId === parentId ? edit : undefined;
 
     return (
       <>
-        {branch.nodes.map((node, siblingIndex) => {
+        {renderedNodes.map((node, siblingIndex) => {
+          const preview = searchPreviews?.get(node.nodeId);
           const expanded =
-            node.kind === 'folder' ? controller.isExpanded(node.nodeId) : undefined;
+            node.kind === 'folder'
+              ? Boolean(searchMatches) || controller.isExpanded(node.nodeId)
+              : undefined;
           const renameEdit =
             edit?.mode === 'rename' && edit.node.nodeId === node.nodeId
               ? edit
@@ -535,9 +771,11 @@ export function ProjectTree({
                 aria-level={depth}
                 aria-posinset={siblingIndex + 1}
                 aria-selected={activeNodeId === node.nodeId}
-                aria-setsize={branch.nodes.length}
+                aria-setsize={renderedNodes.length}
                 className={`project-tree__item${
                   activeNodeId === node.nodeId ? ' project-tree__item--active' : ''
+                }${
+                  preview ? ' project-tree__item--search-preview' : ''
                 }${
                   contextMenu?.node.nodeId === node.nodeId
                     ? ' project-tree__item--context'
@@ -547,7 +785,9 @@ export function ProjectTree({
                     ? ` project-tree__item--drop-${dropTarget.edge}`
                     : ''
                 }`}
-                draggable={!renameEdit && !operationPending}
+                draggable={
+                  !renameEdit && !operationPending && !normalizedSearchQuery
+                }
                 onDragEnd={() => finishDrag()}
                 onDragOver={(event) => {
                   if (!draggedNodeId || draggedNodeId === node.nodeId) {
@@ -569,9 +809,47 @@ export function ProjectTree({
                   updateDropTarget({ nodeId: node.nodeId, edge }, node);
                 }}
                 onDragStart={(event) => {
-                  event.dataTransfer.effectAllowed = 'move';
-                  event.dataTransfer.setData('text/plain', node.nodeId);
+                  event.dataTransfer.effectAllowed =
+                    node.kind === 'page' && projectId ? 'copyMove' : 'move';
+                  event.dataTransfer.setData(
+                    PROJECT_TREE_NODE_DRAG_TYPE,
+                    node.nodeId,
+                  );
+                  if (node.kind === 'page' && projectId) {
+                    writeWorkspaceProjectNodeDrag(event.dataTransfer, {
+                      type: 'project-content',
+                      projectId,
+                      nodeId: node.nodeId,
+                      pageType: node.pageType,
+                    });
+                  }
+                  setWorkspaceDragActive(true);
                   setDraggedNodeId(node.nodeId);
+                }}
+                onPointerDown={(event) => {
+                  if (
+                    event.button !== 0 ||
+                    node.kind !== 'page' ||
+                    !projectId ||
+                    renameEdit ||
+                    operationPending ||
+                    normalizedSearchQuery ||
+                    (event.target instanceof Element &&
+                      event.target.closest('.project-tree__menu-trigger'))
+                  ) {
+                    return;
+                  }
+                  beginWorkspaceProjectNodePointerDrag(
+                    {
+                      type: 'project-content',
+                      projectId,
+                      nodeId: node.nodeId,
+                      pageType: node.pageType,
+                    },
+                    event.pointerId,
+                    event.clientX,
+                    event.clientY,
+                  );
                 }}
                 onDrop={(event) => {
                   if (!dropTarget || dropTarget.nodeId !== node.nodeId) {
@@ -641,11 +919,18 @@ export function ProjectTree({
                   </div>
                 ) : (
                   <button
-                    aria-label={projectNodeDisplayName(node)}
+                    aria-describedby={
+                      preview
+                        ? `project-tree-preview-${node.nodeId}`
+                        : undefined
+                    }
+                    aria-label={displayNodeName(node)}
                     className="project-tree__node"
                     onClick={() => {
                       if (node.kind === 'folder') {
-                        void controller.toggle(node.nodeId);
+                        if (!normalizedSearchQuery) {
+                          void controller.toggle(node.nodeId);
+                        }
                       } else {
                         onOpenNode(node);
                       }
@@ -659,8 +944,27 @@ export function ProjectTree({
                     kind={node.kind}
                     pageType={node.kind === 'page' ? node.pageType : undefined}
                   />
-                    <span className="project-tree__label">
-                      {projectNodeDisplayName(node)}
+                    <span className="project-tree__text">
+                      <span className="project-tree__label">
+                        {displayNodeName(node)}
+                      </span>
+                      {preview ? (
+                        <span
+                          className="project-tree__preview"
+                          id={`project-tree-preview-${node.nodeId}`}
+                        >
+                          <span className="project-tree__preview-line">
+                            {preview.line}
+                          </span>
+                          <span aria-hidden="true">·</span>
+                          <span className="project-tree__preview-excerpt">
+                            <SearchPreviewExcerpt
+                              excerpt={preview.excerpt}
+                              terms={searchTerms}
+                            />
+                          </span>
+                        </span>
+                      ) : null}
                     </span>
                   </button>
                 )}
@@ -675,7 +979,7 @@ export function ProjectTree({
                     trigger={(props) => (
                       <button
                         {...props}
-                        aria-label={`${translate('projects.moreActions')}: ${projectNodeDisplayName(node)}`}
+                        aria-label={`${translate('projects.moreActions')}: ${displayNodeName(node)}`}
                         className="project-tree__menu-trigger"
                         ref={(element) => {
                           props.ref(element);
@@ -748,6 +1052,14 @@ export function ProjectTree({
           </div>
         ) : null}
         {parentId === null &&
+        searchMatches &&
+        branch.status === 'loaded' &&
+        renderedNodes.length === 0 ? (
+          <div className="project-tree__message" role="status">
+            {translate('projects.noSearchResults')}
+          </div>
+        ) : null}
+        {parentId === null &&
         branch.status === 'loading' &&
         branch.nodes.length === 0 ? (
           <div className="project-tree__message" role="status">
@@ -812,7 +1124,7 @@ export function ProjectTree({
       {renderBranch(null, 1)}
       {contextMenu ? (
         <ContextMenu
-          ariaLabel={`${translate('projects.moreActions')}: ${projectNodeDisplayName(
+          ariaLabel={`${translate('projects.moreActions')}: ${displayNodeName(
             contextMenu.node,
           )}`}
           items={nodeMenuItems(

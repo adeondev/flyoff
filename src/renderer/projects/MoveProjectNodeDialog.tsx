@@ -1,8 +1,8 @@
 import { useEffect, useId, useReducer, useState, type FormEvent } from 'react';
 
 import chevronRightIcon from '../../../public/images/icons/actions/chevron-right.svg';
-import folderOpenIcon from '../../../public/images/icons/instances/folder-open.svg';
-import folderIcon from '../../../public/images/icons/instances/folder.svg';
+import folderOpenIcon from '../../../public/images/icons/instances/folder-open-solid.svg';
+import folderIcon from '../../../public/images/icons/instances/folder-solid.svg';
 import type {
   MoveProjectNodeRequest,
   ProjectResult,

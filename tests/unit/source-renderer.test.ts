@@ -3,7 +3,10 @@
 import { describe, expect, it } from 'vitest';
 
 import { readSource } from '../../src/renderer/projects/source-caret';
-import { reconcileSource } from '../../src/renderer/projects/source-renderer';
+import {
+  reconcileSource,
+  updateActiveSourceLine,
+} from '../../src/renderer/projects/source-renderer';
 
 describe('incremental source renderer', () => {
   it('creates canonical gutter and content cells for every line', () => {
@@ -69,5 +72,46 @@ describe('incremental source renderer', () => {
 
     expect(root.querySelectorAll(':scope > .md-line')).toHaveLength(2);
     expect(readSource(root)).toBe('one\ntwo');
+  });
+
+  it('keeps code blocks out of spellcheck unless explicitly enabled', () => {
+    const root = document.createElement('div');
+    root.dataset.spellcheckEnabled = 'true';
+    root.dataset.spellcheckCodeBlocks = 'false';
+    reconcileSource(root, 'text\n```\ncodee\n```');
+
+    expect(
+      root.querySelector<HTMLElement>(
+        '.md-line--code > .md-line__content',
+      )?.spellcheck,
+    ).toBe(false);
+
+    const enabledRoot = document.createElement('div');
+    enabledRoot.dataset.spellcheckEnabled = 'true';
+    enabledRoot.dataset.spellcheckCodeBlocks = 'true';
+    reconcileSource(enabledRoot, '```\ncodee\n```');
+    expect(
+      enabledRoot.querySelector<HTMLElement>(
+        '.md-line--code > .md-line__content',
+      )?.spellcheck,
+    ).toBe(true);
+  });
+
+  it('respects the global spellcheck switch and marks the active line', () => {
+    const root = document.createElement('div');
+    root.dataset.spellcheckEnabled = 'false';
+    reconcileSource(root, 'one\ntwo');
+
+    expect(
+      root.querySelector<HTMLElement>('.md-line__content')?.spellcheck,
+    ).toBe(false);
+
+    updateActiveSourceLine(root, 'one\ntwo', 5);
+    expect(root.children[0]?.classList.contains('md-line--active')).toBe(false);
+    expect(root.children[1]?.classList.contains('md-line--active')).toBe(true);
+
+    updateActiveSourceLine(root, 'one\ntwo', 0);
+    expect(root.children[0]?.classList.contains('md-line--active')).toBe(true);
+    expect(root.children[1]?.classList.contains('md-line--active')).toBe(false);
   });
 });

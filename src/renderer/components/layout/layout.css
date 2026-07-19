@@ -55,7 +55,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .flyoff-panel-resizer::before {
+  :root:not([data-motion='full']) .flyoff-panel-resizer::before {
     transition: none;
   }
 }

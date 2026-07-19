@@ -11,7 +11,6 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { TabSessionStore } from '../../src/main/session';
 import {
-  TAB_SESSION_VERSION,
   WORKSPACE_SESSION_VERSION,
   type InternalPageId,
   type WorkspaceSessionSnapshot,
@@ -32,14 +31,18 @@ function createWorkspaceSnapshot(
   return {
     version: WORKSPACE_SESSION_VERSION,
     home: {
-      version: TAB_SESSION_VERSION,
-      tabs: pageIds.map((pageId) => ({
-        tabId: `page:${pageId}`,
-        target: { type: 'internal', pageId },
-        scrollTop: 0,
-        pageState: { version: 1, data: {} },
-      })),
-      activeTabId,
+      root: {
+        kind: 'pane',
+        paneId: 'home-pane-1',
+        tabs: pageIds.map((pageId) => ({
+          tabId: `page:${pageId}`,
+          target: { type: 'internal', pageId },
+          scrollTop: 0,
+          pageState: { version: 1, data: {} },
+        })),
+        activeTabId,
+      },
+      activePaneId: 'home-pane-1',
     },
     project: null,
   };

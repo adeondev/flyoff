@@ -14,7 +14,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../../src/renderer/App';
 import {
   RENDERER_MENU_COMMANDS,
-  TAB_SESSION_VERSION,
   WORKSPACE_SESSION_VERSION,
   type BootstrapState,
   type FlyoffApi,
@@ -23,16 +22,29 @@ import {
   type ProjectSummary,
   type ProjectTreeNode,
   type RendererMenuCommand,
+  type TabDescriptor,
   type WorkspaceSessionSnapshot,
 } from '../../src/shared/contracts';
 
 const projectId = 'cdb39a1a-0339-4c75-91ea-78fbbcb2f97a';
 const noteId = 'ffbf978c-43d7-4135-a3ea-f6e4e3ec76fb';
+const plainNoteId = '2b4aa17c-9c6e-4f99-99af-b729c77c7603';
 const folderId = 'f44fd7c7-e84d-4b31-8d23-c268c1be446d';
 const nestedFolderId = 'adb5e1f7-85e8-4236-9f26-abfc7d0fa425';
 const revision = '1'.repeat(64);
 const nextRevision = '2'.repeat(64);
 const finalRevision = '3'.repeat(64);
+
+function paneWorkspace(
+  tabs: readonly TabDescriptor[],
+  activeTabId: string | null,
+  paneId: string,
+) {
+  return {
+    root: { kind: 'pane' as const, paneId, tabs, activeTabId },
+    activePaneId: paneId,
+  };
+}
 
 const bootstrap: BootstrapState = {
   platform: 'win32',
@@ -183,16 +195,82 @@ afterEach(() => {
 });
 
 describe('project workspace integration', () => {
+  it('records real note activation and closure without counting workspace setup', async () => {
+    const recordProjectNoteActivity = vi.fn(async (event) => ({
+      ok: true as const,
+      value: {
+        projectId,
+        nodeId: event.nodeId,
+        activationCount: 1,
+        lastActivatedAt: '2026-03-01T10:00:00.000Z',
+        lastClosedAt:
+          event.type === 'closed'
+            ? '2026-03-01T10:05:00.000Z'
+            : null,
+      },
+    }));
+    installProjectApi({
+      getProjectNoteActivity: vi.fn(async () => ({
+        ok: true,
+        value: [],
+      })),
+      listProjectLinkTargets: vi.fn(async () => ({
+        ok: true,
+        value: [
+          {
+            nodeId: noteId,
+            name: 'Roadmap',
+            path: '/Roadmap.md',
+          },
+        ],
+      })),
+      recordProjectNoteActivity,
+    });
+    render(<App />);
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Open den' }),
+    );
+    expect(recordProjectNoteActivity).not.toHaveBeenCalled();
+    fireEvent.click(await screen.findByRole('button', { name: 'Roadmap' }));
+    await waitFor(() => {
+      expect(recordProjectNoteActivity).toHaveBeenCalledWith({
+        type: 'activated',
+        nodeId: noteId,
+      });
+    });
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Close tab: Roadmap' }),
+    );
+    await waitFor(() => {
+      expect(recordProjectNoteActivity).toHaveBeenCalledWith({
+        type: 'closed',
+        nodeId: noteId,
+      });
+    });
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'New tab', exact: true }),
+    );
+    expect(
+      await screen.findByRole('heading', { name: 'Recently closed' }),
+    ).toBeTruthy();
+    expect(
+      await screen.findByRole('option', { name: /Roadmap/ }),
+    ).toBeTruthy();
+  });
+
   it('creates a project and activates its overview and sidebar', async () => {
     const api = installProjectApi();
     render(<App />);
 
     fireEvent.click(
-      await screen.findByRole('button', { name: 'New Project' }),
+      await screen.findByRole('button', { name: 'New den' }),
     );
-    const dialog = screen.getByRole('dialog', { name: 'Create project' });
+    const dialog = screen.getByRole('dialog', { name: 'Create den' });
     fireEvent.change(
-      within(dialog).getByRole('textbox', { name: 'Project name' }),
+      within(dialog).getByRole('textbox', { name: 'Den name' }),
       { target: { value: project.name } },
     );
     fireEvent.click(
@@ -207,7 +285,7 @@ describe('project workspace integration', () => {
         selectionToken: '94ad6b94-3a3e-414a-9d54-b8b7ad30d395',
       });
       expect(
-        screen.getByRole('complementary', { name: 'Project contents' }),
+        screen.getByRole('complementary', { name: 'Den contents' }),
       ).toBeTruthy();
       expect(
         screen.getByRole('tab', { name: project.name }).getAttribute(
@@ -224,11 +302,11 @@ describe('project workspace integration', () => {
     render(<App />);
 
     fireEvent.click(
-      await screen.findByRole('button', { name: 'Open Project' }),
+      await screen.findByRole('button', { name: 'Open den' }),
     );
 
     expect(
-      await screen.findByRole('complementary', { name: 'Project contents' }),
+      await screen.findByRole('complementary', { name: 'Den contents' }),
     ).toBeTruthy();
     expect(api.openProject).toHaveBeenCalledOnce();
     fireEvent.click(await screen.findByRole('button', { name: 'Roadmap' }));
@@ -246,13 +324,16 @@ describe('project workspace integration', () => {
       (await screen.findByRole('textbox', { name: 'Markdown editor' }))
         .textContent,
     ).toContain('# Roadmap');
-    const heading = screen.getByRole('heading', { name: '/Roadmap' });
-    expect(heading.getAttribute('data-flyoff-tooltip')).toBe('/Roadmap');
-    expect(heading.getAttribute('data-flyoff-tooltip-placement')).toBe(
-      'bottom',
-    );
+    expect(
+      screen
+        .getByRole('main', { name: 'Markdown editor' })
+        .getAttribute('data-chrome-layout'),
+    ).toBe('focus');
+    fireEvent.click(screen.getByRole('button', { name: 'Note options' }));
+    expect(await screen.findByText('/Roadmap')).toBeTruthy();
+    fireEvent.keyDown(document, { key: 'Escape' });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Close project' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close den' }));
 
     await waitFor(() => {
       expect(
@@ -262,7 +343,7 @@ describe('project workspace integration', () => {
     });
     expect(api.closeProject).toHaveBeenCalledOnce();
     expect(
-      screen.queryByRole('complementary', { name: 'Project contents' }),
+      screen.queryByRole('complementary', { name: 'Den contents' }),
     ).toBeNull();
     expect(screen.queryByRole('tab', { name: project.name })).toBeNull();
     expect(screen.queryByRole('tab', { name: 'Roadmap' })).toBeNull();
@@ -289,12 +370,13 @@ describe('project workspace integration', () => {
     render(<App />);
 
     fireEvent.click(
-      await screen.findByRole('button', { name: 'Open Project' }),
+      await screen.findByRole('button', { name: 'Open den' }),
     );
     fireEvent.click(await screen.findByRole('button', { name: 'Roadmap' }));
     const editor = await screen.findByRole('textbox', {
       name: 'Markdown editor',
     });
+    await waitFor(() => expect(document.activeElement).toBe(editor));
     editor.textContent = '# Changed';
     fireEvent.input(editor);
     fireEvent.keyDown(editor, { ctrlKey: true, key: 's' });
@@ -368,7 +450,7 @@ describe('project workspace integration', () => {
     render(<App />, { container: appRoot });
 
     fireEvent.click(
-      await screen.findByRole('button', { name: 'Open Project' }),
+      await screen.findByRole('button', { name: 'Open den' }),
     );
     fireEvent.click(await screen.findByRole('button', { name: 'Roadmap' }));
     await screen.findByRole('textbox', { name: 'Markdown editor' });
@@ -437,7 +519,7 @@ describe('project workspace integration', () => {
     render(<App />);
 
     fireEvent.click(
-      await screen.findByRole('button', { name: 'Open Project' }),
+      await screen.findByRole('button', { name: 'Open den' }),
     );
     fireEvent.click(await screen.findByRole('button', { name: 'Roadmap' }));
     await screen.findByRole('textbox', { name: 'Markdown editor' });
@@ -461,13 +543,17 @@ describe('project workspace integration', () => {
     const renamed = { ...note, name: 'Launch' };
     const renameProjectNode = vi.fn(async () => ({
       ok: true as const,
-      value: renamed,
+      value: {
+        node: renamed,
+        skippedLockedNodeIds: [plainNoteId],
+        updatedDocumentNodeIds: [],
+      },
     }));
     installProjectApi({ renameProjectNode });
     render(<App />);
 
     fireEvent.click(
-      await screen.findByRole('button', { name: 'Open Project' }),
+      await screen.findByRole('button', { name: 'Open den' }),
     );
     fireEvent.click(await screen.findByRole('button', { name: 'Roadmap' }));
     await screen.findByRole('textbox', { name: 'Markdown editor' });
@@ -485,8 +571,10 @@ describe('project workspace integration', () => {
         name: 'Launch',
       });
       expect(screen.getByRole('tab', { name: 'Launch' })).toBeTruthy();
-      expect(screen.getByRole('heading', { name: '/Launch' })).toBeTruthy();
+      expect(screen.queryByRole('status')).toBeNull();
     });
+    fireEvent.click(screen.getByRole('button', { name: 'Note options' }));
+    expect(await screen.findByText('/Launch')).toBeTruthy();
   });
 
   it('updates an open note path after an ancestor rename', async () => {
@@ -499,7 +587,11 @@ describe('project workspace integration', () => {
     const nestedNote: ProjectTreeNode = { ...note, parentId: folderId };
     const renameProjectNode = vi.fn(async () => ({
       ok: true as const,
-      value: { ...folder, name: 'Archive' },
+      value: {
+        node: { ...folder, name: 'Archive' },
+        skippedLockedNodeIds: [],
+        updatedDocumentNodeIds: [],
+      },
     }));
     installProjectApi({
       listProjectChildren: vi.fn(async ({ parentId }) => ({
@@ -511,11 +603,11 @@ describe('project workspace integration', () => {
     render(<App />);
 
     fireEvent.click(
-      await screen.findByRole('button', { name: 'Open Project' }),
+      await screen.findByRole('button', { name: 'Open den' }),
     );
     fireEvent.click(await screen.findByRole('button', { name: 'Notes' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Roadmap' }));
-    await screen.findByRole('heading', { name: '/Notes/Roadmap' });
+    await screen.findByRole('textbox', { name: 'Markdown editor' });
 
     const folderItem = screen
       .getByRole('button', { name: 'Notes' })
@@ -530,11 +622,10 @@ describe('project workspace integration', () => {
         nodeId: folderId,
         name: 'Archive',
       });
-      expect(
-        screen.getByRole('heading', { name: '/Archive/Roadmap' }),
-      ).toBeTruthy();
     });
     expect(screen.getByRole('tab', { name: 'Roadmap' })).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Note options' }));
+    expect(await screen.findByText('/Archive/Roadmap')).toBeTruthy();
   });
 
   it('opens properties immediately with Alt+Enter and applies read-only after flushing the current revision', async () => {
@@ -571,12 +662,13 @@ describe('project workspace integration', () => {
     render(<App />);
 
     fireEvent.click(
-      await screen.findByRole('button', { name: 'Open Project' }),
+      await screen.findByRole('button', { name: 'Open den' }),
     );
     fireEvent.click(await screen.findByRole('button', { name: 'Roadmap' }));
     const editor = await screen.findByRole('textbox', {
       name: 'Markdown editor',
     });
+    await waitFor(() => expect(document.activeElement).toBe(editor));
     editor.textContent = '# Current draft';
     fireEvent.input(editor, { inputType: 'insertText' });
     fireEvent.keyDown(editor, { altKey: true, key: 'Enter' });
@@ -598,19 +690,22 @@ describe('project workspace integration', () => {
     fireEvent.click(readOnly);
     fireEvent.click(within(dialog).getByRole('button', { name: 'Apply' }));
 
-    await waitFor(() => {
-      expect(saveMarkdownDocument).toHaveBeenCalledWith({
-        nodeId: noteId,
-        content: '# Current draft',
-        expectedRevision: revision,
-      });
-      expect(setProjectPageReadOnly).toHaveBeenCalledWith({
-        nodeId: noteId,
-        expectedRevision: nextRevision,
-        readOnly: true,
-      });
-      expect(editor.getAttribute('contenteditable')).toBe('false');
-    });
+    await waitFor(
+      () => {
+        expect(saveMarkdownDocument).toHaveBeenCalledWith({
+          nodeId: noteId,
+          content: '# Current draft',
+          expectedRevision: revision,
+        });
+        expect(setProjectPageReadOnly).toHaveBeenCalledWith({
+          nodeId: noteId,
+          expectedRevision: nextRevision,
+          readOnly: true,
+        });
+        expect(editor.getAttribute('contenteditable')).toBe('false');
+      },
+      { timeout: 5_000 },
+    );
     expect(
       (screen.getByRole('button', { name: 'Bold' }) as HTMLButtonElement)
         .disabled,
@@ -622,7 +717,7 @@ describe('project workspace integration', () => {
     render(<App />);
 
     fireEvent.click(
-      await screen.findByRole('button', { name: 'Open Project' }),
+      await screen.findByRole('button', { name: 'Open den' }),
     );
     fireEvent.click(
       await screen.findByRole('button', { name: 'More actions: Roadmap' }),
@@ -664,7 +759,7 @@ describe('project workspace integration', () => {
     render(<App />);
 
     fireEvent.click(
-      await screen.findByRole('button', { name: 'Open Project' }),
+      await screen.findByRole('button', { name: 'Open den' }),
     );
     fireEvent.click(await screen.findByRole('button', { name: 'Roadmap' }));
     const editor = await screen.findByRole('textbox', {
@@ -702,6 +797,94 @@ describe('project workspace integration', () => {
     });
   });
 
+  it('keeps an unprotected note accessible after reopening a protected note', async () => {
+    const protectedNote = { ...note, name: '123' };
+    const plainNote: ProjectTreeNode = {
+      ...note,
+      nodeId: plainNoteId,
+      name: 'aaaa',
+    };
+    const protectedDocument = {
+      ...markdownDocument,
+      content: '# Secret',
+    };
+    const plainDocument: MarkdownDocument = {
+      ...markdownDocument,
+      nodeId: plainNoteId,
+      content: '',
+    };
+    let protectedLocked = false;
+    const readMarkdownDocument = vi.fn(async ({ nodeId }) =>
+      nodeId === noteId && protectedLocked
+        ? {
+            ok: false as const,
+            error: {
+              code: 'password-required' as const,
+              message: 'Password required',
+            },
+          }
+        : {
+            ok: true as const,
+            value:
+              nodeId === noteId ? protectedDocument : plainDocument,
+          },
+    );
+    const lockProjectPage = vi.fn(async ({ nodeId }) => {
+      if (nodeId === noteId) {
+        protectedLocked = true;
+      }
+      return { ok: true as const, value: null };
+    });
+    const unlockProjectPage = vi.fn(async ({ nodeId }) =>
+      nodeId === noteId
+        ? { ok: true as const, value: protectedDocument }
+        : {
+            ok: false as const,
+            error: {
+              code: 'invalid-operation' as const,
+              message: 'This note is not protected by a password.',
+            },
+          },
+    );
+    installProjectApi({
+      listProjectChildren: vi.fn(async () => ({
+        ok: true as const,
+        value: [protectedNote, plainNote],
+      })),
+      lockProjectPage,
+      readMarkdownDocument,
+      unlockProjectPage,
+    });
+    render(<App />);
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Open den' }),
+    );
+    fireEvent.click(await screen.findByRole('button', { name: '123' }));
+    await screen.findByRole('textbox', { name: 'Markdown editor' });
+    fireEvent.click(screen.getByRole('button', { name: 'aaaa' }));
+    await screen.findByRole('textbox', { name: 'Markdown editor' });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close tab: 123' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Close tab: aaaa' }));
+    await waitFor(() => {
+      expect(screen.queryByRole('tab', { name: '123' })).toBeNull();
+      expect(screen.queryByRole('tab', { name: 'aaaa' })).toBeNull();
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: '123' }));
+    await screen.findByRole('button', { name: 'Submit' });
+    fireEvent.click(screen.getByRole('button', { name: 'aaaa' }));
+
+    expect(
+      await screen.findByRole('textbox', { name: 'Markdown editor' }),
+    ).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Submit' })).toBeNull();
+    expect(unlockProjectPage).not.toHaveBeenCalledWith(
+      expect.objectContaining({ nodeId: plainNoteId }),
+    );
+  });
+
   it('preserves a dirty buffer when autosave discovers that a note requires a password', async () => {
     const saveMarkdownDocument = vi.fn(async () => ({
       ok: false as const,
@@ -718,7 +901,7 @@ describe('project workspace integration', () => {
     render(<App />);
 
     fireEvent.click(
-      await screen.findByRole('button', { name: 'Open Project' }),
+      await screen.findByRole('button', { name: 'Open den' }),
     );
     fireEvent.click(await screen.findByRole('button', { name: 'Roadmap' }));
     const editor = await screen.findByRole('textbox', {
@@ -738,7 +921,7 @@ describe('project workspace integration', () => {
     fireEvent.change(password, {
       target: { value: 'correct horse battery staple' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Unlock' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
 
     expect(
       (await screen.findByRole('textbox', { name: 'Markdown editor' }))
@@ -769,13 +952,13 @@ describe('project workspace integration', () => {
     render(<App />);
 
     fireEvent.click(
-      await screen.findByRole('button', { name: 'Open Project' }),
+      await screen.findByRole('button', { name: 'Open den' }),
     );
     fireEvent.click(await screen.findByRole('button', { name: 'Roadmap' }));
     fireEvent.change(await screen.findByLabelText('Password'), {
       target: { value: 'correct horse battery staple' },
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Unlock' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Submit' }));
     await screen.findByRole('textbox', { name: 'Markdown editor' });
 
     fireEvent.click(screen.getByRole('button', { name: 'Close tab: Roadmap' }));
@@ -812,14 +995,11 @@ describe('project workspace integration', () => {
     render(<App />);
 
     fireEvent.click(
-      await screen.findByRole('button', { name: 'Open Project' }),
+      await screen.findByRole('button', { name: 'Open den' }),
     );
     fireEvent.click(await screen.findByRole('button', { name: 'Notes' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Roadmap' }));
     await screen.findByRole('textbox', { name: 'Markdown editor' });
-    expect(
-      screen.getByRole('heading', { name: '/Notes/Roadmap' }),
-    ).toBeTruthy();
     expect(screen.getByRole('tab', { name: 'Roadmap' })).toBeTruthy();
 
     fireEvent.click(screen.getByRole('tab', { name: project.name }));
@@ -836,9 +1016,8 @@ describe('project workspace integration', () => {
   it('keeps only global tabs when the restored project is unavailable', async () => {
     const previous: WorkspaceSessionSnapshot = {
       version: WORKSPACE_SESSION_VERSION,
-      home: {
-        version: TAB_SESSION_VERSION,
-        tabs: [
+      home: paneWorkspace(
+        [
           {
             tabId: 'page:home',
             target: { type: 'internal', pageId: 'home' },
@@ -846,12 +1025,13 @@ describe('project workspace integration', () => {
             pageState: { version: 1, data: {} },
           },
         ],
-        activeTabId: 'page:home',
-      },
+        'page:home',
+        'home-pane-1',
+      ),
       project: {
         projectId,
-        tabs: [
-          {
+        ...paneWorkspace(
+          [{
             tabId: `project:${projectId}:node:${noteId}`,
             target: {
               type: 'project-content',
@@ -861,9 +1041,10 @@ describe('project workspace integration', () => {
             },
             scrollTop: 12,
             pageState: { version: 1, data: {} },
-          },
-        ],
-        activeTabId: `project:${projectId}:node:${noteId}`,
+          }],
+          `project:${projectId}:node:${noteId}`,
+          'project-pane-1',
+        ),
       },
     };
     const restoreProject = vi.fn(async () => failure('Missing project'));
@@ -882,8 +1063,11 @@ describe('project workspace integration', () => {
         expect.objectContaining({
           project: null,
           home: expect.objectContaining({
-            activeTabId: 'page:home',
-            tabs: [expect.objectContaining({ tabId: 'page:home' })],
+            activePaneId: 'home-pane-1',
+            root: expect.objectContaining({
+              activeTabId: 'page:home',
+              tabs: [expect.objectContaining({ tabId: 'page:home' })],
+            }),
           }),
         }),
       );
@@ -892,16 +1076,22 @@ describe('project workspace integration', () => {
     expect(screen.getByRole('tab', { name: 'Home' })).toBeTruthy();
     expect(
       screen.getByRole('alert').textContent,
-    ).toContain('The project from the previous session could not be opened.');
+    ).toContain('The den from the previous session could not be opened.');
     expect(screen.getByRole('button', { name: 'This Device' })).toBeTruthy();
   });
 
-  it('consumes the restore prompt before awaiting a slow project restore', async () => {
+  it('renders each restored pane from its own active note', async () => {
+    const secondNote: ProjectTreeNode = {
+      ...note,
+      nodeId: plainNoteId,
+      name: 'Release Notes',
+    };
+    const firstTabId = `project:${projectId}:node:${noteId}`;
+    const secondTabId = `project:${projectId}:node:${plainNoteId}`;
     const previous: WorkspaceSessionSnapshot = {
       version: WORKSPACE_SESSION_VERSION,
-      home: {
-        version: TAB_SESSION_VERSION,
-        tabs: [
+      home: paneWorkspace(
+        [
           {
             tabId: 'page:home',
             target: { type: 'internal', pageId: 'home' },
@@ -909,19 +1099,143 @@ describe('project workspace integration', () => {
             pageState: { version: 1, data: {} },
           },
         ],
-        activeTabId: 'page:home',
-      },
+        'page:home',
+        'home-pane-1',
+      ),
       project: {
         projectId,
-        tabs: [
+        activePaneId: 'project-pane-right',
+        root: {
+          kind: 'split',
+          splitId: 'project-split',
+          direction: 'row',
+          ratio: 0.5,
+          first: {
+            kind: 'pane',
+            paneId: 'project-pane-left',
+            tabs: [
+              {
+                tabId: firstTabId,
+                target: {
+                  type: 'project-content',
+                  projectId,
+                  nodeId: noteId,
+                  pageType: 'markdown',
+                },
+                scrollTop: 0,
+                pageState: { version: 1, data: { mode: 'edit' } },
+              },
+            ],
+            activeTabId: firstTabId,
+          },
+          second: {
+            kind: 'pane',
+            paneId: 'project-pane-right',
+            tabs: [
+              {
+                tabId: secondTabId,
+                target: {
+                  type: 'project-content',
+                  projectId,
+                  nodeId: plainNoteId,
+                  pageType: 'markdown',
+                },
+                scrollTop: 0,
+                pageState: { version: 1, data: { mode: 'edit' } },
+              },
+            ],
+            activeTabId: secondTabId,
+          },
+        },
+      },
+    };
+    installProjectApi(
+      {
+        getProjectNode: vi.fn(async ({ nodeId }) => ({
+          ok: true as const,
+          value: nodeId === noteId ? note : secondNote,
+        })),
+        listProjectChildren: vi.fn(async () => ({
+          ok: true as const,
+          value: [note, secondNote],
+        })),
+        readMarkdownDocument: vi.fn(async ({ nodeId }) => ({
+          ok: true as const,
+          value:
+            nodeId === noteId
+              ? markdownDocument
+              : {
+                  ...markdownDocument,
+                  nodeId: plainNoteId,
+                  content: '# Release Notes',
+                },
+        })),
+      },
+      previous,
+    );
+    render(<App />);
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Restore' }),
+    );
+    const panes = await waitFor(() => {
+      const values = document.querySelectorAll<HTMLElement>(
+        '.workspace-pane',
+      );
+      expect(values).toHaveLength(2);
+      return values;
+    });
+    const left = within(panes[0]!);
+    const right = within(panes[1]!);
+
+    fireEvent.click(
+      await left.findByRole('button', { name: 'Note options' }),
+    );
+    expect(await screen.findByText('/Roadmap')).toBeTruthy();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    fireEvent.click(
+      await right.findByRole('button', { name: 'Note options' }),
+    );
+    expect(await screen.findByText('/Release Notes')).toBeTruthy();
+    expect(
+      left
+        .getByRole('textbox', { name: 'Markdown editor' })
+        .getAttribute('data-markdown-node-id'),
+    ).toBe(noteId);
+    expect(
+      right
+        .getByRole('textbox', { name: 'Markdown editor' })
+        .getAttribute('data-markdown-node-id'),
+    ).toBe(plainNoteId);
+  });
+
+  it('consumes the restore prompt before awaiting a slow project restore', async () => {
+    const previous: WorkspaceSessionSnapshot = {
+      version: WORKSPACE_SESSION_VERSION,
+      home: paneWorkspace(
+        [
           {
-            tabId: `project:${projectId}:overview`,
-            target: { type: 'project-overview', projectId },
+            tabId: 'page:home',
+            target: { type: 'internal', pageId: 'home' },
             scrollTop: 0,
             pageState: { version: 1, data: {} },
           },
         ],
-        activeTabId: `project:${projectId}:overview`,
+        'page:home',
+        'home-pane-1',
+      ),
+      project: {
+        projectId,
+        ...paneWorkspace(
+          [{
+            tabId: `project:${projectId}:overview`,
+            target: { type: 'project-overview', projectId },
+            scrollTop: 0,
+            pageState: { version: 1, data: {} },
+          }],
+          `project:${projectId}:overview`,
+          'project-pane-1',
+        ),
       },
     };
     let finishRestore:
@@ -956,7 +1270,9 @@ describe('project workspace integration', () => {
         'restore',
         expect.objectContaining({
           project: expect.objectContaining({
-            activeTabId: `project:${projectId}:overview`,
+            root: expect.objectContaining({
+              activeTabId: `project:${projectId}:overview`,
+            }),
           }),
         }),
       );
@@ -987,9 +1303,8 @@ describe('project workspace integration', () => {
     };
     const previous: WorkspaceSessionSnapshot = {
       version: WORKSPACE_SESSION_VERSION,
-      home: {
-        version: TAB_SESSION_VERSION,
-        tabs: [
+      home: paneWorkspace(
+        [
           {
             tabId: 'page:home',
             target: { type: 'internal', pageId: 'home' },
@@ -997,12 +1312,13 @@ describe('project workspace integration', () => {
             pageState: { version: 1, data: {} },
           },
         ],
-        activeTabId: 'page:home',
-      },
+        'page:home',
+        'home-pane-1',
+      ),
       project: {
         projectId,
-        tabs: [
-          {
+        ...paneWorkspace(
+          [{
             tabId: `project:${projectId}:node:${noteId}`,
             target: {
               type: 'project-content',
@@ -1012,9 +1328,10 @@ describe('project workspace integration', () => {
             },
             scrollTop: 0,
             pageState: { version: 1, data: {} },
-          },
-        ],
-        activeTabId: `project:${projectId}:node:${noteId}`,
+          }],
+          `project:${projectId}:node:${noteId}`,
+          'project-pane-1',
+        ),
       },
     };
     const closeProject = vi.fn(async () => ({ ok: true as const, value: null }));
@@ -1063,7 +1380,10 @@ describe('project workspace integration', () => {
       expect(screen.queryByRole('tab', { name: 'Roadmap' })).toBeNull();
     });
     expect(closeProject).not.toHaveBeenCalled();
-    expect(screen.getByText('No tab open.')).toBeTruthy();
+    expect(screen.queryAllByRole('tab')).toHaveLength(0);
+    expect(
+      screen.getByRole('heading', { name: 'Nothing open yet' }),
+    ).toBeTruthy();
   });
 
   it('switches the note view mode through page session state', async () => {
@@ -1071,26 +1391,25 @@ describe('project workspace integration', () => {
     render(<App />);
 
     fireEvent.click(
-      await screen.findByRole('button', { name: 'Open Project' }),
+      await screen.findByRole('button', { name: 'Open den' }),
     );
     fireEvent.click(await screen.findByRole('button', { name: 'Roadmap' }));
     await screen.findByRole('textbox', { name: 'Markdown editor' });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Reading' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Note options' }));
+    fireEvent.click(
+      await screen.findByRole('menuitemcheckbox', { name: 'Reading' }),
+    );
 
     await waitFor(() => {
-      expect(
-        screen.getByRole('button', { name: 'Reading' }).getAttribute(
-          'aria-pressed',
-        ),
-      ).toBe('true');
+      expect(screen.queryByRole('textbox', { name: 'Markdown editor' })).toBeNull();
     });
-    expect(
-      screen.queryByRole('textbox', { name: 'Markdown editor' }),
-    ).toBeNull();
     expect(screen.getByRole('document', { name: 'Reading' })).toBeTruthy();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Split' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Note options' }));
+    fireEvent.click(
+      await screen.findByRole('menuitemcheckbox', { name: 'Split' }),
+    );
     expect(
       await screen.findByRole('textbox', { name: 'Markdown editor' }),
     ).toBeTruthy();
@@ -1110,7 +1429,7 @@ describe('project workspace integration', () => {
     render(<App />);
 
     fireEvent.click(
-      await screen.findByRole('button', { name: 'Open Project' }),
+      await screen.findByRole('button', { name: 'Open den' }),
     );
     fireEvent.click(await screen.findByRole('button', { name: 'Roadmap' }));
     const editor = await screen.findByRole('textbox', {
@@ -1136,30 +1455,39 @@ describe('project workspace integration', () => {
     });
   });
 
-  it('switches project rail views between the tree and placeholders', async () => {
-    installProjectApi();
-    render(<App />);
+  it('restores the centered project rail and keeps footer app actions', async () => {
+    const api = installProjectApi();
+    const { container } = render(<App />);
 
+    expect(screen.getByRole('banner', { name: 'Flyoff' })).toBeTruthy();
     fireEvent.click(
-      await screen.findByRole('button', { name: 'Open Project' }),
+      await screen.findByRole('button', { name: 'Open den' }),
     );
-    await screen.findByRole('complementary', { name: 'Project contents' });
+    await screen.findByRole('complementary', { name: 'Den contents' });
 
-    const rail = screen.getByRole('navigation', { name: 'Project sections' });
-    expect(within(rail).getAllByRole('button')).toHaveLength(4);
-
-    fireEvent.click(within(rail).getByRole('button', { name: 'Graph' }));
-    await waitFor(() => {
-      expect(screen.getByText('Coming soon.')).toBeTruthy();
+    expect(screen.queryByRole('banner', { name: 'Flyoff' })).toBeNull();
+    expect(container.querySelector('.app-shell')?.getAttribute('data-context')).toBe(
+      'project',
+    );
+    expect(container.querySelector('.project-sidebar__header')).not.toBeNull();
+    expect(container.querySelector('.pages-bar')).not.toBeNull();
+    const rail = screen.getByRole('navigation', {
+      name: 'Den sections',
     });
+    expect(within(rail).getAllByRole('button')).toHaveLength(5);
+    expect(screen.getByRole('searchbox', { name: 'Search this den' })).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: 'About Flyoff' }));
+    expect(api.executeMenuCommand).toHaveBeenCalledWith('help.about');
+
+    fireEvent.click(within(rail).getByRole('button', { name: 'Settings' }));
+    expect(await screen.findByText('Coming soon.')).toBeTruthy();
     expect(
-      screen.queryByRole('complementary', { name: 'Project contents' }),
+      screen.queryByRole('complementary', { name: 'Den contents' }),
     ).toBeNull();
 
-    fireEvent.click(within(rail).getByRole('button', { name: 'Project' }));
-    expect(
-      await screen.findByRole('complementary', { name: 'Project contents' }),
-    ).toBeTruthy();
+    fireEvent.click(within(rail).getByRole('button', { name: 'Den' }));
     expect(screen.queryByText('Coming soon.')).toBeNull();
+    expect(screen.getByRole('heading', { name: project.name })).toBeTruthy();
   });
 });

@@ -29,6 +29,7 @@ interface KeyboardNavigation {
 }
 
 interface SourceMouseSelectionOptions {
+  getContent?: () => string;
   isComposing: () => boolean;
   onSelectionChange: (
     content: string,
@@ -172,7 +173,7 @@ export function installSourceMouseSelection(
       return;
     }
 
-    const content = readSource(editor);
+    const content = options.getContent?.() ?? readSource(editor);
     const current = readSelection(editor);
     const offset =
       sourceOffsetAtPoint(editor, event.clientX, event.clientY) ??

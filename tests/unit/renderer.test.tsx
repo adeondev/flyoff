@@ -42,15 +42,12 @@ describe('initial renderer', () => {
       Promise.resolve(createBootstrapState()),
     );
     const executeMenuCommand = vi.fn(() => Promise.resolve());
-    const controlWindow = vi.fn(() =>
-      Promise.resolve({ maximized: true }),
-    );
     Object.defineProperty(window, 'flyoff', {
       configurable: true,
       value: {
         getBootstrapState,
         getWindowState: vi.fn(() => Promise.resolve({ maximized: false })),
-        controlWindow,
+        controlWindow: vi.fn(() => Promise.resolve({ maximized: false })),
         onWindowStateChanged: vi.fn(() => () => undefined),
         executeMenuCommand,
       },
@@ -61,9 +58,9 @@ describe('initial renderer', () => {
     expect(screen.getByRole('main', { name: 'Flyoff' })).toBeTruthy();
     expect(screen.getByRole('img', { name: 'Flyoff' })).toBeTruthy();
     expect(
-      await screen.findByRole('button', { name: 'New Project' }),
+      await screen.findByRole('button', { name: 'New den' }),
     ).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Open Project' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Open den' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Templates' })).toBeTruthy();
     expect(screen.getByText('Or drag files here')).toBeTruthy();
     expect(
@@ -86,13 +83,8 @@ describe('initial renderer', () => {
       expect(document.documentElement.dataset.platform).toBe('win32');
     });
     expect(await screen.findAllByRole('menuitem')).toHaveLength(4);
-    expect(screen.getByTestId('window-minimize')).toBeTruthy();
-    expect(screen.getByTestId('window-close')).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: 'Maximize' }));
-    await waitFor(() => {
-      expect(controlWindow).toHaveBeenCalledWith('toggle-maximize');
-      expect(screen.getByRole('button', { name: 'Restore' })).toBeTruthy();
-    });
+    expect(screen.queryByTestId('window-minimize')).toBeNull();
+    expect(screen.queryByTestId('window-close')).toBeNull();
     fireEvent.click(screen.getByRole('menuitem', { name: 'File' }));
     await waitFor(() => {
       expect(screen.getByRole('menu')).toBeTruthy();
@@ -127,9 +119,9 @@ describe('initial renderer', () => {
       expect(document.documentElement.dataset.platform).toBe('darwin');
     });
     expect(screen.queryByRole('menubar')).toBeNull();
-    expect(screen.getByTestId('window-minimize')).toBeTruthy();
-    expect(screen.getByTestId('window-toggle-maximize')).toBeTruthy();
-    expect(screen.getByTestId('window-close')).toBeTruthy();
+    expect(screen.queryByTestId('window-minimize')).toBeNull();
+    expect(screen.queryByTestId('window-toggle-maximize')).toBeNull();
+    expect(screen.queryByTestId('window-close')).toBeNull();
   });
 
   it('keeps the shell usable when bootstrap retrieval fails', async () => {

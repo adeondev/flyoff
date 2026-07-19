@@ -133,6 +133,12 @@ function rootChildOffset(
   lines: readonly Element[],
 ): number {
   const clamped = Math.min(Math.max(0, offset), lines.length);
+  const model = getSourceDocumentModel(root);
+  if (model && model.lines.length === lines.length) {
+    return clamped >= model.lines.length
+      ? model.source.length
+      : model.lineStarts[clamped]!;
+  }
   let length = 0;
 
   for (let index = 0; index < clamped; index += 1) {
@@ -152,7 +158,55 @@ function outsideOffset(root: HTMLElement, container: Node): number {
   }
   return relation & Node.DOCUMENT_POSITION_PRECEDING
     ? 0
-    : readSource(root).length;
+    : (getSourceDocumentModel(root)?.source.length ?? readSource(root).length);
+}
+
+function canonicalLineOffset(
+  root: HTMLElement,
+  container: Node,
+  containerOffset: number,
+): number | undefined {
+  const model = getSourceDocumentModel(root);
+  const element =
+    container.nodeType === Node.ELEMENT_NODE
+      ? (container as Element)
+      : container.parentElement;
+  const line = element?.closest<HTMLElement>('.md-line');
+  if (!model || !line || line.parentElement !== root) {
+    return undefined;
+  }
+  const index = Number(line.dataset.line) - 1;
+  if (
+    !Number.isInteger(index) ||
+    index < 0 ||
+    index >= model.lines.length
+  ) {
+    return undefined;
+  }
+  if (
+    element?.closest('.md-line__gutter')
+  ) {
+    return model.lineStarts[index];
+  }
+  if (container === line) {
+    return (
+      model.lineStarts[index]! +
+      (containerOffset > 1 ? model.lines[index]!.source.length : 0)
+    );
+  }
+
+  const content = lineContent(line);
+  const range = root.ownerDocument.createRange();
+  range.selectNodeContents(content);
+  try {
+    range.setEnd(container, clampOffset(container, containerOffset));
+  } catch {
+    return undefined;
+  }
+  return (
+    model.lineStarts[index]! +
+    serializeRoot(range.cloneContents()).length
+  );
 }
 
 function offsetOf(
@@ -167,6 +221,15 @@ function offsetOf(
 
   if (container !== root && !root.contains(container)) {
     return outsideOffset(root, container);
+  }
+
+  const lineOffset = canonicalLineOffset(
+    root,
+    container,
+    containerOffset,
+  );
+  if (lineOffset !== undefined) {
+    return lineOffset;
   }
 
   const range = root.ownerDocument.createRange();
@@ -298,6 +361,18 @@ function positionAt(root: HTMLElement, target: number): Position {
     return { node: root, offset: root.childNodes.length };
   }
 
+  const model = getSourceDocumentModel(root);
+  if (model && model.lines.length === lines.length) {
+    const index = sourceLineIndexAtOffset(model, target);
+    return positionInLine(
+      lines[index]!,
+      Math.min(
+        model.lines[index]!.source.length,
+        Math.max(0, target - model.lineStarts[index]!),
+      ),
+    );
+  }
+
   let remaining = Math.max(0, target);
   for (const line of lines) {
     const length = serializeChildren(lineContent(line)).length;
@@ -376,3 +451,5 @@ export function replaceRange(
 ): string {
   return source.slice(0, start) + inserted + source.slice(end);
 }
+import { sourceLineIndexAtOffset } from './source-document-model';
+import { getSourceDocumentModel } from './source-renderer';

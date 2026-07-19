@@ -1,10 +1,15 @@
+import type { HighlightedSourceLine } from './markdown-highlight';
 import {
-  highlightSourceLines,
-  type HighlightedSourceLine,
-} from './markdown-highlight';
+  createSourceDocumentModel,
+  sourceLineIndexAtOffset,
+  updateSourceDocumentModel,
+  type SourceChangeRange,
+  type SourceDocumentModel,
+} from './source-document-model';
 
 interface SourceRenderState {
-  lines: readonly HighlightedSourceLine[];
+  activeLine: number;
+  model: SourceDocumentModel;
 }
 
 const renderStates = new WeakMap<HTMLElement, SourceRenderState>();
@@ -17,7 +22,7 @@ function createLine(
   const element = root.ownerDocument.createElement('span');
   const gutter = root.ownerDocument.createElement('span');
   const content = root.ownerDocument.createElement('span');
-  element.className = 'md-line';
+  element.className = line.code ? 'md-line md-line--code' : 'md-line';
   element.dataset.line = String(index + 1);
   gutter.className = 'md-line__gutter';
   gutter.dataset.mdGutter = '';
@@ -25,6 +30,9 @@ function createLine(
   gutter.setAttribute('contenteditable', 'false');
   gutter.textContent = String(index + 1);
   content.className = 'md-line__content';
+  content.spellcheck =
+    root.dataset.spellcheckEnabled === 'true' &&
+    (!line.code || root.dataset.spellcheckCodeBlocks === 'true');
   if (line.html) {
     content.innerHTML = line.html;
   } else {
@@ -62,16 +70,33 @@ function replaceAll(
 }
 
 export function reconcileSource(root: HTMLElement, source: string): void {
-  const next = highlightSourceLines(source);
+  const currentState = renderStates.get(root);
+  const model = currentState
+    ? updateSourceDocumentModel(currentState.model, source)
+    : createSourceDocumentModel(source);
+  const next = model.lines;
   root.style.setProperty(
     '--md-line-number-digits',
     String(Math.max(3, String(next.length).length)),
   );
-  const current = renderStates.get(root)?.lines;
+  const current = currentState?.model.lines;
 
   if (!current || !hasCanonicalLines(root, current.length)) {
     replaceAll(root, next);
-    renderStates.set(root, { lines: next });
+    renderStates.set(root, {
+      activeLine: currentState?.activeLine ?? -1,
+      model:
+        currentState && model === currentState.model
+          ? createSourceDocumentModel(source)
+          : model,
+    });
+    root.children[currentState?.activeLine ?? -1]?.classList.add(
+      'md-line--active',
+    );
+    return;
+  }
+
+  if (model === currentState.model) {
     return;
   }
 
@@ -121,5 +146,39 @@ export function reconcileSource(root: HTMLElement, source: string): void {
     replaceAll(root, next);
   }
 
-  renderStates.set(root, { lines: next });
+  const activeLine = currentState.activeLine;
+  renderStates.set(root, { activeLine, model });
+  if (activeLine >= 0) {
+    root.children[activeLine]?.classList.add('md-line--active');
+  }
+}
+
+export function updateActiveSourceLine(
+  root: HTMLElement,
+  _source: string,
+  offset: number,
+): void {
+  const state = renderStates.get(root);
+  if (!state) {
+    return;
+  }
+  const lineIndex = sourceLineIndexAtOffset(state.model, offset);
+  if (state.activeLine === lineIndex) {
+    return;
+  }
+  root.children[state.activeLine]?.classList.remove('md-line--active');
+  root.children[lineIndex]?.classList.add('md-line--active');
+  state.activeLine = lineIndex;
+}
+
+export function getSourceDocumentModel(
+  root: HTMLElement,
+): SourceDocumentModel | undefined {
+  return renderStates.get(root)?.model;
+}
+
+export function getSourceChangeRange(
+  root: HTMLElement,
+): SourceChangeRange | undefined {
+  return renderStates.get(root)?.model.change;
 }

@@ -16,12 +16,19 @@ import {
   isMarkdownDocument,
   isMoveProjectNodeRequest,
   isNewProjectPassword,
+  isProjectBacklinksOutcome,
+  isProjectGraphSnapshot,
+  isProjectInternalLinkRequest,
+  isProjectInternalLinkResolution,
+  isProjectNodeMutationOutcome,
   isProjectPageProperties,
   isProjectPassword,
   isProjectPathRequest,
   isProtectProjectPageRequest,
   isRemoveProjectPagePasswordRequest,
   isProjectResult,
+  isProjectSearchOutcome,
+  isProjectSearchRequest,
   isSetProjectPageReadOnlyRequest,
   isProjectSummary,
   isSaveMarkdownDocumentRequest,
@@ -147,6 +154,141 @@ describe('project contracts', () => {
         content: 'é'.repeat(MARKDOWN_DOCUMENT_MAX_BYTES),
         revision: 'f'.repeat(64),
         readOnly: false,
+      }),
+    ).toBe(false);
+  });
+
+  it('validates bounded project search requests and outcomes', () => {
+    const nodeId = randomUUID();
+    expect(isProjectSearchRequest({ query: 'tag:work' })).toBe(true);
+    expect(isProjectSearchRequest({ query: '   ' })).toBe(false);
+    expect(isProjectSearchRequest({ query: 'x'.repeat(2_049) })).toBe(false);
+    expect(
+      isProjectSearchOutcome({
+        nodeIds: [nodeId],
+        previews: [
+          {
+            excerpt: 'Teste 1234',
+            line: 1,
+            nodeId,
+          },
+        ],
+        skippedLockedNodeIds: [],
+      }),
+    ).toBe(true);
+    expect(
+      isProjectSearchOutcome({
+        nodeIds: [nodeId, nodeId],
+        previews: [],
+        skippedLockedNodeIds: [],
+      }),
+    ).toBe(false);
+  });
+
+  it('validates link navigation and mutation outcomes exactly', () => {
+    const sourceNodeId = randomUUID();
+    const targetNodeId = randomUUID();
+    const node = {
+      kind: 'page' as const,
+      name: 'Nota',
+      nodeId: targetNodeId,
+      pageType: 'markdown',
+      parentId: null,
+    };
+
+    expect(
+      isProjectInternalLinkRequest({
+        headingPath: ['Pai', 'Filho'],
+        path: 'Pasta/Nota',
+        sourceNodeId,
+        syntax: 'wikilink',
+      }),
+    ).toBe(true);
+    expect(
+      isProjectInternalLinkResolution({
+        status: 'resolved',
+        target: {
+          heading: { line: 3, offset: 15, path: ['Pai', 'Filho'] },
+          locked: false,
+          name: 'Nota',
+          nodeId: targetNodeId,
+          path: 'Pasta/Nota',
+        },
+      }),
+    ).toBe(true);
+    expect(
+      isProjectBacklinksOutcome({
+        references: [
+          {
+            column: 1,
+            end: 20,
+            excerpt: '[[Nota]]',
+            line: 2,
+            sourceName: 'Origem',
+            sourceNodeId,
+            sourcePath: 'Origem',
+            start: 10,
+          },
+        ],
+        skippedLockedNodeIds: [],
+      }),
+    ).toBe(true);
+    expect(
+      isProjectNodeMutationOutcome({
+        node,
+        skippedLockedNodeIds: [],
+        updatedDocumentNodeIds: [sourceNodeId],
+      }),
+    ).toBe(true);
+    expect(
+      isProjectNodeMutationOutcome({
+        extra: true,
+        node,
+        skippedLockedNodeIds: [],
+        updatedDocumentNodeIds: [],
+      }),
+    ).toBe(false);
+  });
+
+  it('validates graph snapshots and rejects dangling edges', () => {
+    const sourceNodeId = randomUUID();
+    const targetNodeId = randomUUID();
+    const nodes = [
+      {
+        connectionCount: 2,
+        name: 'Origem',
+        nodeId: sourceNodeId,
+        path: 'Origem',
+      },
+      {
+        connectionCount: 2,
+        name: 'Destino',
+        nodeId: targetNodeId,
+        path: 'Destino',
+      },
+    ];
+    expect(
+      isProjectGraphSnapshot({
+        nodes,
+        edges: [{ sourceNodeId, targetNodeId, weight: 2 }],
+      }),
+    ).toBe(true);
+    expect(
+      isProjectGraphSnapshot({
+        nodes,
+        edges: [
+          {
+            sourceNodeId,
+            targetNodeId: randomUUID(),
+            weight: 1,
+          },
+        ],
+      }),
+    ).toBe(false);
+    expect(
+      isProjectGraphSnapshot({
+        nodes: [...nodes, nodes[0]],
+        edges: [],
       }),
     ).toBe(false);
   });

@@ -7,7 +7,7 @@
   padding: 6px;
   border: 1px solid var(--color-border);
   border-radius: 7px;
-  background: var(--color-surface);
+  background: var(--color-titlebar);
   opacity: 0;
   visibility: hidden;
   -webkit-app-region: no-drag;
@@ -22,10 +22,10 @@
 .flyoff-menu__item {
   display: grid;
   min-height: 32px;
-  grid-template-columns: minmax(0, 1fr) minmax(0, auto) 14px;
+  grid-template-columns: 14px minmax(0, 1fr) minmax(0, auto) 14px;
   align-items: center;
   column-gap: 12px;
-  padding: 0 7px 0 11px;
+  padding: 0 7px;
   border: 0;
   border-radius: 4px;
   outline: 0;
@@ -76,7 +76,30 @@
   box-shadow: inset 0 0 0 1px var(--color-focus-ring);
 }
 
+.flyoff-menu__check {
+  display: grid;
+  width: 14px;
+  height: 14px;
+  grid-column: 1;
+  place-items: center;
+}
+
+.flyoff-menu__item-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.flyoff-menu__item[aria-checked='true'] .flyoff-menu__check::after {
+  width: 7px;
+  height: 4px;
+  border-bottom: 2px solid currentColor;
+  border-left: 2px solid currentColor;
+  content: '';
+  transform: translateY(-1px) rotate(-45deg);
+}
+
 .flyoff-menu__item-label {
+  grid-column: 2;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -84,7 +107,7 @@
 
 .flyoff-menu__shortcut {
   min-width: 48px;
-  grid-column: 2;
+  grid-column: 3;
   padding-left: 12px;
   border-left: 1px solid var(--color-border);
   color: var(--color-text-muted);
@@ -97,7 +120,7 @@
   display: grid;
   width: 12px;
   height: 12px;
-  grid-column: 3;
+  grid-column: 4;
   place-items: center;
 }
 
@@ -112,8 +135,30 @@
   background: var(--color-border);
 }
 
+.flyoff-menu__label {
+  overflow: hidden;
+  padding: 7px 9px 6px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:root[data-density='compact'] .flyoff-menu {
+  padding: 4px;
+}
+
+:root[data-density='compact'] .flyoff-menu__item {
+  min-height: 28px;
+}
+
+:root[data-density='compact'] .flyoff-menu__separator {
+  margin-block: 4px;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .flyoff-menu[data-positioned='true'] {
+  :root:not([data-motion='full']) .flyoff-menu[data-positioned='true'] {
     transition: none;
   }
 }

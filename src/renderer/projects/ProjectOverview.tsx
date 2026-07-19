@@ -1,5 +1,5 @@
-import folderIcon from '../../../public/images/icons/instances/folder.svg';
-import noteIcon from '../../../public/images/icons/instances/note.svg';
+import folderIcon from '../../../public/images/icons/instances/folder-solid.svg';
+import noteIcon from '../../../public/images/icons/instances/note-solid.svg';
 import type { ProjectSummary } from '../../shared/contracts';
 import { MaskedIcon } from '../components/MaskedIcon';
 import type { Translate } from '../pages/page-types';

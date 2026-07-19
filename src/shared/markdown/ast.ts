@@ -85,6 +85,7 @@ export interface Link {
   type: 'link';
   url: string;
   title: string | null;
+  syntax?: 'wikilink';
   children: InlineNode[];
 }
 

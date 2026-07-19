@@ -201,6 +201,38 @@ function parseBracket(
   return null;
 }
 
+function parseWikiLink(text: string, start: number): Parsed | null {
+  if (start > 0 && text[start - 1] === '!') {
+    return null;
+  }
+  const close = text.indexOf(']]', start + 2);
+  if (close === -1) {
+    return null;
+  }
+
+  const inside = text.slice(start + 2, close);
+  const aliasAt = inside.indexOf('|');
+  const destination = (aliasAt === -1 ? inside : inside.slice(0, aliasAt)).trim();
+  if (!destination) {
+    return null;
+  }
+  const label =
+    aliasAt === -1
+      ? destination
+      : inside.slice(aliasAt + 1).trim() || destination;
+
+  return {
+    node: {
+      type: 'link',
+      url: destination,
+      title: null,
+      syntax: 'wikilink',
+      children: parseInline(label),
+    },
+    end: close + 2,
+  };
+}
+
 const PAIR_DELIMITERS = [
   { delimiter: '**', type: 'strong' },
   { delimiter: '__', type: 'strong' },
@@ -302,6 +334,20 @@ export function parseInline(text: string): InlineNode[] {
 
     if (char === '!' && text[index + 1] === '[') {
       const parsed = parseBracket(text, index + 1, true);
+      if (parsed) {
+        flush();
+        nodes.push(parsed.node);
+        index = parsed.end;
+        continue;
+      }
+    }
+
+    if (
+      char === '[' &&
+      text[index + 1] === '[' &&
+      text[index - 1] !== '!'
+    ) {
+      const parsed = parseWikiLink(text, index);
       if (parsed) {
         flush();
         nodes.push(parsed.node);

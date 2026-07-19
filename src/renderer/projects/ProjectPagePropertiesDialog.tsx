@@ -11,6 +11,7 @@ import {
 import { Dialog } from '../components/dialog';
 import { getTooltipTargetProps } from '../components/tooltip';
 import type { Translate } from '../pages/page-types';
+import { useFlyoffPreferences } from '../preferences';
 import { PasswordField } from './PasswordField';
 import { projectFailureMessage } from './project-result-message';
 
@@ -108,6 +109,7 @@ export function ProjectPagePropertiesDialog({
   properties,
   translate,
 }: ProjectPagePropertiesDialogProps) {
+  const { preferences } = useFlyoffPreferences();
   const passwordFormTitleId = `${useId()}-password-title`;
   const [readOnlyEdit, setReadOnlyEdit] = useState<ReadOnlyEdit>();
   const [protectionMode, setProtectionMode] = useState<ProtectionMode>();
@@ -327,6 +329,7 @@ export function ProjectPagePropertiesDialog({
       <div
         aria-busy={loading}
         className="project-page-properties"
+        data-density={preferences.documents.propertiesDensity}
         data-node-id={node.nodeId}
       >
         <section className="project-page-properties__general">
@@ -395,6 +398,7 @@ export function ProjectPagePropertiesDialog({
           <h3>{translate('projects.propertiesAttributes')}</h3>
           <label className="project-page-properties__checkbox">
             <input
+              className="flyoff-checkbox"
               checked={readOnly}
               disabled={!displayedProperties || loading || pending}
               onChange={(event) => {

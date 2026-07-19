@@ -23,7 +23,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .flyoff-tooltip {
+  :root:not([data-motion='full']) .flyoff-tooltip {
     animation: none;
   }
 }

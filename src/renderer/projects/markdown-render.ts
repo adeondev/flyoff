@@ -1,5 +1,7 @@
 import {
+  markdownHeadingSlug,
   parseMarkdown,
+  parseInternalLinkDestination,
   type BlockNode,
   type InlineNode,
 } from '../../shared/markdown';
@@ -82,7 +84,19 @@ function renderInline(nodes: readonly InlineNode[], parent: Node): void {
           element.setAttribute('role', 'link');
           element.tabIndex = 0;
         } else {
-          element.setAttribute('aria-disabled', 'true');
+          const syntax = node.syntax ?? 'markdown';
+          const internal = parseInternalLinkDestination(node.url, syntax);
+          if (internal) {
+            element.dataset.markdownInternalPath = internal.path;
+            element.dataset.markdownInternalHeadings = JSON.stringify(
+              internal.headingPath,
+            );
+            element.dataset.markdownInternalSyntax = syntax;
+            element.setAttribute('role', 'link');
+            element.tabIndex = 0;
+          } else {
+            element.setAttribute('aria-disabled', 'true');
+          }
         }
         if (node.title) {
           element.dataset.flyoffTooltip = node.title;
@@ -108,11 +122,45 @@ function renderInline(nodes: readonly InlineNode[], parent: Node): void {
   }
 }
 
-function renderBlocks(nodes: readonly BlockNode[], parent: Node): void {
+function inlineText(nodes: readonly InlineNode[]): string {
+  let value = '';
+  for (const node of nodes) {
+    if (node.type === 'text' || node.type === 'inlineCode') {
+      value += node.value;
+    } else if (node.type === 'break') {
+      value += ' ';
+    } else if (node.type === 'image') {
+      value += node.alt;
+    } else if ('children' in node) {
+      value += inlineText(node.children);
+    }
+  }
+  return value;
+}
+
+interface RenderContext {
+  headingIds: Map<string, number>;
+  headingPath: string[];
+}
+
+function renderBlocks(
+  nodes: readonly BlockNode[],
+  parent: Node,
+  context: RenderContext,
+): void {
   for (const node of nodes) {
     switch (node.type) {
       case 'heading': {
         const element = document.createElement(`h${node.depth}`);
+        const text = inlineText(node.children).trim();
+        context.headingPath.length = node.depth;
+        context.headingPath[node.depth - 1] = text;
+        const headingPath = context.headingPath.filter(Boolean);
+        const slug = markdownHeadingSlug(text) || 'heading';
+        const count = context.headingIds.get(slug) ?? 0;
+        context.headingIds.set(slug, count + 1);
+        element.id = count === 0 ? slug : `${slug}-${count + 1}`;
+        element.dataset.markdownHeadingPath = JSON.stringify(headingPath);
         if (node.divided) {
           element.classList.add('markdown-view__heading--divided');
         }
@@ -128,7 +176,7 @@ function renderBlocks(nodes: readonly BlockNode[], parent: Node): void {
       }
       case 'blockquote': {
         const element = document.createElement('blockquote');
-        renderBlocks(node.children, element);
+        renderBlocks(node.children, element, context);
         parent.appendChild(element);
         break;
       }
@@ -159,6 +207,7 @@ function renderBlocks(nodes: readonly BlockNode[], parent: Node): void {
             listItem.classList.add('markdown-view__task');
             const checkbox = document.createElement('input');
             checkbox.type = 'checkbox';
+            checkbox.className = 'flyoff-checkbox';
             checkbox.checked = item.checked;
             checkbox.disabled = true;
             listItem.appendChild(checkbox);
@@ -172,7 +221,7 @@ function renderBlocks(nodes: readonly BlockNode[], parent: Node): void {
           ) {
             renderInline(firstChild.children, listItem);
           } else {
-            renderBlocks(item.children, listItem);
+            renderBlocks(item.children, listItem, context);
           }
 
           element.appendChild(listItem);
@@ -190,5 +239,8 @@ export function renderMarkdownInto(
   source: string,
 ): void {
   container.replaceChildren();
-  renderBlocks(parseMarkdown(source).children, container);
+  renderBlocks(parseMarkdown(source).children, container, {
+    headingIds: new Map(),
+    headingPath: [],
+  });
 }

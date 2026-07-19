@@ -1,13 +1,18 @@
 import { isProjectIdentifier } from './projects';
 
 export const TAB_SESSION_VERSION = 2 as const;
-export const WORKSPACE_SESSION_VERSION = 3 as const;
+export const WORKSPACE_SESSION_VERSION = 4 as const;
 export const TAB_SESSION_MAX_TABS = 100;
 export const TAB_SESSION_MAX_BYTES = 2 * 1024 * 1024;
+export const WORKSPACE_MAX_PANES = 5;
 
 const LEGACY_TAB_SESSION_VERSION = 1 as const;
+const LEGACY_WORKSPACE_SESSION_VERSION = 3 as const;
 const MAX_IDENTIFIER_LENGTH = 256;
 const MAX_PAGE_TYPE_LENGTH = 64;
+const MAX_WORKSPACE_DEPTH = 8;
+const MIN_SPLIT_RATIO = 0.1;
+const MAX_SPLIT_RATIO = 0.9;
 
 export const INTERNAL_PAGE_IDS = {
   home: 'home',
@@ -15,6 +20,7 @@ export const INTERNAL_PAGE_IDS = {
   settings: 'settings',
   help: 'help',
   updateApp: 'update-app',
+  newTab: 'new-tab',
 } as const;
 
 export type InternalPageId =
@@ -23,6 +29,7 @@ export type InternalPageId =
 export interface InternalTabTarget {
   type: 'internal';
   pageId: InternalPageId;
+  instanceKey?: string;
 }
 
 export interface ProjectOverviewTabTarget {
@@ -69,15 +76,40 @@ export interface TabSessionSnapshot {
   activeTabId: string;
 }
 
-export interface ProjectWorkspaceSnapshot {
-  projectId: string;
+export interface WorkspacePaneSnapshot {
+  kind: 'pane';
+  paneId: string;
   tabs: readonly TabDescriptor[];
   activeTabId: string | null;
 }
 
+export type WorkspaceSplitDirection = 'row' | 'column';
+
+export interface WorkspaceSplitSnapshot {
+  kind: 'split';
+  splitId: string;
+  direction: WorkspaceSplitDirection;
+  ratio: number;
+  first: WorkspaceLayoutSnapshot;
+  second: WorkspaceLayoutSnapshot;
+}
+
+export type WorkspaceLayoutSnapshot =
+  | WorkspacePaneSnapshot
+  | WorkspaceSplitSnapshot;
+
+export interface PaneWorkspaceSnapshot {
+  root: WorkspaceLayoutSnapshot;
+  activePaneId: string;
+}
+
+export interface ProjectWorkspaceSnapshot extends PaneWorkspaceSnapshot {
+  projectId: string;
+}
+
 export interface WorkspaceSessionSnapshot {
   version: typeof WORKSPACE_SESSION_VERSION;
-  home: TabSessionSnapshot;
+  home: PaneWorkspaceSnapshot;
   project: ProjectWorkspaceSnapshot | null;
 }
 
@@ -127,8 +159,13 @@ export function isTabTarget(value: unknown): value is TabTarget {
 
   if (target.type === 'internal') {
     return (
-      hasOnlyKeys(target, ['type', 'pageId']) &&
-      isInternalPageId(target.pageId)
+      Object.keys(target).every((key) =>
+        ['type', 'pageId', 'instanceKey'].includes(key),
+      ) &&
+      isInternalPageId(target.pageId) &&
+      (target.instanceKey === undefined ||
+        (target.pageId === INTERNAL_PAGE_IDS.newTab &&
+          isSafeIdentifier(target.instanceKey)))
     );
   }
 
@@ -154,6 +191,16 @@ export function isProjectTarget(
   return target.type !== 'internal';
 }
 
+export function isProjectWorkspaceInternalTarget(
+  target: TabTarget,
+): target is InternalTabTarget {
+  return (
+    target.type === 'internal' &&
+    (target.pageId === INTERNAL_PAGE_IDS.newTab ||
+      target.pageId === INTERNAL_PAGE_IDS.settings)
+  );
+}
+
 export function isHomeTarget(target: TabTarget): boolean {
   return (
     target.type === 'internal' && target.pageId === INTERNAL_PAGE_IDS.home
@@ -163,7 +210,9 @@ export function isHomeTarget(target: TabTarget): boolean {
 export function getTabTargetKey(target: TabTarget): string {
   switch (target.type) {
     case 'internal':
-      return `internal:${target.pageId}`;
+      return `internal:${target.pageId}${
+        target.instanceKey ? `:${target.instanceKey}` : ''
+      }`;
     case 'project-overview':
       return `project-overview:${target.projectId}`;
     case 'project-content':
@@ -174,7 +223,9 @@ export function getTabTargetKey(target: TabTarget): string {
 export function createTabIdForTarget(target: TabTarget): string {
   switch (target.type) {
     case 'internal':
-      return `page:${target.pageId}`;
+      return `page:${target.pageId}${
+        target.instanceKey ? `:${target.instanceKey}` : ''
+      }`;
     case 'project-overview':
       return `project:${target.projectId}:overview`;
     case 'project-content':
@@ -487,113 +538,278 @@ function createHomeWorkspaceDescriptor(): TabDescriptor {
   };
 }
 
-function resolveActiveProjectTabId(
-  tabs: readonly TabDescriptor[],
-  candidate: unknown,
-): string | null {
-  if (tabs.length === 0) {
-    return null;
-  }
-
-  if (
-    isSafeIdentifier(candidate) &&
-    tabs.some(({ tabId }) => tabId === candidate)
-  ) {
-    return candidate;
-  }
-
-  return tabs[0]?.tabId ?? null;
+interface WorkspaceValidationState {
+  paneIds: Set<string>;
+  splitIds: Set<string>;
+  tabIds: Set<string>;
+  paneCount: number;
+  tabCount: number;
 }
 
-function normalizeProjectWorkspace(
+function normalizePane(
   value: unknown,
-): ProjectWorkspaceSnapshot | undefined {
-  if (!value || typeof value !== 'object') {
+  state: WorkspaceValidationState,
+  acceptTab: (tab: TabDescriptor) => boolean,
+  recoverInvalidPageState: boolean,
+  depth = 0,
+): WorkspaceLayoutSnapshot | undefined {
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    depth > MAX_WORKSPACE_DEPTH
+  ) {
     return undefined;
   }
 
   const raw = value as Record<string, unknown>;
 
+  if (raw.kind === 'pane') {
+    if (
+      !hasOnlyKeys(raw, ['kind', 'paneId', 'tabs', 'activeTabId']) ||
+      !isSafeIdentifier(raw.paneId) ||
+      state.paneIds.has(raw.paneId) ||
+      !Array.isArray(raw.tabs)
+    ) {
+      return undefined;
+    }
+
+    const parsed = raw.tabs.map((tab) =>
+      readCurrentTabDescriptor(tab, recoverInvalidPageState),
+    );
+    if (parsed.some((tab) => !tab)) {
+      return undefined;
+    }
+
+    const tabs = parsed.filter(
+      (tab): tab is TabDescriptor => tab !== undefined,
+    );
+    const targetKeys = new Set<string>();
+    for (const tab of tabs) {
+      const targetKey = getTabTargetKey(tab.target);
+      if (
+        !acceptTab(tab) ||
+        state.tabIds.has(tab.tabId) ||
+        targetKeys.has(targetKey)
+      ) {
+        return undefined;
+      }
+      state.tabIds.add(tab.tabId);
+      targetKeys.add(targetKey);
+    }
+
+    state.paneIds.add(raw.paneId);
+    state.paneCount += 1;
+    state.tabCount += tabs.length;
+    if (
+      state.paneCount > WORKSPACE_MAX_PANES ||
+      state.tabCount > TAB_SESSION_MAX_TABS
+    ) {
+      return undefined;
+    }
+
+    const activeTabId =
+      typeof raw.activeTabId === 'string' &&
+      tabs.some(({ tabId }) => tabId === raw.activeTabId)
+        ? raw.activeTabId
+        : (tabs[0]?.tabId ?? null);
+    if (
+      !recoverInvalidPageState &&
+      raw.activeTabId !== activeTabId
+    ) {
+      return undefined;
+    }
+
+    return { kind: 'pane', paneId: raw.paneId, tabs, activeTabId };
+  }
+
   if (
-    !hasOnlyKeys(raw, ['projectId', 'tabs', 'activeTabId']) ||
-    !isProjectIdentifier(raw.projectId) ||
-    !Array.isArray(raw.tabs) ||
-    raw.tabs.length > TAB_SESSION_MAX_TABS
+    raw.kind !== 'split' ||
+    !hasOnlyKeys(raw, [
+      'kind',
+      'splitId',
+      'direction',
+      'ratio',
+      'first',
+      'second',
+    ]) ||
+    !isSafeIdentifier(raw.splitId) ||
+    state.splitIds.has(raw.splitId) ||
+    (raw.direction !== 'row' && raw.direction !== 'column') ||
+    typeof raw.ratio !== 'number' ||
+    !Number.isFinite(raw.ratio)
   ) {
     return undefined;
   }
 
-  const parsed = raw.tabs.map((tab) => readCurrentTabDescriptor(tab, true));
-
-  if (parsed.some((tab) => !tab)) {
+  const ratio = Math.min(MAX_SPLIT_RATIO, Math.max(MIN_SPLIT_RATIO, raw.ratio));
+  if (!recoverInvalidPageState && ratio !== raw.ratio) {
     return undefined;
   }
 
-  const tabs = parsed.filter((tab): tab is TabDescriptor => tab !== undefined);
+  state.splitIds.add(raw.splitId);
+  const first = normalizePane(
+    raw.first,
+    state,
+    acceptTab,
+    recoverInvalidPageState,
+    depth + 1,
+  );
+  const second = normalizePane(
+    raw.second,
+    state,
+    acceptTab,
+    recoverInvalidPageState,
+    depth + 1,
+  );
 
+  return first && second
+    ? {
+        kind: 'split',
+        splitId: raw.splitId,
+        direction: raw.direction,
+        ratio,
+        first,
+        second,
+      }
+    : undefined;
+}
+
+function normalizePaneWorkspace(
+  value: unknown,
+  acceptTab: (tab: TabDescriptor) => boolean,
+  recoverInvalidPageState: boolean,
+): PaneWorkspaceSnapshot | undefined {
+  if (!value || typeof value !== 'object') {
+    return undefined;
+  }
+
+  const raw = value as Record<string, unknown>;
   if (
-    !tabs.every(
-      (tab) =>
-        isProjectTarget(tab.target) &&
-        tab.target.projectId === raw.projectId,
-    ) ||
-    !hasUniqueDescriptors(tabs)
+    !hasOnlyKeys(raw, ['root', 'activePaneId']) ||
+    !isSafeIdentifier(raw.activePaneId)
   ) {
     return undefined;
   }
 
+  const state: WorkspaceValidationState = {
+    paneIds: new Set(),
+    splitIds: new Set(),
+    tabIds: new Set(),
+    paneCount: 0,
+    tabCount: 0,
+  };
+  const root = normalizePane(
+    raw.root,
+    state,
+    acceptTab,
+    recoverInvalidPageState,
+  );
+  if (!root) {
+    return undefined;
+  }
+
+  const activePaneId = state.paneIds.has(raw.activePaneId)
+    ? raw.activePaneId
+    : state.paneIds.values().next().value;
+  if (
+    typeof activePaneId !== 'string' ||
+    (!recoverInvalidPageState && activePaneId !== raw.activePaneId)
+  ) {
+    return undefined;
+  }
+
+  return { root, activePaneId };
+}
+
+function createSinglePaneWorkspace(
+  tabs: readonly TabDescriptor[],
+  activeTabId: string | null,
+  paneId: string,
+): PaneWorkspaceSnapshot {
   return {
-    projectId: raw.projectId,
-    tabs,
-    activeTabId: resolveActiveProjectTabId(tabs, raw.activeTabId),
+    root: {
+      kind: 'pane',
+      paneId,
+      tabs,
+      activeTabId:
+        activeTabId && tabs.some(({ tabId }) => tabId === activeTabId)
+          ? activeTabId
+          : (tabs[0]?.tabId ?? null),
+    },
+    activePaneId: paneId,
   };
 }
 
-function isStrictProjectWorkspace(
-  value: unknown,
-): value is ProjectWorkspaceSnapshot {
-  if (!value || typeof value !== 'object') {
-    return false;
+function countWorkspaceTabs(root: WorkspaceLayoutSnapshot): number {
+  return root.kind === 'pane'
+    ? root.tabs.length
+    : countWorkspaceTabs(root.first) + countWorkspaceTabs(root.second);
+}
+
+function migrateVersionThreeWorkspace(
+  value: Record<string, unknown>,
+): WorkspaceSessionSnapshot | undefined {
+  const home = normalizeTabSessionSnapshot(value.home);
+  if (!home) {
+    return undefined;
   }
 
-  const raw = value as Record<string, unknown>;
-
-  if (
-    !hasOnlyKeys(raw, ['projectId', 'tabs', 'activeTabId']) ||
-    !isProjectIdentifier(raw.projectId) ||
-    !Array.isArray(raw.tabs) ||
-    raw.tabs.length > TAB_SESSION_MAX_TABS
-  ) {
-    return false;
+  let project: ProjectWorkspaceSnapshot | null = null;
+  if (value.project !== null && value.project !== undefined) {
+    const rawProject = value.project as Record<string, unknown>;
+    if (
+      !rawProject ||
+      !isProjectIdentifier(rawProject.projectId) ||
+      !Array.isArray(rawProject.tabs)
+    ) {
+      return undefined;
+    }
+    const parsed = rawProject.tabs.map((tab) =>
+      readCurrentTabDescriptor(tab, true),
+    );
+    if (parsed.some((tab) => !tab)) {
+      return undefined;
+    }
+    const tabs = parsed.filter(
+      (tab): tab is TabDescriptor => tab !== undefined,
+    );
+    if (
+      !hasUniqueDescriptors(tabs) ||
+      !tabs.every(
+        ({ target }) =>
+          (isProjectTarget(target) &&
+            target.projectId === rawProject.projectId) ||
+          isProjectWorkspaceInternalTarget(target),
+      )
+    ) {
+      return undefined;
+    }
+    project = {
+      projectId: rawProject.projectId,
+      ...createSinglePaneWorkspace(
+        tabs,
+        typeof rawProject.activeTabId === 'string'
+          ? rawProject.activeTabId
+          : null,
+        'project-pane-1',
+      ),
+    };
   }
 
-  const parsed = raw.tabs.map((tab) => readCurrentTabDescriptor(tab));
-
-  if (parsed.some((tab) => tab === undefined)) {
-    return false;
-  }
-
-  const tabs = parsed.filter((tab): tab is TabDescriptor => tab !== undefined);
-
-  if (
-    !tabs.every(
-      (tab) =>
-        isProjectTarget(tab.target) &&
-        tab.target.projectId === raw.projectId,
-    ) ||
-    !hasUniqueDescriptors(tabs)
-  ) {
-    return false;
-  }
-
-  if (raw.activeTabId === null) {
-    return tabs.length === 0;
-  }
-
-  return (
-    isSafeIdentifier(raw.activeTabId) &&
-    tabs.some(({ tabId }) => tabId === raw.activeTabId)
-  );
+  const migrated = {
+    version: WORKSPACE_SESSION_VERSION,
+    home: createSinglePaneWorkspace(
+      home.tabs,
+      home.activeTabId,
+      'home-pane-1',
+    ),
+    project,
+  } satisfies WorkspaceSessionSnapshot;
+  return countWorkspaceTabs(migrated.home.root) +
+    (migrated.project ? countWorkspaceTabs(migrated.project.root) : 0) <=
+    TAB_SESSION_MAX_TABS
+    ? migrated
+    : undefined;
 }
 
 function splitFlatSnapshot(flat: TabSessionSnapshot): WorkspaceSessionSnapshot {
@@ -607,13 +823,13 @@ function splitFlatSnapshot(flat: TabSessionSnapshot): WorkspaceSessionSnapshot {
 
   const homeTabs =
     internalTabs.length > 0 ? internalTabs : [createHomeWorkspaceDescriptor()];
-  const home: TabSessionSnapshot = {
-    version: TAB_SESSION_VERSION,
-    tabs: homeTabs,
-    activeTabId: internalTabs.some(({ tabId }) => tabId === flat.activeTabId)
+  const home = createSinglePaneWorkspace(
+    homeTabs,
+    internalTabs.some(({ tabId }) => tabId === flat.activeTabId)
       ? flat.activeTabId
-      : (homeTabs[0]?.tabId ?? createHomeWorkspaceDescriptor().tabId),
-  };
+      : homeTabs[0]?.tabId ?? null,
+    'home-pane-1',
+  );
 
   let project: ProjectWorkspaceSnapshot | null = null;
 
@@ -625,8 +841,13 @@ function splitFlatSnapshot(flat: TabSessionSnapshot): WorkspaceSessionSnapshot {
     if (projectTabs.length > 0) {
       project = {
         projectId,
-        tabs: projectTabs,
-        activeTabId: resolveActiveProjectTabId(projectTabs, flat.activeTabId),
+        ...createSinglePaneWorkspace(
+          projectTabs,
+          projectTabs.some(({ tabId }) => tabId === flat.activeTabId)
+            ? flat.activeTabId
+            : projectTabs[0]?.tabId ?? null,
+          'project-pane-1',
+        ),
       };
     }
   }
@@ -644,7 +865,11 @@ export function normalizeWorkspaceSessionSnapshot(
   const raw = value as Record<string, unknown>;
 
   if (raw.version === WORKSPACE_SESSION_VERSION) {
-    const home = normalizeTabSessionSnapshot(raw.home);
+    const home = normalizePaneWorkspace(
+      raw.home,
+      ({ target }) => !isProjectTarget(target),
+      true,
+    );
 
     if (!home) {
       return undefined;
@@ -653,16 +878,45 @@ export function normalizeWorkspaceSessionSnapshot(
     let project: ProjectWorkspaceSnapshot | null = null;
 
     if (raw.project !== null && raw.project !== undefined) {
-      const normalizedProject = normalizeProjectWorkspace(raw.project);
+      const rawProject = raw.project as Record<string, unknown>;
+      if (!isProjectIdentifier(rawProject.projectId)) {
+        return undefined;
+      }
+      const normalizedProject = normalizePaneWorkspace(
+        {
+          root: rawProject.root,
+          activePaneId: rawProject.activePaneId,
+        },
+        ({ target }) =>
+          (isProjectTarget(target) &&
+            target.projectId === rawProject.projectId) ||
+          isProjectWorkspaceInternalTarget(target),
+        true,
+      );
 
       if (!normalizedProject) {
         return undefined;
       }
 
-      project = normalizedProject;
+      project = {
+        projectId: rawProject.projectId,
+        ...normalizedProject,
+      };
+    }
+
+    if (
+      countWorkspaceTabs(home.root) +
+        (project ? countWorkspaceTabs(project.root) : 0) >
+      TAB_SESSION_MAX_TABS
+    ) {
+      return undefined;
     }
 
     return { version: WORKSPACE_SESSION_VERSION, home, project };
+  }
+
+  if (raw.version === LEGACY_WORKSPACE_SESSION_VERSION) {
+    return migrateVersionThreeWorkspace(raw);
   }
 
   const flat = normalizeTabSessionSnapshot(value);
@@ -679,16 +933,71 @@ export function isWorkspaceSessionSnapshot(
 
   const raw = value as Record<string, unknown>;
 
-  return (
-    hasOnlyKeys(raw, ['version', 'home', 'project']) &&
-    raw.version === WORKSPACE_SESSION_VERSION &&
-    isTabSessionSnapshot(raw.home) &&
-    (raw.project === null || isStrictProjectWorkspace(raw.project))
+  if (
+    !hasOnlyKeys(raw, ['version', 'home', 'project']) ||
+    raw.version !== WORKSPACE_SESSION_VERSION
+  ) {
+    return false;
+  }
+
+  const home = normalizePaneWorkspace(
+    raw.home,
+    ({ target }) => !isProjectTarget(target),
+    false,
+  );
+  if (!home) {
+    return false;
+  }
+
+  if (raw.project === null) {
+    return true;
+  }
+  if (!raw.project || typeof raw.project !== 'object') {
+    return false;
+  }
+  const project = raw.project as Record<string, unknown>;
+  if (
+    !hasOnlyKeys(project, ['projectId', 'root', 'activePaneId']) ||
+    !isProjectIdentifier(project.projectId)
+  ) {
+    return false;
+  }
+  const normalizedProject = normalizePaneWorkspace(
+      { root: project.root, activePaneId: project.activePaneId },
+      ({ target }) =>
+        (isProjectTarget(target) &&
+          target.projectId === project.projectId) ||
+        isProjectWorkspaceInternalTarget(target),
+      false,
+    );
+  return Boolean(
+    normalizedProject &&
+      countWorkspaceTabs(home.root) +
+        countWorkspaceTabs(normalizedProject.root) <=
+        TAB_SESSION_MAX_TABS,
   );
 }
 
 export function hasRestorableWorkspaceSnapshot(
   snapshot: WorkspaceSessionSnapshot,
 ): boolean {
-  return snapshot.project !== null || hasRestorablePages(snapshot.home);
+  if (snapshot.project !== null) {
+    return true;
+  }
+
+  const stack: WorkspaceLayoutSnapshot[] = [snapshot.home.root];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (!node) {
+      continue;
+    }
+    if (node.kind === 'pane') {
+      if (node.tabs.some(({ target }) => !isHomeTarget(target))) {
+        return true;
+      }
+    } else {
+      stack.push(node.first, node.second);
+    }
+  }
+  return false;
 }

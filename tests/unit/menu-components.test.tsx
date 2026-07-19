@@ -9,11 +9,29 @@ import {
   MenuBar,
   type MenuItem,
 } from '../../src/renderer/components/menu';
+import {
+  getTooltipTargetProps,
+  TooltipHost,
+} from '../../src/renderer/components/tooltip';
 
 const menuItems: readonly MenuItem[] = [
-  { id: 'open', kind: 'action', label: 'Open', shortcut: 'Ctrl+O' },
+  {
+    id: 'open',
+    kind: 'action',
+    label: 'Open',
+    shortcut: 'Ctrl+O',
+    icon: '/open.svg',
+  },
   { id: 'disabled', kind: 'action', label: 'Disabled', disabled: true },
+  {
+    id: 'checked',
+    kind: 'action',
+    label: 'Checked',
+    checked: true,
+    icon: '/checked.svg',
+  },
   { id: 'divider', kind: 'separator' },
+  { id: 'heading', kind: 'label', label: 'Current note' },
   {
     id: 'nested',
     kind: 'submenu',
@@ -68,6 +86,25 @@ describe('reusable dropdown menu', () => {
       ),
     ).toBe('Ctrl+O');
     expect(screen.getByRole('separator')).toBeTruthy();
+    expect(screen.getByText('Current note')).toBeTruthy();
+    expect(
+      screen.queryByRole('menuitem', { name: 'Current note' }),
+    ).toBeNull();
+    expect(
+      screen
+        .getByRole('menuitem', { name: 'Open' })
+        .querySelector('.flyoff-menu__item-icon'),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole('menuitemcheckbox', { name: 'Checked' }).getAttribute(
+        'aria-checked',
+      ),
+    ).toBe('true');
+    expect(
+      screen
+        .getByRole('menuitemcheckbox', { name: 'Checked' })
+        .querySelector('.flyoff-menu__item-icon'),
+    ).toBeNull();
 
     fireEvent.click(screen.getByRole('menuitem', { name: 'Disabled' }));
     expect(onAction).not.toHaveBeenCalled();
@@ -80,6 +117,53 @@ describe('reusable dropdown menu', () => {
     expect(onAction).toHaveBeenCalledWith('nested.action');
     await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
     await waitFor(() => expect(document.activeElement).toBe(trigger));
+  });
+
+  it('restores trigger focus without reopening its tooltip', async () => {
+    render(
+      <>
+        <DropdownMenu
+          items={menuItems}
+          onAction={() => undefined}
+          trigger={(props) => (
+            <button {...props} {...getTooltipTargetProps('Menu options')}>
+              Open menu
+            </button>
+          )}
+        />
+        <TooltipHost />
+      </>,
+    );
+
+    const trigger = screen.getByRole('button', { name: 'Open menu' });
+    fireEvent.click(trigger);
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Open' }));
+
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+    expect(screen.queryByRole('tooltip')).toBeNull();
+
+    fireEvent.focusOut(trigger);
+    fireEvent.focusIn(trigger);
+    expect(screen.getByRole('tooltip').textContent).toBe('Menu options');
+  });
+
+  it('positions an upward menu by its right edge', () => {
+    const anchor = {
+      bottom: 210,
+      left: 220,
+      right: 280,
+      top: 180,
+    } as DOMRect;
+    const menu = { height: 100, width: 120 } as DOMRect;
+
+    expect(
+      calculateMenuPosition(
+        anchor,
+        menu,
+        { width: 320, height: 240 },
+        'top-end',
+      ),
+    ).toMatchObject({ left: 160, top: 80 });
   });
 
   it('closes when clicking outside and keeps the trigger state synchronized', async () => {

@@ -163,7 +163,9 @@ async function createAndCloseSession(
     ).toHaveAttribute('aria-selected', 'true');
 
     const windowClosed = running.page.waitForEvent('close');
-    await running.page.getByTestId('window-close').click();
+    await running.app.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0]?.close();
+    });
     await expect(running.page.getByRole('dialog')).toBeVisible();
     const confirmation = running.page
       .getByRole('button', { name: labels.closeWindow, exact: true })

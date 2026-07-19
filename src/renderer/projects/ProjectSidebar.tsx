@@ -8,15 +8,25 @@ import {
 } from 'react';
 
 import arrowLeftIcon from '../../../public/images/icons/actions/arrow-left.svg';
+import infoIcon from '../../../public/images/icons/actions/info.svg';
 import plusIcon from '../../../public/images/icons/actions/plus.svg';
 import refreshIcon from '../../../public/images/icons/actions/refresh.svg';
-import projectIcon from '../../../public/images/icons/instances/project.svg';
+import settingsIcon from '../../../public/images/icons/actions/settings-outline.svg';
+import expandIcon from '../../../public/images/icons/actions/expand-outline.svg';
+import collapseIcon from '../../../public/images/icons/actions/collapse-outline.svg';
+import copyPathIcon from '../../../public/images/icons/actions/copy-path-outline.svg';
+import folderOpenIcon from '../../../public/images/icons/instances/folder-open-solid.svg';
+import folderIcon from '../../../public/images/icons/instances/folder-solid.svg';
+import noteIcon from '../../../public/images/icons/instances/note-solid.svg';
 import type {
   CreateProjectNodeRequest,
   FlyoffPlatform,
   ListProjectChildrenRequest,
   MoveProjectNodeRequest,
   ProjectResult,
+  ProjectSearchOutcome,
+  ProjectSearchPreview,
+  ProjectSearchRequest,
   ProjectSummary,
   ProjectTreeNode,
   ProjectPathRequest,
@@ -35,6 +45,7 @@ import {
 } from './AddInstancePopover';
 import { MoveProjectNodeDialog } from './MoveProjectNodeDialog';
 import { projectNodeInputName } from './project-node-name';
+import { ProjectSearchInput } from './ProjectSearchInput';
 import { ProjectTree, type ProjectTreeInlineEdit } from './ProjectTree';
 import {
   ProjectTreeController,
@@ -74,10 +85,14 @@ export interface ProjectSidebarProps {
   activeNodeId?: string;
   activeNodePath?: readonly string[];
   overviewActive?: boolean;
+  settingsActive?: boolean;
   createRequest?: ProjectSidebarCreateRequest;
   loadChildren: (
     request: ListProjectChildrenRequest,
   ) => Promise<ProjectResult<readonly ProjectTreeNode[]>>;
+  onSearch?: (
+    request: ProjectSearchRequest,
+  ) => Promise<ProjectResult<ProjectSearchOutcome>>;
   onCreateNode: (
     request: CreateProjectNodeRequest,
   ) => Promise<ProjectResult<ProjectTreeNode>>;
@@ -97,6 +112,8 @@ export interface ProjectSidebarProps {
     request: ProjectPathRequest,
   ) => Promise<ProjectResult<null>>;
   onOpenOverview: () => void;
+  onOpenAbout?: () => void;
+  onOpenSettings?: () => void;
   onCloseProject?: () => void;
   onOpenNode: (node: ProjectTreeNode) => void;
   onRequestProperties?: (node: ProjectPageNode) => void;
@@ -138,16 +155,20 @@ export const ProjectSidebar = forwardRef<
   onNodeChanged,
   onNodeTrashed,
   onCloseProject,
+  onOpenAbout,
   onOpenNode,
   onOpenOverview,
+  onOpenSettings,
   onRequestProperties,
   onRevealPath,
   onRenameNode,
+  onSearch,
   onTrashNode,
   onNotice,
   overviewActive = false,
   platform,
   project,
+  settingsActive = false,
   translate,
 }: ProjectSidebarProps, forwardedRef) {
   const controller = useMemo(
@@ -158,6 +179,13 @@ export const ProjectSidebar = forwardRef<
   const [movingNode, setMovingNode] = useState<ProjectTreeNode>();
   const [trashingNode, setTrashingNode] = useState<ProjectTreeNode>();
   const [pending, setPending] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [appliedSearchQuery, setAppliedSearchQuery] = useState('');
+  const [searchNodeIds, setSearchNodeIds] = useState<ReadonlySet<string>>();
+  const [searchPreviews, setSearchPreviews] =
+    useState<ReadonlyMap<string, ProjectSearchPreview>>();
+  const [skippedLockedCount, setSkippedLockedCount] = useState(0);
+  const [searching, setSearching] = useState(false);
   const [instancePicker, setInstancePicker] = useState<{
     parentId: string | null;
     position: { x: number; y: number };
@@ -170,6 +198,60 @@ export const ProjectSidebar = forwardRef<
   }>();
 
   useEffect(() => () => controller.dispose(), [controller]);
+  useEffect(() => {
+    const query = searchQuery.trim();
+    if (!query) {
+      setAppliedSearchQuery('');
+      setSearchNodeIds(undefined);
+      setSearchPreviews(undefined);
+      setSkippedLockedCount(0);
+      setSearching(false);
+      return;
+    }
+
+    let active = true;
+    setSearching(true);
+    const timer = window.setTimeout(() => {
+      void Promise.all([
+        controller.loadAll(),
+        onSearch?.({ query }),
+      ]).then(([, result]) => {
+        if (!active) {
+          return;
+        }
+        if (result && !result.ok) {
+          onError?.(result.error.message);
+          setSearchNodeIds(new Set());
+          setSearchPreviews(new Map());
+          setSkippedLockedCount(0);
+        } else {
+          setSearchNodeIds(
+            result?.ok ? new Set(result.value.nodeIds) : undefined,
+          );
+          setSearchPreviews(
+            result?.ok
+              ? new Map(
+                  result.value.previews.map((preview) => [
+                    preview.nodeId,
+                    preview,
+                  ]),
+                )
+              : undefined,
+          );
+          setSkippedLockedCount(
+            result?.ok ? result.value.skippedLockedNodeIds.length : 0,
+          );
+        }
+        setAppliedSearchQuery(query);
+        setSearching(false);
+      });
+    }, 120);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [controller, onError, onSearch, searchQuery]);
   useEffect(() => {
     let active = true;
 
@@ -440,12 +522,14 @@ export const ProjectSidebar = forwardRef<
         id: 'new-instance',
         kind: 'action',
         label: translate('projects.newInstance'),
+        icon: noteIcon,
         disabled: pending,
       },
       {
         id: 'new-folder',
         kind: 'action',
         label: translate('projects.newFolder'),
+        icon: folderIcon,
         disabled: pending,
       },
       { id: 'create-separator', kind: 'separator' },
@@ -453,12 +537,14 @@ export const ProjectSidebar = forwardRef<
         id: 'expand-all',
         kind: 'action',
         label: translate('projects.expandAll'),
+        icon: expandIcon,
         disabled: pending || !controller.canExpandBranch(parentId),
       },
       {
         id: 'collapse-all',
         kind: 'action',
         label: translate('projects.collapseAll'),
+        icon: collapseIcon,
         disabled: pending || !controller.canCollapseBranch(parentId),
       },
       { id: 'path-separator', kind: 'separator' },
@@ -466,12 +552,14 @@ export const ProjectSidebar = forwardRef<
         id: 'reveal-path',
         kind: 'action',
         label: fileManagerLabel(platform, translate),
+        icon: folderOpenIcon,
         disabled: !onRevealPath,
       },
       {
         id: 'copy-path',
         kind: 'action',
         label: translate('projects.copyPath'),
+        icon: copyPathIcon,
         disabled: !onCopyPath,
       },
     ];
@@ -484,19 +572,6 @@ export const ProjectSidebar = forwardRef<
       hidden={hidden}
     >
       <header className="project-sidebar__header">
-        <button
-          aria-current={overviewActive ? 'page' : undefined}
-          className="project-sidebar__project"
-          onClick={onOpenOverview}
-          type="button"
-          {...getTooltipTargetProps(project.location, 'right')}
-        >
-          <MaskedIcon
-            className="project-sidebar__project-mark"
-            icon={projectIcon}
-          />
-          <span>{project.name}</span>
-        </button>
         <div className="project-sidebar__tools">
           <button
             aria-label={translate('projects.closeProject')}
@@ -554,7 +629,15 @@ export const ProjectSidebar = forwardRef<
           </button>
         </div>
       </header>
+      <ProjectSearchInput
+        onChange={setSearchQuery}
+        searching={searching}
+        skippedLockedCount={skippedLockedCount}
+        translate={translate}
+        value={searchQuery}
+      />
       <div
+        aria-busy={searching || undefined}
         className="project-sidebar__tree-scroll"
         onContextMenu={(event) => {
           if (event.target !== event.currentTarget) {
@@ -585,9 +668,53 @@ export const ProjectSidebar = forwardRef<
           onRequestTrash={setTrashingNode}
           onSubmitEdit={(name) => void submitEdit(name)}
           operationPending={pending}
+          projectId={project.projectId}
+          searchNodeIds={searchNodeIds}
+          searchPreviews={searchPreviews}
+          searchQuery={appliedSearchQuery}
           translate={translate}
         />
       </div>
+      <footer className="project-sidebar__footer">
+        <button
+          aria-current={overviewActive ? 'page' : undefined}
+          className="project-sidebar__project"
+          onClick={onOpenOverview}
+          type="button"
+          {...getTooltipTargetProps(project.location, 'top')}
+        >
+          <span>{project.name}</span>
+        </button>
+        <div className="project-sidebar__footer-actions">
+          <button
+            aria-label={translate('menu.about')}
+            className="project-sidebar__tool"
+            disabled={!onOpenAbout}
+            onClick={onOpenAbout}
+            type="button"
+            {...getTooltipTargetProps(translate('menu.about'), 'top')}
+          >
+            <MaskedIcon
+              className="project-sidebar__tool-icon"
+              icon={infoIcon}
+            />
+          </button>
+          <button
+            aria-current={settingsActive ? 'page' : undefined}
+            aria-label={translate('pages.settings')}
+            className="project-sidebar__tool"
+            disabled={!onOpenSettings}
+            onClick={onOpenSettings}
+            type="button"
+            {...getTooltipTargetProps(translate('pages.settings'), 'top')}
+          >
+            <MaskedIcon
+              className="project-sidebar__tool-icon"
+              icon={settingsIcon}
+            />
+          </button>
+        </div>
+      </footer>
       {branchMenu ? (
         <ContextMenu
           ariaLabel={translate('projects.branchActions')}

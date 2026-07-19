@@ -48,6 +48,7 @@ afterEach(() => {
 describe('MarkdownDocumentController', () => {
   it('keeps the buffer alive and saves it after 500 ms', async () => {
     vi.useFakeTimers();
+    const onSaveSuccess = vi.fn();
     const save = vi.fn(
       async (request: SaveMarkdownDocumentRequest) => ({
         ok: true as const,
@@ -57,6 +58,7 @@ describe('MarkdownDocumentController', () => {
     const controller = new MarkdownDocumentController({
       reload: vi.fn(),
       save,
+      onSaveSuccess,
     });
     const listener = vi.fn();
 
@@ -82,7 +84,35 @@ describe('MarkdownDocumentController', () => {
       status: 'saved',
     } satisfies Partial<MarkdownBufferSnapshot>);
     expect(listener).toHaveBeenCalled();
+    expect(onSaveSuccess).toHaveBeenCalledWith(
+      document('# Updated', secondRevision),
+    );
     expect(controller.discardClean(nodeId)).toBe(true);
+  });
+
+  it('reschedules a pending autosave when its delay changes', async () => {
+    vi.useFakeTimers();
+    const save = vi.fn(
+      async (request: SaveMarkdownDocumentRequest) => ({
+        ok: true as const,
+        value: document(request.content, secondRevision),
+      }),
+    );
+    const controller = new MarkdownDocumentController({
+      debounceMs: 2_000,
+      reload: vi.fn(),
+      save,
+    });
+
+    controller.open(document('Before'));
+    controller.update(nodeId, 'After');
+    await vi.advanceTimersByTimeAsync(500);
+    controller.setDebounceMs(300);
+    await vi.advanceTimersByTimeAsync(299);
+    expect(save).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(save).toHaveBeenCalledOnce();
   });
 
   it('blocks autosave after a conflict until reload or overwrite is chosen', async () => {
@@ -457,5 +487,41 @@ describe('MarkdownDocumentController', () => {
     controller.open(document('disk'));
     expect(controller.canUndo(nodeId)).toBe(false);
     expect(controller.canRedo(nodeId)).toBe(false);
+  });
+
+  it('shares content and autosave while keeping selections per view', async () => {
+    vi.useFakeTimers();
+    const save = vi.fn(async (request: SaveMarkdownDocumentRequest) => ({
+      ok: true as const,
+      value: document(request.content, secondRevision),
+    }));
+    const controller = new MarkdownDocumentController({
+      reload: vi.fn(),
+      save,
+    });
+
+    controller.open(document('one'), 'left');
+    controller.open(document('one'), 'right');
+    controller.setEditorSelection(
+      nodeId,
+      { start: 0, end: 0, direction: 'none' },
+      'right',
+    );
+    controller.commitEditorTransaction(nodeId, edit('one', 'one two'), 'left');
+
+    expect(controller.getSnapshot(nodeId, 'left')).toMatchObject({
+      content: 'one two',
+      selection: { start: 7, end: 7 },
+    });
+    expect(controller.getSnapshot(nodeId, 'right')).toMatchObject({
+      content: 'one two',
+      selection: { start: 0, end: 0 },
+    });
+
+    await vi.advanceTimersByTimeAsync(500);
+    expect(save).toHaveBeenCalledTimes(1);
+    controller.undo(nodeId, 'left');
+    expect(controller.getSnapshot(nodeId, 'left')?.content).toBe('one');
+    expect(controller.getSnapshot(nodeId, 'right')?.content).toBe('one');
   });
 });

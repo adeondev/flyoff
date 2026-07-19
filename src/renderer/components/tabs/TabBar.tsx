@@ -1,29 +1,48 @@
 import {
+  forwardRef,
   useEffect,
-  useLayoutEffect,
+  useImperativeHandle,
   useRef,
   useState,
   type CSSProperties,
   type DragEvent,
   type KeyboardEvent,
+  type WheelEvent,
 } from 'react';
 
+import plusIcon from '../../../../public/images/icons/actions/plus.svg';
 import {
+  getTabTargetKey,
   isHomeTarget,
   type TabDescriptor,
 } from '../../../shared/contracts';
 import type { TabPresentation } from '../../pages/page-types';
 import { MaskedIcon } from '../MaskedIcon';
+import { getTooltipTargetProps } from '../tooltip';
+import {
+  beginWorkspaceTabPointerDrag,
+  setWorkspaceDragActive,
+  writeWorkspaceTabDrag,
+} from './workspace-drag';
+import { animateTabExit } from './tab-motion';
 
 interface TabBarProps {
+  paneId?: string;
+  canCloseSoleTab?: boolean;
   activeTabId: string | null;
   tabs: readonly TabDescriptor[];
   closeLabel: string;
   getPresentation: (tab: TabDescriptor) => TabPresentation;
   navigationLabel: string;
+  newTabLabel?: string;
   onClose: (tabId: string) => void;
   onMove: (tabId: string, toIndex: number) => void;
+  onNewTab?: () => void;
   onSelect: (tabId: string) => void;
+  onContextMenu?: (
+    tabId: string,
+    position: { x: number; y: number },
+  ) => void;
 }
 
 interface DropTarget {
@@ -31,116 +50,11 @@ interface DropTarget {
   edge: 'before' | 'after';
 }
 
-interface TabVisualBounds {
-  left: number;
-  width: number;
-}
+const TAB_MOTION_DURATION_MS = 120;
 
-interface ClosingTabVisual {
-  active: boolean;
-  bounds: TabVisualBounds;
-  sequence: number;
-  slot: number;
-  presentation: TabPresentation;
-  tab: TabDescriptor;
-}
-
-type ClosingTabCandidate = Omit<ClosingTabVisual, 'sequence'>;
-
-type VisualTabEntry =
-  | { kind: 'closing'; visual: ClosingTabVisual }
-  | { index: number; kind: 'live'; tab: TabDescriptor };
-
-const TAB_MOTION_DURATION_MS = 90;
-const DEFAULT_TAB_WIDTH = 176;
-
-function tabContext(tab: TabDescriptor | undefined): string | undefined {
-  if (!tab) {
-    return undefined;
-  }
-
-  return tab.target.type === 'internal'
-    ? 'home'
-    : `project:${tab.target.projectId}`;
-}
-
-function prefersReducedMotion(): boolean {
-  return (
-    typeof window.matchMedia === 'function' &&
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  );
-}
-
-function removedTabVisuals(
-  currentTabs: readonly TabDescriptor[],
-  previousTabs: readonly TabDescriptor[],
-  previousActiveTabId: string | null,
-  previousBounds: ReadonlyMap<string, TabVisualBounds>,
-  previousPresentations: ReadonlyMap<string, TabPresentation>,
-): ClosingTabCandidate[] {
-  const currentContext = tabContext(currentTabs[0]);
-  const previousContext = tabContext(previousTabs[0]);
-  if (
-    currentContext &&
-    previousContext &&
-    currentContext !== previousContext
-  ) {
-    return [];
-  }
-
-  const currentIds = new Set(currentTabs.map(({ tabId }) => tabId));
-  let removedBefore = 0;
-
-  return previousTabs.flatMap((tab, index) => {
-    if (currentIds.has(tab.tabId)) {
-      return [];
-    }
-
-    const bounds = previousBounds.get(tab.tabId);
-    const presentation = previousPresentations.get(tab.tabId);
-    const slot = Math.min(currentTabs.length, index - removedBefore);
-    removedBefore += 1;
-
-    return !bounds || !presentation
-      ? []
-      : [
-          {
-            active: tab.tabId === previousActiveTabId,
-            bounds,
-            presentation,
-            slot,
-            tab,
-          },
-        ];
-  });
-}
-
-function visualTabEntries(
-  tabs: readonly TabDescriptor[],
-  closingTabs: readonly ClosingTabVisual[],
-): VisualTabEntry[] {
-  const entries: VisualTabEntry[] = [];
-  const orderedClosingTabs = [...closingTabs].sort(
-    (left, right) =>
-      left.slot - right.slot ||
-      left.bounds.left - right.bounds.left ||
-      left.sequence - right.sequence,
-  );
-
-  for (let index = 0; index <= tabs.length; index += 1) {
-    for (const visual of orderedClosingTabs) {
-      if (visual.slot === index) {
-        entries.push({ kind: 'closing', visual });
-      }
-    }
-
-    const tab = tabs[index];
-    if (tab) {
-      entries.push({ index, kind: 'live', tab });
-    }
-  }
-
-  return entries;
+export interface TabBarHandle {
+  animateTabEntry: (tabId: string) => void;
+  animateTabExit: (tabId: string) => Promise<void>;
 }
 
 function focusTab(
@@ -163,166 +77,82 @@ function focusTab(
   return tabId;
 }
 
-export function TabBar({
+export function tabReorderShift(
+  index: number,
+  draggedIndex: number,
+  insertionIndex: number | undefined,
+  draggedWidth: number,
+): number {
+  if (insertionIndex === undefined || draggedIndex < 0) {
+    return 0;
+  }
+  if (
+    insertionIndex < draggedIndex &&
+    index >= insertionIndex &&
+    index < draggedIndex
+  ) {
+    return draggedWidth;
+  }
+  if (
+    insertionIndex > draggedIndex &&
+    index > draggedIndex &&
+    index <= insertionIndex
+  ) {
+    return -draggedWidth;
+  }
+  return 0;
+}
+
+export const TabBar = forwardRef<TabBarHandle, TabBarProps>(function TabBar({
+  paneId = 'primary',
   activeTabId,
+  canCloseSoleTab = false,
   tabs,
   closeLabel,
   getPresentation,
   navigationLabel,
+  newTabLabel,
   onClose,
   onMove,
+  onNewTab,
   onSelect,
-}: TabBarProps) {
+  onContextMenu,
+}: TabBarProps, ref) {
   const tabRefs = useRef(new Map<string, HTMLButtonElement>());
   const wrapperRefs = useRef(new Map<string, HTMLDivElement>());
   const tabListRef = useRef<HTMLDivElement>(null);
   const pendingFocusTabId = useRef<string | undefined>(undefined);
   const draggedTabId = useRef<string | undefined>(undefined);
   const dropTargetRef = useRef<DropTarget | undefined>(undefined);
-  const previousTabsRef = useRef(tabs);
-  const previousActiveTabIdRef = useRef(activeTabId);
-  const previousBoundsRef = useRef(new Map<string, TabVisualBounds>());
-  const previousPresentationsRef = useRef(
-    new Map<string, TabPresentation>(),
-  );
-  const closingSequenceRef = useRef(0);
-  const closingTimersRef = useRef(new Map<string, number>());
   const [dropTarget, setDropTarget] = useState<DropTarget>();
   const [draggingTabId, setDraggingTabId] = useState<string>();
-  const [closingTabs, setClosingTabs] = useState<ClosingTabVisual[]>([]);
+  const [draggedTabWidth, setDraggedTabWidth] = useState(0);
 
-  function finishClosingTab(tabId: string): void {
-    const timer = closingTimersRef.current.get(tabId);
-    if (timer !== undefined) {
-      window.clearTimeout(timer);
-      closingTimersRef.current.delete(tabId);
-    }
-    setClosingTabs((current) =>
-      current.filter(({ tab }) => tab.tabId !== tabId),
-    );
-  }
-
-  useEffect(
-    () => () => {
-      for (const timer of closingTimersRef.current.values()) {
-        window.clearTimeout(timer);
-      }
-      closingTimersRef.current.clear();
-    },
+  useImperativeHandle(
+    ref,
+    () => ({
+      animateTabEntry: (tabId) => {
+        const element = wrapperRefs.current.get(tabId);
+        if (!element || element.classList.contains('page-tab--entering')) {
+          return;
+        }
+        element.classList.add('page-tab--entering');
+        const finish = (event?: AnimationEvent): void => {
+          if (event && event.target !== element) {
+            return;
+          }
+          window.clearTimeout(timeout);
+          element.removeEventListener('animationend', finish);
+          element.classList.remove('page-tab--entering');
+        };
+        const timeout = window.setTimeout(finish, TAB_MOTION_DURATION_MS + 80);
+        element.addEventListener('animationend', finish);
+      },
+      animateTabExit: (tabId) =>
+        animateTabExit(wrapperRefs.current.get(tabId) ?? null),
+    }),
     [],
   );
-
-  useLayoutEffect(() => {
-    const tabList = tabListRef.current;
-    if (!tabList) {
-      return;
-    }
-
-    const removed = removedTabVisuals(
-      tabs,
-      previousTabsRef.current,
-      previousActiveTabIdRef.current,
-      previousBoundsRef.current,
-      previousPresentationsRef.current,
-    );
-    const reducedMotion = prefersReducedMotion();
-    const nextBounds = new Map<string, TabVisualBounds>();
-
-    for (const tab of tabs) {
-      const element = wrapperRefs.current.get(tab.tabId);
-      if (!element) {
-        continue;
-      }
-
-      const bounds = element.getBoundingClientRect();
-      const relativeBounds = {
-        left: bounds.left,
-        width: bounds.width || element.offsetWidth || DEFAULT_TAB_WIDTH,
-      };
-      nextBounds.set(tab.tabId, relativeBounds);
-    }
-
-    if (!reducedMotion) {
-      const previousIds = new Set(
-        previousTabsRef.current.map(({ tabId }) => tabId),
-      );
-      const currentIds = new Set(tabs.map(({ tabId }) => tabId));
-      const removedIndices = previousTabsRef.current.flatMap((tab, index) =>
-        currentIds.has(tab.tabId) ? [] : [index],
-      );
-      const addedIndices = tabs.flatMap((tab, index) =>
-        previousIds.has(tab.tabId) ? [] : [index],
-      );
-
-      if (
-        removed.length > 0 ||
-        removedIndices.length > 0 ||
-        addedIndices.length > 0
-      ) {
-        setClosingTabs((current) => {
-          let next = current.map((visual) => ({ ...visual }));
-
-          removedIndices.forEach((originalIndex, removedCount) => {
-            const slot = originalIndex - removedCount;
-            next = next.map((visual) => ({
-              ...visual,
-              slot: visual.slot > slot ? visual.slot - 1 : visual.slot,
-            }));
-          });
-          for (const index of addedIndices) {
-            next = next.map((visual) => ({
-              ...visual,
-              slot: visual.slot >= index ? visual.slot + 1 : visual.slot,
-            }));
-          }
-          for (const visual of removed) {
-            if (!next.some(({ tab }) => tab.tabId === visual.tab.tabId)) {
-              next.push({
-                ...visual,
-                sequence: closingSequenceRef.current,
-              });
-              closingSequenceRef.current += 1;
-            }
-          }
-          return next;
-        });
-      }
-
-      for (const { tab } of removed) {
-        if (!closingTimersRef.current.has(tab.tabId)) {
-          closingTimersRef.current.set(
-            tab.tabId,
-            window.setTimeout(
-              () => {
-                closingTimersRef.current.delete(tab.tabId);
-                setClosingTabs((current) =>
-                  current.filter(
-                    ({ tab: currentTab }) => currentTab.tabId !== tab.tabId,
-                  ),
-                );
-              },
-              TAB_MOTION_DURATION_MS,
-            ),
-          );
-        }
-      }
-    }
-
-    previousTabsRef.current = tabs;
-    previousActiveTabIdRef.current = activeTabId;
-    previousBoundsRef.current = nextBounds;
-    previousPresentationsRef.current = new Map(
-      tabs.map((tab) => [tab.tabId, getPresentation(tab)]),
-    );
-  }, [activeTabId, getPresentation, tabs]);
-
-  const currentContext = tabContext(tabs[0]);
-  const visibleClosingTabs = currentContext
-    ? closingTabs.filter(
-        ({ tab }) => tabContext(tab) === currentContext,
-      )
-    : closingTabs;
-  const visualEntries = visualTabEntries(tabs, visibleClosingTabs);
 
   useEffect(() => {
     const tabId = pendingFocusTabId.current;
@@ -393,11 +223,18 @@ export function TabBar({
     clientX: number,
     draggedId: string,
   ): DropTarget | undefined {
+    const tabList = tabListRef.current;
+    if (!tabList) {
+      return undefined;
+    }
+    const listBounds = tabList.getBoundingClientRect();
+    const localX = clientX - listBounds.left + tabList.scrollLeft;
     const candidates = tabs.filter(({ tabId }) => tabId !== draggedId);
     const candidate = candidates.find((tab) => {
       const element = wrapperRefs.current.get(tab.tabId);
-      const bounds = element?.getBoundingClientRect();
-      return bounds ? clientX < bounds.left + bounds.width / 2 : false;
+      return element
+        ? localX < element.offsetLeft + element.offsetWidth / 2
+        : false;
     });
     const lastCandidate = candidates.at(-1);
 
@@ -431,22 +268,18 @@ export function TabBar({
   }
 
   function handleDrop(event: DragEvent<HTMLDivElement>): void {
+    const draggedId = draggedTabId.current;
+    if (!draggedId) {
+      return;
+    }
     event.preventDefault();
     event.stopPropagation();
-    const transferredId = event.dataTransfer.getData('text/plain');
-    const draggedId =
-      draggedTabId.current ??
-      (tabs.some(({ tabId }) => tabId === transferredId)
-        ? transferredId
-        : undefined);
     const target = draggedId
       ? resolveDropTarget(event.clientX, draggedId)
       : undefined;
 
     if (!draggedId || !target) {
-      draggedTabId.current = undefined;
-      dropTargetRef.current = undefined;
-      setDropTarget(undefined);
+      clearDragState();
       return;
     }
 
@@ -468,18 +301,59 @@ export function TabBar({
     }
 
     onMove(draggedId, insertionIndex);
-    draggedTabId.current = undefined;
-    dropTargetRef.current = undefined;
-    setDropTarget(undefined);
-    setDraggingTabId(undefined);
+    clearDragState();
   }
 
   function clearDragState(): void {
+    setWorkspaceDragActive(false);
     draggedTabId.current = undefined;
     dropTargetRef.current = undefined;
     setDropTarget(undefined);
     setDraggingTabId(undefined);
+    setDraggedTabWidth(0);
   }
+
+  function insertionIndexFor(
+    draggedId: string,
+    target: DropTarget | undefined,
+  ): number | undefined {
+    if (!target) {
+      return undefined;
+    }
+    const fromIndex = tabs.findIndex(({ tabId }) => tabId === draggedId);
+    const targetIndex = tabs.findIndex(
+      ({ tabId }) => tabId === target.tabId,
+    );
+    if (fromIndex < 0 || targetIndex < 0) {
+      return undefined;
+    }
+    let insertionIndex =
+      targetIndex + (target.edge === 'after' ? 1 : 0);
+    if (fromIndex < insertionIndex) {
+      insertionIndex -= 1;
+    }
+    return insertionIndex;
+  }
+
+  function handleTabListWheel(event: WheelEvent<HTMLDivElement>): void {
+    if (
+      event.ctrlKey ||
+      event.currentTarget.scrollWidth <= event.currentTarget.clientWidth ||
+      Math.abs(event.deltaX) >= Math.abs(event.deltaY)
+    ) {
+      return;
+    }
+
+    event.preventDefault();
+    event.currentTarget.scrollLeft += event.deltaY;
+  }
+
+  const draggedIndex = draggingTabId
+    ? tabs.findIndex(({ tabId }) => tabId === draggingTabId)
+    : -1;
+  const insertionIndex = draggingTabId
+    ? insertionIndexFor(draggingTabId, dropTarget)
+    : undefined;
 
   return (
     <div className="pages-bar">
@@ -487,10 +361,6 @@ export function TabBar({
         aria-label={navigationLabel}
         className={`pages-bar__tabs${draggingTabId ? ' pages-bar__tabs--dragging' : ''}`}
         onDragLeave={(event) => {
-          if (event.target !== event.currentTarget) {
-            return;
-          }
-
           if (
             !(event.relatedTarget instanceof Node) ||
             !event.currentTarget.contains(event.relatedTarget)
@@ -501,6 +371,7 @@ export function TabBar({
         }}
         onDragOver={handleTabListDragOver}
         onDrop={handleDrop}
+        onWheel={handleTabListWheel}
         ref={tabListRef}
         role="tablist"
         style={
@@ -509,70 +380,103 @@ export function TabBar({
           } as CSSProperties
         }
       >
-        {visualEntries.map((entry) => {
-          if (entry.kind === 'closing') {
-            const { active, bounds, presentation, tab } = entry.visual;
-            return (
-              <div
-                aria-hidden="true"
-                className={`page-tab page-tab--closing${active ? ' page-tab--active' : ''}`}
-                key={`closing:${tab.tabId}`}
-                onAnimationEnd={(event) => {
-                  if (event.currentTarget === event.target) {
-                    finishClosingTab(tab.tabId);
-                  }
-                }}
-                style={
-                  {
-                    flexBasis: bounds.width,
-                    maxWidth: bounds.width,
-                    minWidth: bounds.width,
-                    width: bounds.width,
-                  } as CSSProperties
-                }
-              >
-                <span className="page-tab__trigger">
-                  <MaskedIcon
-                    className="page-tab__icon"
-                    icon={presentation.icon}
-                  />
-                  <span className="page-tab__label">{presentation.title}</span>
-                </span>
-                <span className="page-tab__close">
-                  <svg aria-hidden="true" viewBox="0 0 16 16">
-                    <path d="M4 4l8 8m0-8-8 8" />
-                  </svg>
-                </span>
-              </div>
-            );
-          }
-
-          const { index, tab } = entry;
+        {tabs.map((tab, index) => {
           const presentation = getPresentation(tab);
           const label = presentation.title;
           const active = tab.tabId === activeTabId;
           const closable = !(
             tabs.length === 1 &&
-            isHomeTarget(tab.target)
+            !canCloseSoleTab &&
+            (isHomeTarget(tab.target) ||
+              (tab.target.type === 'internal' &&
+                tab.target.pageId === 'new-tab'))
           );
-          const dropClass =
-            dropTarget?.tabId === tab.tabId
-              ? ` page-tab--drop-${dropTarget.edge}`
-              : '';
+          const dragShift = tabReorderShift(
+            index,
+            draggedIndex,
+            insertionIndex,
+            draggedTabWidth,
+          );
           const draggingClass =
-            draggingTabId === tab.tabId ? ' page-tab--dragging' : '';
+            draggingTabId === tab.tabId
+              ? ` page-tab--dragging${dropTarget ? ' page-tab--drag-source' : ''}`
+              : dragShift === 0
+                ? ''
+                : ' page-tab--drag-shift';
           return (
             <div
-              className={`page-tab${active ? ' page-tab--active' : ''}${dropClass}${draggingClass}`}
+              className={`page-tab${active ? ' page-tab--active' : ''}${draggingClass}`}
               draggable
               key={tab.tabId}
               onDragEnd={clearDragState}
+              onPointerDown={(event) => {
+                if (
+                  event.button !== 0 ||
+                  (event.target instanceof Element &&
+                    event.target.closest('.page-tab__close'))
+                ) {
+                  return;
+                }
+                beginWorkspaceTabPointerDrag(
+                  paneId,
+                  tab.tabId,
+                  getTabTargetKey(tab.target),
+                  event.pointerId,
+                  event.clientX,
+                  event.clientY,
+                );
+              }}
+              onContextMenu={(event) => {
+                if (!onContextMenu) {
+                  return;
+                }
+                event.preventDefault();
+                onSelect(tab.tabId);
+                onContextMenu(tab.tabId, {
+                  x: event.clientX,
+                  y: event.clientY,
+                });
+              }}
               onDragStart={(event) => {
                 draggedTabId.current = tab.tabId;
                 setDraggingTabId(tab.tabId);
+                const bounds = event.currentTarget.getBoundingClientRect();
+                const styles = getComputedStyle(event.currentTarget);
+                setDraggedTabWidth(
+                  bounds.width +
+                    Number.parseFloat(styles.marginLeft || '0') +
+                    Number.parseFloat(styles.marginRight || '0'),
+                );
+                setWorkspaceDragActive(true);
                 event.dataTransfer.effectAllowed = 'move';
-                event.dataTransfer.setData('text/plain', tab.tabId);
+                const dragImage = event.currentTarget.cloneNode(
+                  true,
+                ) as HTMLElement;
+                dragImage.className = 'workspace-drag-image';
+                dragImage.setAttribute('aria-hidden', 'true');
+                dragImage.querySelectorAll<HTMLElement>('[id], button').forEach(
+                  (element) => {
+                    element.removeAttribute('id');
+                    element.setAttribute('tabindex', '-1');
+                  },
+                );
+                document.body.append(dragImage);
+                event.dataTransfer.setDragImage(dragImage, 22, 20);
+                window.requestAnimationFrame(() => dragImage.remove());
+                writeWorkspaceTabDrag(
+                  event.dataTransfer,
+                  paneId,
+                  tab.tabId,
+                  getTabTargetKey(tab.target),
+                );
               }}
+              style={
+                dragShift === 0
+                  ? undefined
+                  : ({
+                      '--page-tab-drag-shift': `${dragShift}px`,
+                    } as CSSProperties)
+              }
               ref={(element) => {
                 if (element) {
                   wrapperRefs.current.set(tab.tabId, element);
@@ -582,50 +486,63 @@ export function TabBar({
               }}
               role="presentation"
             >
-              <button
-                aria-controls={`page-panel-${tab.tabId}`}
-                aria-selected={active}
-                className="page-tab__trigger"
-                id={`page-tab-${tab.tabId}`}
-                onClick={() => onSelect(tab.tabId)}
-                onKeyDown={(event) => handleKeyDown(event, tab, index)}
-                ref={(element) => {
-                  if (element) {
-                    tabRefs.current.set(tab.tabId, element);
-                  } else {
-                    tabRefs.current.delete(tab.tabId);
-                  }
-                }}
-                role="tab"
-                tabIndex={active ? 0 : -1}
-                type="button"
-              >
-                <MaskedIcon
-                  className="page-tab__icon"
-                  icon={presentation.icon}
-                />
-                <span className="page-tab__label">{label}</span>
-              </button>
-              <button
-                aria-hidden={!closable}
-                aria-label={`${closeLabel}: ${label}`}
-                className={`page-tab__close${closable ? '' : ' page-tab__close--hidden'}`}
-                disabled={!closable}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  closeAndFocusNeighbor(tab, index);
-                }}
-                tabIndex={closable ? 0 : -1}
-                type="button"
-              >
-                <svg aria-hidden="true" viewBox="0 0 16 16">
-                  <path d="M4 4l8 8m0-8-8 8" />
-                </svg>
-              </button>
+              <div className="page-tab__content">
+                <button
+                  aria-controls={`page-panel-${paneId}-${tab.tabId}`}
+                  aria-selected={active}
+                  className="page-tab__trigger"
+                  id={`page-tab-${paneId}-${tab.tabId}`}
+                  onClick={() => onSelect(tab.tabId)}
+                  onKeyDown={(event) => handleKeyDown(event, tab, index)}
+                  ref={(element) => {
+                    if (element) {
+                      tabRefs.current.set(tab.tabId, element);
+                    } else {
+                      tabRefs.current.delete(tab.tabId);
+                    }
+                  }}
+                  role="tab"
+                  tabIndex={active ? 0 : -1}
+                  type="button"
+                >
+                  <MaskedIcon
+                    className="page-tab__icon"
+                    icon={presentation.icon}
+                  />
+                  <span className="page-tab__label">{label}</span>
+                </button>
+                <button
+                  aria-hidden={!closable}
+                  aria-label={`${closeLabel}: ${label}`}
+                  className={`page-tab__close${closable ? '' : ' page-tab__close--hidden'}`}
+                  disabled={!closable}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    closeAndFocusNeighbor(tab, index);
+                  }}
+                  tabIndex={closable ? 0 : -1}
+                  type="button"
+                >
+                  <svg aria-hidden="true" viewBox="0 0 16 16">
+                    <path d="M4 4l8 8m0-8-8 8" />
+                  </svg>
+                </button>
+              </div>
             </div>
           );
         })}
+        {newTabLabel && onNewTab ? (
+          <button
+            aria-label={newTabLabel}
+            className="pages-bar__new-tab"
+            onClick={onNewTab}
+            type="button"
+            {...getTooltipTargetProps(newTabLabel, 'bottom')}
+          >
+            <MaskedIcon icon={plusIcon} />
+          </button>
+        ) : null}
       </div>
     </div>
   );
-}
+});

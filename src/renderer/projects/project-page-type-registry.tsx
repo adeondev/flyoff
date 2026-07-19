@@ -1,19 +1,29 @@
 import { useEffect, useState, type ComponentType } from 'react';
 
 import checklistIcon from '../../../public/images/icons/instances/checklist.svg';
-import galleryIcon from '../../../public/images/icons/instances/image.svg';
-import markdownPageIcon from '../../../public/images/icons/instances/note.svg';
+import galleryIcon from '../../../public/images/icons/instances/image-solid.svg';
+import markdownPageIcon from '../../../public/images/icons/instances/note-solid.svg';
 import kanbanIcon from '../../../public/images/icons/instances/table.svg';
 import type {
   MarkdownDocument,
+  ListProjectBacklinksRequest,
   PageSessionState,
+  ProjectBacklinksOutcome,
+  ProjectInternalLinkRequest,
+  ProjectInternalLinkResolution,
+  ProjectInternalLinkTarget,
+  ProjectLinkTarget,
   ProjectPageNode,
   ProjectResult,
 } from '../../shared/contracts';
 import { isProjectInstanceTypeId } from '../../shared/contracts';
 import type { TranslationKey } from '../../shared/i18n/catalogs';
 import type { Translate } from '../pages/page-types';
-import { createEditorModeState, readEditorMode } from './editor-mode';
+import { useFlyoffPreferences } from '../preferences';
+import {
+  readEditorMode,
+  updateEditorModeState,
+} from './editor-mode';
 import type { MarkdownDocumentController } from './markdown-document-controller';
 import { MarkdownEditor } from './MarkdownEditor';
 import { MarkdownLockedView } from './MarkdownLockedView';
@@ -30,6 +40,33 @@ export interface MarkdownPageRuntime {
     nodeId: string,
     password: string,
   ) => Promise<ProjectResult<MarkdownDocument>>;
+  links: MarkdownLinkRuntime;
+  navigation?: MarkdownLinkNavigation;
+}
+
+export interface MarkdownLinkNavigation {
+  headingPath: readonly string[];
+  nodeId: string;
+  offset?: number;
+  requestId: number;
+}
+
+export interface MarkdownLinkRuntime {
+  listBacklinks: (
+    request: ListProjectBacklinksRequest,
+  ) => Promise<ProjectResult<ProjectBacklinksOutcome>>;
+  listTargets: () => Promise<ProjectResult<readonly ProjectLinkTarget[]>>;
+  openTarget: (
+    target: ProjectInternalLinkTarget | ProjectLinkTarget,
+    navigation?: { headingPath: readonly string[]; offset?: number },
+  ) => Promise<void>;
+  resolve: (
+    request: ProjectInternalLinkRequest,
+  ) => Promise<ProjectResult<ProjectInternalLinkResolution>>;
+  renameTarget: (
+    nodeId: string,
+    name: string,
+  ) => Promise<ProjectResult<ProjectPageNode>>;
 }
 
 export interface ProjectPageRuntime {
@@ -38,6 +75,7 @@ export interface ProjectPageRuntime {
 }
 
 export interface ProjectPageComponentProps {
+  active: boolean;
   displayPath?: string;
   node?: ProjectPageNode;
   nodeId: string;
@@ -47,6 +85,7 @@ export interface ProjectPageComponentProps {
   onScrollChange: (scrollTop: number) => void;
   onStateChange: (state: PageSessionState) => void;
   translate: Translate;
+  viewId?: string;
 }
 
 export interface ProjectPageTypeDefinition {
@@ -89,6 +128,7 @@ function initialMarkdownState(
 }
 
 function MarkdownProjectPage({
+  active,
   displayPath,
   node,
   nodeId,
@@ -98,7 +138,9 @@ function MarkdownProjectPage({
   runtime,
   scrollTop,
   translate,
+  viewId,
 }: ProjectPageComponentProps) {
+  const { preferences } = useFlyoffPreferences();
   const {
     controller,
     lockedNodeIds,
@@ -112,11 +154,11 @@ function MarkdownProjectPage({
   );
 
   useEffect(() => {
-    let active = true;
+    let mounted = true;
     if (!locked && !controller.getSnapshot(nodeId)) {
       void readDocument(nodeId)
         .then((result) => {
-          if (!active) {
+          if (!mounted) {
             return;
           }
 
@@ -137,14 +179,14 @@ function MarkdownProjectPage({
           setState({ status: 'ready', document: result.value });
         })
         .catch((error: unknown) => {
-          if (active) {
+          if (mounted) {
             setState({ status: 'unavailable', message: String(error) });
           }
         });
     }
 
     return () => {
-      active = false;
+      mounted = false;
       controller.discardClean(nodeId);
     };
   }, [controller, locked, nodeId, onPasswordRequired, readDocument]);
@@ -152,7 +194,7 @@ function MarkdownProjectPage({
   const title =
     displayPath ??
     (node
-      ? `/${projectNodeDisplayName(node)}`
+      ? projectNodeDisplayName(node)
       : translate('projects.unavailable'));
 
   if (state.status === 'loading') {
@@ -188,18 +230,29 @@ function MarkdownProjectPage({
     );
   }
 
+  const editorMode = readEditorMode(pageState);
+
   return (
     <MarkdownEditor
-      autoFocus
+      autoFocus={preferences.general.focusEditorOnOpen && active}
       controller={controller}
       document={state.document}
-      mode={readEditorMode(pageState)}
-      onModeChange={(mode) => onStateChange(createEditorModeState(mode))}
+      mode={editorMode}
+      onModeChange={(mode) =>
+        onStateChange(updateEditorModeState(pageState, mode))
+      }
       onError={runtime.onError}
+      linkRuntime={runtime.markdown.links}
+      navigation={
+        runtime.markdown.navigation?.nodeId === nodeId
+          ? runtime.markdown.navigation
+          : undefined
+      }
       onScrollChange={onScrollChange}
       scrollTop={scrollTop}
       title={title}
       translate={translate}
+      viewId={viewId}
     />
   );
 }
