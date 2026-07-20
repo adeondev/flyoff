@@ -77,6 +77,8 @@ interface GraphRuntime {
   layoutFrames: number;
   labels: ReadonlyMap<string, HTMLElement>;
   palette: GraphPalette;
+  particlePhase: number;
+  particlesActive: boolean;
   pointer?: PointerSession;
   raf?: number;
   selected?: ProjectGraphLayoutNode;
@@ -164,6 +166,65 @@ function hitGraphNode(
   return undefined;
 }
 
+// Laps per second a particle travels from an edge's source to its target.
+const PARTICLE_SPEED = 0.34;
+// Irrational stride so consecutive edges start their particles out of phase.
+const PARTICLE_STRIDE = 0.618_033_988_749_895;
+// Upper bound on particles drawn per frame; edges are already viewport-culled,
+// but very dense graphs still need a ceiling to stay cheap.
+const PARTICLE_BUDGET = 520;
+
+// Draws the animated dot(s) flowing along a single (already visible) edge and
+// returns how many were painted. The caller sets the fill colour once so this
+// only touches globalAlpha. Assumes source/target are screen-space points.
+function drawEdgeParticles(
+  context: CanvasRenderingContext2D,
+  source: { x: number; y: number },
+  target: { x: number; y: number },
+  phase: number,
+  index: number,
+  density: number,
+  edgeScale: number,
+): number {
+  const dx = target.x - source.x;
+  const dy = target.y - source.y;
+  const length = Math.hypot(dx, dy);
+  if (length < 26) {
+    return 0;
+  }
+  const lanes = density > 1 ? 2 : 1;
+  const radius = 1.4 + 0.9 * edgeScale;
+  const baseOffset = (index * PARTICLE_STRIDE) % 1;
+  let drawn = 0;
+  for (let lane = 0; lane < lanes; lane += 1) {
+    const laneStrength =
+      lane === 0 ? Math.min(1, density) : Math.min(1, density - 1);
+    if (laneStrength <= 0.02) {
+      continue;
+    }
+    const travel = (phase * PARTICLE_SPEED + baseOffset + lane * 0.5) % 1;
+    // Fade in near the source and out near the target so dots never pop.
+    const envelope = Math.sin(Math.PI * travel);
+    const alpha = 0.82 * envelope * laneStrength;
+    if (alpha <= 0.02) {
+      continue;
+    }
+    const x = source.x + dx * travel;
+    const y = source.y + dy * travel;
+    context.globalAlpha = alpha * 0.28;
+    context.beginPath();
+    context.arc(x, y, radius * 2.1, 0, Math.PI * 2);
+    context.fill();
+    context.globalAlpha = alpha;
+    context.beginPath();
+    context.arc(x, y, radius, 0, Math.PI * 2);
+    context.fill();
+    drawn += 1;
+  }
+  context.globalAlpha = 1;
+  return drawn;
+}
+
 function drawGraph(
   canvas: HTMLCanvasElement,
   runtime: GraphRuntime,
@@ -184,7 +245,14 @@ function drawGraph(
   context.lineCap = 'round';
   context.strokeStyle = runtime.palette.edge;
 
+  const particleDensity = runtime.settings.linkParticles;
+  const drawParticles = runtime.particlesActive && particleDensity > 0;
+  let particlesDrawn = 0;
+  let edgeIndex = 0;
+
   for (const edge of runtime.layout.edges) {
+    const index = edgeIndex;
+    edgeIndex += 1;
     const source = projectGraphWorldToScreen(
       edge.source,
       runtime.camera,
@@ -213,6 +281,19 @@ function drawGraph(
     context.moveTo(source.x, source.y);
     context.lineTo(target.x, target.y);
     context.stroke();
+
+    if (drawParticles && particlesDrawn < PARTICLE_BUDGET) {
+      context.fillStyle = runtime.palette.accent;
+      particlesDrawn += drawEdgeParticles(
+        context,
+        source,
+        target,
+        runtime.particlePhase,
+        index,
+        particleDensity,
+        runtime.settings.edgeScale,
+      );
+    }
   }
   context.globalAlpha = 1;
 
@@ -414,6 +495,8 @@ export function ProjectGraphPanel({
       layoutFrames: 0,
       labels: new Map(labelRefs.current),
       palette: graphPalette(),
+      particlePhase: 0,
+      particlesActive: false,
       settings: controller.getSnapshot().settings,
       visible: true,
       width: canvas.clientWidth,
@@ -444,6 +527,7 @@ export function ProjectGraphPanel({
       }
       const elapsed = Math.min(0.05, Math.max(0.001, (time - runtime.lastFrame) / 1_000));
       runtime.lastFrame = time;
+      const reduced = reducedMotion();
       let moving = false;
 
       if (runtime.layoutFrames < 720 && runtime.layout.nodes.length > 1) {
@@ -472,9 +556,7 @@ export function ProjectGraphPanel({
         }
       }
 
-      const cameraResponse = reducedMotion()
-        ? 1
-        : 1 - Math.exp(-15.5 * elapsed);
+      const cameraResponse = reduced ? 1 : 1 - Math.exp(-15.5 * elapsed);
       const camera = runtime.camera;
       camera.x += (camera.targetX - camera.x) * cameraResponse;
       camera.y += (camera.targetY - camera.y) * cameraResponse;
@@ -484,6 +566,16 @@ export function ProjectGraphPanel({
         Math.abs(camera.targetY - camera.y) < 0.01 &&
         Math.abs(camera.targetZoom - camera.zoom) < 0.0001;
       moving ||= !cameraSettled;
+
+      // Link particles keep the loop alive on their own; when the setting is
+      // off (or the user prefers reduced motion) the canvas still sleeps once
+      // the layout and camera settle.
+      runtime.particlesActive =
+        runtime.settings.linkParticles > 0 && !reduced;
+      if (runtime.particlesActive) {
+        runtime.particlePhase = (runtime.particlePhase + elapsed) % 1_000;
+        moving = true;
+      }
 
       if (runtime.dirty || moving) {
         drawGraph(canvas, runtime);

@@ -55,6 +55,7 @@ export interface TranslationCatalog {
     empty: string;
     fit: string;
     labelZoom: string;
+    linkParticles: string;
     nodeDistance: string;
     nodeScale: string;
     openInTab: string;
@@ -577,6 +578,7 @@ export const ptBR = {
     empty: 'Nenhuma conexão para mostrar.',
     fit: 'Ajustar à tela',
     labelZoom: 'Exibição dos nomes',
+    linkParticles: 'Partículas nas conexões',
     nodeDistance: 'Distância entre nós',
     nodeScale: 'Tamanho dos nós',
     openInTab: 'Abrir grafo em uma aba',
@@ -1157,6 +1159,7 @@ export const enUS = {
     empty: 'No connections to show.',
     fit: 'Fit to view',
     labelZoom: 'Label visibility',
+    linkParticles: 'Connection particles',
     nodeDistance: 'Node distance',
     nodeScale: 'Node size',
     openInTab: 'Open graph in a tab',

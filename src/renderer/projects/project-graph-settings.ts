@@ -3,6 +3,7 @@ export interface ProjectGraphSettings {
   damping: number;
   edgeScale: number;
   labelZoom: number;
+  linkParticles: number;
   nodeDistance: number;
   nodeScale: number;
   repulsion: number;
@@ -16,6 +17,7 @@ export const DEFAULT_PROJECT_GRAPH_SETTINGS: Readonly<ProjectGraphSettings> = {
   damping: 5.4,
   edgeScale: 1,
   labelZoom: 0.72,
+  linkParticles: 1,
   nodeDistance: 112,
   nodeScale: 1,
   repulsion: 7_200,
@@ -29,6 +31,7 @@ export const PROJECT_GRAPH_SETTING_LIMITS = {
   damping: { maximum: 12, minimum: 2, step: 0.2 },
   edgeScale: { maximum: 2, minimum: 0.5, step: 0.05 },
   labelZoom: { maximum: 1.5, minimum: 0.2, step: 0.05 },
+  linkParticles: { maximum: 2, minimum: 0, step: 0.1 },
   nodeDistance: { maximum: 240, minimum: 56, step: 4 },
   nodeScale: { maximum: 1.8, minimum: 0.7, step: 0.05 },
   repulsion: { maximum: 16_000, minimum: 1_800, step: 200 },

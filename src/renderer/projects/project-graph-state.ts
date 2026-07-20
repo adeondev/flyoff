@@ -89,6 +89,7 @@ export function createProjectGraphPageState(
         damping: settings.damping,
         edgeScale: settings.edgeScale,
         labelZoom: settings.labelZoom,
+        linkParticles: settings.linkParticles,
         nodeDistance: settings.nodeDistance,
         nodeScale: settings.nodeScale,
         repulsion: settings.repulsion,

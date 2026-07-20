@@ -1099,6 +1099,34 @@ export function App() {
     [performGuardedTabAction],
   );
 
+  // Selecting the graph rail view normally reveals the sidebar graph panel.
+  // But if the graph is already open full-screen as a tab, focus that tab
+  // instead of duplicating it in the sidebar.
+  const selectRailView = useCallback(
+    (railViewId: string) => {
+      if (railViewId === RAIL_VIEW_IDS.graph) {
+        const projectWorkspace = workspaceStateRef.current.project;
+        const openGraphTab =
+          projectWorkspace &&
+          collectPanes(projectWorkspace.root).some((pane) =>
+            pane.tabs.some(({ target }) => target.type === 'project-graph'),
+          );
+        if (projectWorkspace && openGraphTab) {
+          void dispatchGuardedTabAction({
+            type: 'open-target',
+            target: {
+              type: 'project-graph',
+              projectId: projectWorkspace.projectId,
+            },
+          });
+          return;
+        }
+      }
+      setRailViewId(railViewId);
+    },
+    [dispatchGuardedTabAction, setRailViewId],
+  );
+
   const activateProject = useCallback(
     (summary: ProjectSummary): Promise<boolean> =>
       enqueueWorkspaceTransition(async () => {
@@ -2783,7 +2811,7 @@ export function App() {
         ) : (
           <IconRail
             activeViewId={layout.railViewId}
-            onSelect={setRailViewId}
+            onSelect={selectRailView}
             onToggleSidebar={layout.toggleCollapsed}
             sidebarCollapsed={layout.collapsed}
             translate={translate}

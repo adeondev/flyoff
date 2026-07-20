@@ -24,6 +24,7 @@ interface GraphSettingDefinition {
     | 'graph.damping'
     | 'graph.edgeScale'
     | 'graph.labelZoom'
+    | 'graph.linkParticles'
     | 'graph.nodeDistance'
     | 'graph.nodeScale'
     | 'graph.repulsion'
@@ -34,6 +35,8 @@ interface GraphSettingDefinition {
 
 const percentage = (value: number) => `${Math.round(value * 100)}%`;
 const multiplier = (value: number) => `${value.toFixed(2).replace(/0$/, '')}×`;
+const particleDensity = (value: number) =>
+  value <= 0 ? '—' : multiplier(value);
 
 const SIMULATION_SETTINGS: readonly GraphSettingDefinition[] = [
   {
@@ -83,6 +86,11 @@ const APPEARANCE_SETTINGS: readonly GraphSettingDefinition[] = [
     format: (value) => `≥ ${multiplier(value)}`,
     key: 'labelZoom',
     label: 'graph.labelZoom',
+  },
+  {
+    format: particleDensity,
+    key: 'linkParticles',
+    label: 'graph.linkParticles',
   },
 ];
 
