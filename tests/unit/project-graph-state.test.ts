@@ -23,6 +23,7 @@ describe('project graph page state', () => {
     expect(state.version).toBe(2);
     expect(readProjectGraphViewState(state)).toEqual({
       camera: { x: 18, y: -9, zoom: 2.4 },
+      layoutMode: 'orbit',
       selectedNodeId: 'note-1',
       settings: DEFAULT_PROJECT_GRAPH_SETTINGS,
     });
@@ -57,8 +58,19 @@ describe('project graph page state', () => {
     expect(state.version).toBe(2);
     expect(readProjectGraphViewState(state)).toEqual({
       camera: { x: 0, y: 0, zoom: 1 },
+      layoutMode: 'orbit',
       selectedNodeId: null,
       settings: DEFAULT_PROJECT_GRAPH_SETTINGS,
     });
+  });
+
+  it('preserves an explicit force layout mode through a round trip', () => {
+    const state = createProjectGraphPageState({
+      camera: { x: 0, y: 0, zoom: 1 },
+      layoutMode: 'force',
+      selectedNodeId: null,
+      settings: { ...DEFAULT_PROJECT_GRAPH_SETTINGS },
+    });
+    expect(readProjectGraphViewState(state)?.layoutMode).toBe('force');
   });
 });

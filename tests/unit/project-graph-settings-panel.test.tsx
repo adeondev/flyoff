@@ -14,12 +14,15 @@ afterEach(cleanup);
 describe('project graph settings panel', () => {
   it('edits live values and exposes fit, reset, close, and Escape actions', () => {
     const onChange = vi.fn();
+    const onChangeMode = vi.fn();
     const onClose = vi.fn();
     const onFit = vi.fn();
     const onReset = vi.fn();
     render(
       <ProjectGraphSettingsPanel
+        layoutMode="orbit"
         onChange={onChange}
+        onChangeMode={onChangeMode}
         onClose={onClose}
         onFit={onFit}
         onReset={onReset}
@@ -33,6 +36,9 @@ describe('project graph settings panel', () => {
       { target: { value: '180' } },
     );
     expect(onChange).toHaveBeenCalledWith('nodeDistance', 180);
+
+    fireEvent.click(screen.getByRole('radio', { name: 'graph.modeGraph' }));
+    expect(onChangeMode).toHaveBeenCalledWith('force');
 
     fireEvent.click(screen.getByRole('button', { name: 'graph.fit' }));
     fireEvent.click(

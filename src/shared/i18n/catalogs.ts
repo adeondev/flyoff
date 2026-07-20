@@ -49,17 +49,23 @@ export interface TranslationCatalog {
     appearance: string;
     canvas: string;
     centerStrength: string;
+    closeFolder: string;
     closeSettings: string;
     damping: string;
     edgeScale: string;
     empty: string;
     fit: string;
+    folderEmpty: string;
     labelZoom: string;
+    layoutMode: string;
     linkParticles: string;
+    modeGraph: string;
+    modeOrbit: string;
     nodeDistance: string;
     nodeScale: string;
     openInTab: string;
     openSettings: string;
+    orbitTitle: string;
     refresh: string;
     refreshing: string;
     repulsion: string;
@@ -572,17 +578,23 @@ export const ptBR = {
     appearance: 'Aparência',
     canvas: 'Grafo de conexões entre notas',
     centerStrength: 'Força de centralização',
+    closeFolder: 'Fechar pasta',
     closeSettings: 'Fechar ajustes do grafo',
     damping: 'Amortecimento',
     edgeScale: 'Espessura das conexões',
     empty: 'Nenhuma conexão para mostrar.',
     fit: 'Ajustar à tela',
+    folderEmpty: 'Pasta vazia.',
     labelZoom: 'Exibição dos nomes',
+    layoutMode: 'Modo de exibição',
     linkParticles: 'Partículas nas conexões',
+    modeGraph: 'Grafo',
+    modeOrbit: 'Órbita',
     nodeDistance: 'Distância entre nós',
     nodeScale: 'Tamanho dos nós',
     openInTab: 'Abrir grafo em uma aba',
     openSettings: 'Ajustar grafo',
+    orbitTitle: 'Órbita',
     refresh: 'Atualizar grafo',
     refreshing: 'Atualizando grafo',
     repulsion: 'Repulsão',
@@ -1153,17 +1165,23 @@ export const enUS = {
     appearance: 'Appearance',
     canvas: 'Graph of connections between notes',
     centerStrength: 'Centering force',
+    closeFolder: 'Close folder',
     closeSettings: 'Close graph settings',
     damping: 'Damping',
     edgeScale: 'Connection thickness',
     empty: 'No connections to show.',
     fit: 'Fit to view',
+    folderEmpty: 'Empty folder.',
     labelZoom: 'Label visibility',
+    layoutMode: 'View mode',
     linkParticles: 'Connection particles',
+    modeGraph: 'Graph',
+    modeOrbit: 'Orbit',
     nodeDistance: 'Node distance',
     nodeScale: 'Node size',
     openInTab: 'Open graph in a tab',
     openSettings: 'Adjust graph',
+    orbitTitle: 'Orbit View',
     refresh: 'Refresh graph',
     refreshing: 'Refreshing graph',
     repulsion: 'Repulsion',

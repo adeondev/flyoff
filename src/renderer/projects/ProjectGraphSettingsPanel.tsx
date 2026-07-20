@@ -6,9 +6,12 @@ import {
   PROJECT_GRAPH_SETTING_LIMITS,
   type ProjectGraphSettings,
 } from './project-graph-settings';
+import type { ProjectGraphLayoutMode } from './project-graph-state';
 
 interface ProjectGraphSettingsPanelProps {
+  layoutMode: ProjectGraphLayoutMode;
   onChange: (key: keyof ProjectGraphSettings, value: number) => void;
+  onChangeMode: (mode: ProjectGraphLayoutMode) => void;
   onClose: () => void;
   onFit: () => void;
   onReset: () => void;
@@ -147,8 +150,18 @@ function GraphSettingsGroup({
   );
 }
 
+const LAYOUT_MODES: readonly {
+  labelKey: 'graph.modeOrbit' | 'graph.modeGraph';
+  value: ProjectGraphLayoutMode;
+}[] = [
+  { labelKey: 'graph.modeOrbit', value: 'orbit' },
+  { labelKey: 'graph.modeGraph', value: 'force' },
+];
+
 export function ProjectGraphSettingsPanel({
+  layoutMode,
   onChange,
+  onChangeMode,
   onClose,
   onFit,
   onReset,
@@ -179,6 +192,28 @@ export function ProjectGraphSettingsPanel({
         </button>
       </header>
       <div className="project-graph-settings__content">
+        <fieldset className="project-graph-settings__group">
+          <legend>{translate('graph.layoutMode')}</legend>
+          <div
+            aria-label={translate('graph.layoutMode')}
+            className="project-graph-settings__modes"
+            role="radiogroup"
+          >
+            {LAYOUT_MODES.map((mode) => (
+              <button
+                aria-checked={layoutMode === mode.value}
+                className="project-graph-settings__mode"
+                data-active={layoutMode === mode.value}
+                key={mode.value}
+                onClick={() => onChangeMode(mode.value)}
+                role="radio"
+                type="button"
+              >
+                {translate(mode.labelKey)}
+              </button>
+            ))}
+          </div>
+        </fieldset>
         <GraphSettingsGroup
           definitions={SIMULATION_SETTINGS}
           onChange={onChange}

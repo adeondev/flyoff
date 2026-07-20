@@ -13,11 +13,16 @@ import {
   projectGraphSettingsEqual,
   type ProjectGraphSettings,
 } from './project-graph-settings';
-import type { ProjectGraphViewState } from './project-graph-state';
+import {
+  DEFAULT_PROJECT_GRAPH_LAYOUT_MODE,
+  type ProjectGraphLayoutMode,
+  type ProjectGraphViewState,
+} from './project-graph-state';
 
 export interface ProjectGraphControllerSnapshot {
   graph: ProjectGraphSnapshot;
   layout: ProjectGraphLayout;
+  layoutMode: ProjectGraphLayoutMode;
   refreshing: boolean;
   selectedNodeId: string | null;
   settings: ProjectGraphSettings;
@@ -48,6 +53,7 @@ export class ProjectGraphController {
   private snapshot: ProjectGraphControllerSnapshot = {
     graph: EMPTY_GRAPH,
     layout: createProjectGraphLayout(EMPTY_GRAPH),
+    layoutMode: DEFAULT_PROJECT_GRAPH_LAYOUT_MODE,
     refreshing: false,
     selectedNodeId: null,
     settings: { ...DEFAULT_PROJECT_GRAPH_SETTINGS },
@@ -87,6 +93,16 @@ export class ProjectGraphController {
     }
   }
 
+  getLayoutMode(): ProjectGraphLayoutMode {
+    return this.snapshot.layoutMode;
+  }
+
+  setLayoutMode(layoutMode: ProjectGraphLayoutMode): void {
+    if (layoutMode !== this.snapshot.layoutMode) {
+      this.publish({ ...this.snapshot, layoutMode });
+    }
+  }
+
   restoreView(view: ProjectGraphViewState | undefined): void {
     if (!view || this.cameraReady) {
       return;
@@ -104,6 +120,7 @@ export class ProjectGraphController {
     this.cameraReady = true;
     this.publish({
       ...this.snapshot,
+      layoutMode: view.layoutMode,
       selectedNodeId: view.selectedNodeId,
       settings: normalizeProjectGraphSettings(view.settings),
     });
@@ -116,6 +133,7 @@ export class ProjectGraphController {
         y: this.camera.targetY,
         zoom: this.camera.targetZoom,
       },
+      layoutMode: this.snapshot.layoutMode,
       selectedNodeId: this.snapshot.selectedNodeId,
       settings: { ...this.snapshot.settings },
     };
@@ -160,6 +178,7 @@ export class ProjectGraphController {
       this.publish({
         graph: result.value,
         layout,
+        layoutMode: this.snapshot.layoutMode,
         refreshing: false,
         selectedNodeId,
         settings: this.snapshot.settings,

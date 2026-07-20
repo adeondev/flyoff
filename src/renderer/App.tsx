@@ -2558,7 +2558,7 @@ export function App() {
 
       if (target.type === 'project-graph') {
         return {
-          title: translate('rail.graph'),
+          title: translate('graph.orbitTitle'),
           icon: projectGraphIcon,
         };
       }
@@ -2694,6 +2694,7 @@ export function App() {
               props.onStateChange(createProjectGraphPageState(view))
             }
             refreshSignal={graphRefreshSignal}
+            rootName={project?.name}
             translate={translate}
             variant="page"
           />
@@ -2908,6 +2909,7 @@ export function App() {
             }}
             onOpenNode={(node) => void openProjectGraphNode(node)}
             refreshSignal={graphRefreshSignal}
+            rootName={project?.name}
             translate={translate}
           />
         ) : null}

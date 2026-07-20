@@ -6,14 +6,23 @@ import {
   type ProjectGraphSettings,
 } from './project-graph-settings';
 
+export type ProjectGraphLayoutMode = 'orbit' | 'force';
+
+export const DEFAULT_PROJECT_GRAPH_LAYOUT_MODE: ProjectGraphLayoutMode = 'orbit';
+
 export interface ProjectGraphViewState {
   camera: {
     x: number;
     y: number;
     zoom: number;
   };
+  layoutMode: ProjectGraphLayoutMode;
   selectedNodeId: string | null;
   settings: ProjectGraphSettings;
+}
+
+function readLayoutMode(value: unknown): ProjectGraphLayoutMode {
+  return value === 'force' ? 'force' : DEFAULT_PROJECT_GRAPH_LAYOUT_MODE;
 }
 
 function finiteNumber(value: unknown): value is number {
@@ -58,6 +67,7 @@ export function readProjectGraphViewState(
       y: values.y,
       zoom: clampProjectGraphZoom(values.zoom),
     },
+    layoutMode: readLayoutMode(data.layoutMode),
     selectedNodeId,
     settings:
       state.version === 2
@@ -71,6 +81,7 @@ export function createProjectGraphPageState(
 ): PageSessionState {
   const resolved = view ?? {
     camera: { x: 0, y: 0, zoom: 1 },
+    layoutMode: DEFAULT_PROJECT_GRAPH_LAYOUT_MODE,
     selectedNodeId: null,
     settings: { ...DEFAULT_PROJECT_GRAPH_SETTINGS },
   };
@@ -83,6 +94,7 @@ export function createProjectGraphPageState(
         y: resolved.camera.y,
         zoom: clampProjectGraphZoom(resolved.camera.zoom),
       },
+      layoutMode: readLayoutMode(resolved.layoutMode),
       selectedNodeId: resolved.selectedNodeId,
       settings: {
         centerStrength: settings.centerStrength,

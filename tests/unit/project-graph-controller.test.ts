@@ -33,6 +33,7 @@ describe('project graph controller', () => {
     const controller = new ProjectGraphController();
     controller.restoreView({
       camera: { x: 12, y: -8, zoom: 1.5 },
+      layoutMode: 'force',
       selectedNodeId: graph.nodes[0]!.nodeId,
       settings: { ...DEFAULT_PROJECT_GRAPH_SETTINGS },
     });
@@ -47,9 +48,20 @@ describe('project graph controller', () => {
     });
     expect(controller.viewState()).toEqual({
       camera: { x: 12, y: -8, zoom: 1.5 },
+      layoutMode: 'force',
       selectedNodeId: graph.nodes[0]!.nodeId,
       settings: DEFAULT_PROJECT_GRAPH_SETTINGS,
     });
+  });
+
+  it('defaults to orbit mode and toggles the layout mode', () => {
+    const controller = new ProjectGraphController();
+    expect(controller.getLayoutMode()).toBe('orbit');
+    expect(controller.viewState().layoutMode).toBe('orbit');
+
+    controller.setLayoutMode('force');
+    expect(controller.getLayoutMode()).toBe('force');
+    expect(controller.viewState().layoutMode).toBe('force');
   });
 
   it('publishes validated settings without rebuilding the layout', async () => {

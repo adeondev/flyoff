@@ -11,6 +11,7 @@ import {
 import expandIcon from '../../../public/images/icons/actions/expand-outline.svg';
 import refreshIcon from '../../../public/images/icons/actions/refresh.svg';
 import settingsIcon from '../../../public/images/icons/actions/settings-outline.svg';
+import rocketIcon from '../../../public/images/twemoji/svg/1f680.svg';
 import type {
   ProjectGraphNode,
   ProjectGraphSnapshot,
@@ -33,10 +34,19 @@ import {
   type ProjectGraphLayoutNode,
 } from './project-graph-layout';
 import {
+  buildProjectGraphOrbit,
+  positionProjectGraphOrbit,
+  type ProjectGraphOrbitBody,
+  type ProjectGraphOrbitLayout,
+} from './project-graph-orbit';
+import {
   DEFAULT_PROJECT_GRAPH_SETTINGS,
   type ProjectGraphSettings,
 } from './project-graph-settings';
-import type { ProjectGraphViewState } from './project-graph-state';
+import type {
+  ProjectGraphLayoutMode,
+  ProjectGraphViewState,
+} from './project-graph-state';
 
 interface ProjectGraphPanelProps {
   controller: ProjectGraphController;
@@ -47,8 +57,14 @@ interface ProjectGraphPanelProps {
   onOpenNode: (node: ProjectGraphNode) => void;
   onViewStateChange?: (state: ProjectGraphViewState) => void;
   refreshSignal?: unknown;
+  rootName?: string;
   translate: Translate;
   variant?: 'page' | 'sidebar';
+}
+
+interface OrbitHit {
+  body: ProjectGraphOrbitBody;
+  kind: 'note' | 'sun';
 }
 
 interface PointerSession {
@@ -57,14 +73,21 @@ interface PointerSession {
   lastY: number;
   moved: boolean;
   node?: ProjectGraphLayoutNode;
+  orbitHit?: OrbitHit;
   pointerId: number;
 }
 
 interface GraphPalette {
   accent: string;
   edge: string;
+  label: string;
   node: string;
   nodeMuted: string;
+}
+
+interface OrbitRocket {
+  edgePos: number;
+  t: number;
 }
 
 interface GraphRuntime {
@@ -72,16 +95,23 @@ interface GraphRuntime {
   dirty: boolean;
   height: number;
   hovered?: ProjectGraphLayoutNode;
+  hoveredOrbit?: ProjectGraphOrbitBody;
   layout: ProjectGraphLayout;
   lastFrame: number;
   layoutFrames: number;
   labels: ReadonlyMap<string, HTMLElement>;
+  mode: ProjectGraphLayoutMode;
+  orbit: ProjectGraphOrbitLayout;
+  orbitClock: number;
   palette: GraphPalette;
   particlePhase: number;
   particlesActive: boolean;
   pointer?: PointerSession;
   raf?: number;
+  rocketImage?: HTMLImageElement;
+  rockets: Map<string, OrbitRocket>;
   selected?: ProjectGraphLayoutNode;
+  selectedId: string | null;
   settings: ProjectGraphSettings;
   visible: boolean;
   wake?: () => void;
@@ -102,6 +132,7 @@ function graphPalette(): GraphPalette {
   return {
     accent: color('--color-accent-bright', '#bd6cff'),
     edge: color('--color-border-strong', '#4c4452'),
+    label: color('--color-text', '#e8e2ee'),
     node: color('--color-accent', '#9c43d7'),
     nodeMuted: color('--color-text-muted', '#a39aa8'),
   };
@@ -118,11 +149,14 @@ function nodeRadius(
 }
 
 function fitCamera(runtime: GraphRuntime, immediate = false): void {
-  const target = fitProjectGraphCamera(
-    runtime.layout.nodes,
-    runtime.width,
-    runtime.height,
-  );
+  let points: readonly { x: number; y: number }[];
+  if (runtime.mode === 'orbit') {
+    positionProjectGraphOrbit(runtime.orbit, runtime.orbitClock, reducedMotion());
+    points = runtime.orbit.bodies;
+  } else {
+    points = runtime.layout.nodes;
+  }
+  const target = fitProjectGraphCamera(points, runtime.width, runtime.height);
   Object.assign(runtime.camera, target);
   if (immediate || reducedMotion()) {
     runtime.camera.x = target.targetX;
@@ -348,6 +382,228 @@ function drawGraph(
   }
 }
 
+// ---- Orbit (solar system) mode ----
+
+// Laps per second a rocket travels along one connection before hopping to the
+// next connection of its system.
+const ROCKET_LAP_SPEED = 0.4;
+const ROCKET_SIZE = 22;
+const ROCKET_BUDGET = 160;
+
+function setupCanvas(
+  canvas: HTMLCanvasElement,
+  runtime: GraphRuntime,
+): CanvasRenderingContext2D | null {
+  const context = canvas.getContext('2d');
+  if (!context) {
+    return null;
+  }
+  const ratio = Math.min(2, Math.max(1, window.devicePixelRatio || 1));
+  const pixelWidth = Math.max(1, Math.round(runtime.width * ratio));
+  const pixelHeight = Math.max(1, Math.round(runtime.height * ratio));
+  if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+    canvas.width = pixelWidth;
+    canvas.height = pixelHeight;
+  }
+  context.setTransform(ratio, 0, 0, ratio, 0, 0);
+  context.clearRect(0, 0, runtime.width, runtime.height);
+  return context;
+}
+
+function orbitBodyToGraphNode(body: ProjectGraphOrbitBody): ProjectGraphNode {
+  return {
+    connectionCount: body.connectionCount,
+    name: body.name,
+    nodeId: body.id,
+    path: body.path,
+  };
+}
+
+function hitOrbitBody(
+  runtime: GraphRuntime,
+  point: { x: number; y: number },
+): OrbitHit | undefined {
+  const { camera, width, height, orbit } = runtime;
+  for (let index = orbit.notes.length - 1; index >= 0; index -= 1) {
+    const body = orbit.notes[index]!;
+    const screen = projectGraphWorldToScreen(body, camera, width, height);
+    const radius = Math.max(9, body.radius * camera.zoom + 4);
+    if (Math.hypot(point.x - screen.x, point.y - screen.y) <= radius) {
+      return { body, kind: 'note' };
+    }
+  }
+  for (let index = orbit.suns.length - 1; index >= 0; index -= 1) {
+    const body = orbit.suns[index]!;
+    const screen = projectGraphWorldToScreen(body, camera, width, height);
+    const radius = Math.max(12, body.radius * camera.zoom);
+    if (Math.hypot(point.x - screen.x, point.y - screen.y) <= radius) {
+      return { body, kind: 'sun' };
+    }
+  }
+  return undefined;
+}
+
+function advanceRockets(runtime: GraphRuntime, elapsed: number): void {
+  for (const system of runtime.orbit.systems) {
+    const rocket = runtime.rockets.get(system.sun.id);
+    if (!rocket || system.edgeIndices.length === 0) {
+      continue;
+    }
+    rocket.t += ROCKET_LAP_SPEED * elapsed;
+    while (rocket.t >= 1) {
+      rocket.t -= 1;
+      rocket.edgePos = (rocket.edgePos + 1) % system.edgeIndices.length;
+    }
+  }
+}
+
+function drawOrbit(canvas: HTMLCanvasElement, runtime: GraphRuntime): void {
+  const context = setupCanvas(canvas, runtime);
+  if (!context) {
+    return;
+  }
+  const { camera, width, height, orbit, palette } = runtime;
+  const { zoom } = camera;
+
+  // Orbit mode paints its own labels on the canvas; keep the DOM labels hidden.
+  for (const label of runtime.labels.values()) {
+    label.hidden = true;
+  }
+
+  const onScreen = (point: { x: number; y: number }, margin: number) =>
+    point.x >= -margin &&
+    point.x <= width + margin &&
+    point.y >= -margin &&
+    point.y <= height + margin;
+
+  // Connections between notes (faint).
+  context.lineCap = 'round';
+  context.strokeStyle = palette.edge;
+  for (const edge of orbit.edges) {
+    const source = projectGraphWorldToScreen(edge.source, camera, width, height);
+    const target = projectGraphWorldToScreen(edge.target, camera, width, height);
+    if (
+      Math.max(source.x, target.x) < -20 ||
+      Math.min(source.x, target.x) > width + 20 ||
+      Math.max(source.y, target.y) < -20 ||
+      Math.min(source.y, target.y) > height + 20
+    ) {
+      continue;
+    }
+    context.globalAlpha = Math.min(0.5, 0.16 + edge.weight * 0.06);
+    context.lineWidth =
+      Math.min(2, 0.6 + Math.log2(edge.weight + 1) * 0.35) *
+      runtime.settings.edgeScale;
+    context.beginPath();
+    context.moveTo(source.x, source.y);
+    context.lineTo(target.x, target.y);
+    context.stroke();
+  }
+  context.globalAlpha = 1;
+
+  // Suns (folders): glow + core + label.
+  context.textAlign = 'center';
+  context.textBaseline = 'top';
+  for (const sun of orbit.suns) {
+    const screen = projectGraphWorldToScreen(sun, camera, width, height);
+    const radius = Math.max(3, sun.radius * zoom);
+    if (!onScreen(screen, radius + 120)) {
+      continue;
+    }
+    const glow = context.createRadialGradient(
+      screen.x,
+      screen.y,
+      radius * 0.3,
+      screen.x,
+      screen.y,
+      radius * 2.6,
+    );
+    glow.addColorStop(0, palette.accent);
+    glow.addColorStop(1, 'transparent');
+    context.globalAlpha = 0.22;
+    context.fillStyle = glow;
+    context.beginPath();
+    context.arc(screen.x, screen.y, radius * 2.6, 0, Math.PI * 2);
+    context.fill();
+    context.globalAlpha = 1;
+    context.fillStyle = palette.node;
+    context.beginPath();
+    context.arc(screen.x, screen.y, radius, 0, Math.PI * 2);
+    context.fill();
+
+    context.font = '600 12px system-ui, -apple-system, sans-serif';
+    context.fillStyle = palette.label;
+    context.fillText(sun.name, screen.x, screen.y + radius + 5, 180);
+  }
+
+  // Notes orbiting their sun.
+  context.font = '11px system-ui, -apple-system, sans-serif';
+  for (const note of orbit.notes) {
+    const screen = projectGraphWorldToScreen(note, camera, width, height);
+    const radius = Math.max(2.6, Math.min(9, note.radius * zoom));
+    if (!onScreen(screen, radius + 90)) {
+      continue;
+    }
+    const highlighted =
+      runtime.hoveredOrbit?.id === note.id || runtime.selectedId === note.id;
+    context.fillStyle = highlighted
+      ? palette.accent
+      : note.connectionCount > 0
+        ? palette.node
+        : palette.nodeMuted;
+    context.beginPath();
+    context.arc(screen.x, screen.y, radius, 0, Math.PI * 2);
+    context.fill();
+    if (highlighted || zoom >= runtime.settings.labelZoom) {
+      context.fillStyle = palette.label;
+      context.fillText(note.name, screen.x, screen.y + radius + 4, 160);
+    }
+  }
+
+  // One rocket per connected system, flying along that system's connections.
+  // The twemoji SVG only carries a viewBox, so its naturalWidth is 0 in
+  // Chromium; drawImage with explicit dimensions still renders it, so the
+  // guard is only "finished loading" (wrapped defensively in case the asset
+  // failed to load).
+  const rocket = runtime.rocketImage;
+  if (rocket && rocket.complete) {
+    let drawn = 0;
+    const size = Math.max(14, ROCKET_SIZE * Math.min(1.5, zoom));
+    try {
+      for (const system of orbit.systems) {
+        if (drawn >= ROCKET_BUDGET) {
+          break;
+        }
+        const state = runtime.rockets.get(system.sun.id);
+        if (!state) {
+          continue;
+        }
+        const edge = orbit.edges[system.edgeIndices[state.edgePos]!];
+        if (!edge) {
+          continue;
+        }
+        const source = projectGraphWorldToScreen(edge.source, camera, width, height);
+        const target = projectGraphWorldToScreen(edge.target, camera, width, height);
+        const x = source.x + (target.x - source.x) * state.t;
+        const y = source.y + (target.y - source.y) * state.t;
+        if (!onScreen({ x, y }, size)) {
+          continue;
+        }
+        const angle = Math.atan2(target.y - source.y, target.x - source.x);
+        context.save();
+        context.translate(x, y);
+        // Twemoji rocket points to the upper-right; rotate so its nose leads.
+        context.rotate(angle + Math.PI / 4);
+        context.drawImage(rocket, -size / 2, -size / 2, size, size);
+        context.restore();
+        drawn += 1;
+      }
+    } catch {
+      // A broken rocket asset should never break the whole frame.
+    }
+  }
+}
+
 export function ProjectGraphPanel({
   controller,
   initialViewState,
@@ -357,6 +613,7 @@ export function ProjectGraphPanel({
   onOpenNode,
   onViewStateChange,
   refreshSignal,
+  rootName,
   translate,
   variant = 'sidebar',
 }: ProjectGraphPanelProps) {
@@ -375,13 +632,89 @@ export function ProjectGraphPanel({
     controller.getSnapshot,
   );
   const fitRef = useRef<() => void>(() => undefined);
+  const rocketImageRef = useRef<HTMLImageElement | undefined>(undefined);
+  const onOpenSystemRef = useRef<
+    ((sun: ProjectGraphOrbitBody, x: number, y: number) => void) | undefined
+  >(undefined);
+  const [folderPopup, setFolderPopup] = useState<{
+    name: string;
+    notes: readonly ProjectGraphNode[];
+    subfolders: readonly { id: string; name: string }[];
+    x: number;
+    y: number;
+  } | null>(null);
   const selectedPath = graphState.graph.nodes.find(
     ({ nodeId }) => nodeId === graphState.selectedNodeId,
   )?.path;
+  const surfaceName =
+    graphState.layoutMode === 'orbit'
+      ? translate('graph.orbitTitle')
+      : translate('rail.graph');
 
   useLayoutEffect(() => {
     controller.restoreView(initialViewState);
   }, [controller, initialViewState]);
+
+  useEffect(() => {
+    const image = new Image();
+    image.src = rocketIcon;
+    image.decoding = 'async';
+    image.onload = () => runtimeRef.current?.wake?.();
+    rocketImageRef.current = image;
+  }, []);
+
+  useEffect(() => {
+    onOpenSystemRef.current = (sun, x, y) => {
+      const orbit = runtimeRef.current?.orbit;
+      if (!orbit) {
+        return;
+      }
+      const resolve = (id: string) => orbit.byId.get(id);
+      setFolderPopup({
+        name: sun.name,
+        notes: sun.memberNoteIds
+          .map(resolve)
+          .filter((body): body is ProjectGraphOrbitBody => Boolean(body))
+          .map(orbitBodyToGraphNode),
+        subfolders: sun.childSunIds
+          .map(resolve)
+          .filter((body): body is ProjectGraphOrbitBody => Boolean(body))
+          .map((body) => ({ id: body.id, name: body.name })),
+        x,
+        y,
+      });
+    };
+  }, []);
+
+  const focusOrbitBody = useCallback((bodyId: string) => {
+    const runtime = runtimeRef.current;
+    const body = runtime?.orbit.byId.get(bodyId);
+    if (!runtime || !body) {
+      return;
+    }
+    runtime.camera.targetX = body.x;
+    runtime.camera.targetY = body.y;
+    runtime.camera.targetZoom = clampProjectGraphZoom(
+      Math.max(runtime.camera.targetZoom, 1.1),
+    );
+    runtime.camera.vx = 0;
+    runtime.camera.vy = 0;
+    setFolderPopup(null);
+    runtime.wake?.();
+  }, []);
+
+  const folderPopupOpenRef = useRef(false);
+  useEffect(() => {
+    folderPopupOpenRef.current = folderPopup !== null;
+  }, [folderPopup]);
+
+  // Close the folder popup when the graph reloads (mode changes close it too).
+  useEffect(() => {
+    if (!folderPopupOpenRef.current) {
+      return;
+    }
+    setFolderPopup(null);
+  }, [graphState.graph]);
 
   useEffect(() => {
     onOpenNodeRef.current = onOpenNode;
@@ -425,6 +758,14 @@ export function ProjectGraphPanel({
     scheduleViewState();
   }, [controller, scheduleViewState]);
 
+  const changeLayoutMode = useCallback(
+    (mode: ProjectGraphLayoutMode) => {
+      controller.setLayoutMode(mode);
+      scheduleViewState();
+    },
+    [controller, scheduleViewState],
+  );
+
   useEffect(
     () => () => {
       if (settingsPublishFrameRef.current !== undefined) {
@@ -441,12 +782,25 @@ export function ProjectGraphPanel({
     if (!runtime) {
       return;
     }
+    runtime.selectedId = graphState.selectedNodeId;
     runtime.selected = runtime.layout.nodes.find(
       ({ nodeId }) => nodeId === graphState.selectedNodeId,
     );
     runtime.dirty = true;
     runtime.wake?.();
   }, [graphState.selectedNodeId]);
+
+  useEffect(() => {
+    const runtime = runtimeRef.current;
+    if (!runtime || runtime.mode === graphState.layoutMode) {
+      return;
+    }
+    runtime.mode = graphState.layoutMode;
+    setFolderPopup(null);
+    fitRef.current();
+    runtime.dirty = true;
+    runtime.wake?.();
+  }, [graphState.layoutMode]);
 
   useEffect(() => {
     const runtime = runtimeRef.current;
@@ -486,6 +840,11 @@ export function ProjectGraphPanel({
       return;
     }
     const layout = graphState.layout;
+    const orbit = buildProjectGraphOrbit(graphState.graph, { rootName });
+    const rockets = new Map<string, OrbitRocket>();
+    orbit.systems.forEach((system, index) => {
+      rockets.set(system.sun.id, { edgePos: 0, t: (index * 0.37) % 1 });
+    });
     const runtime: GraphRuntime = {
       camera: controller.camera,
       dirty: true,
@@ -494,9 +853,15 @@ export function ProjectGraphPanel({
       lastFrame: performance.now(),
       layoutFrames: 0,
       labels: new Map(labelRefs.current),
+      mode: controller.getLayoutMode(),
+      orbit,
+      orbitClock: 0,
       palette: graphPalette(),
       particlePhase: 0,
       particlesActive: false,
+      rocketImage: rocketImageRef.current,
+      rockets,
+      selectedId: controller.getSelectedNodeId(),
       settings: controller.getSnapshot().settings,
       visible: true,
       width: canvas.clientWidth,
@@ -506,7 +871,7 @@ export function ProjectGraphPanel({
         ({ nodeId }) => nodeId === controller.getSelectedNodeId(),
       );
     runtimeRef.current = runtime;
-    if (!controller.hasCamera() && layout.nodes.length > 0) {
+    if (!controller.hasCamera() && graphState.graph.nodes.length > 0) {
       fitCamera(runtime, true);
       controller.markCameraReady();
       publishViewState();
@@ -530,7 +895,17 @@ export function ProjectGraphPanel({
       const reduced = reducedMotion();
       let moving = false;
 
-      if (runtime.layoutFrames < 720 && runtime.layout.nodes.length > 1) {
+      if (runtime.mode === 'orbit') {
+        if (!reduced) {
+          runtime.orbitClock = (runtime.orbitClock + elapsed) % 100_000;
+          advanceRockets(runtime, elapsed);
+          moving = true;
+        }
+        positionProjectGraphOrbit(runtime.orbit, runtime.orbitClock, reduced);
+      } else if (
+        runtime.layoutFrames < 720 &&
+        runtime.layout.nodes.length > 1
+      ) {
         const energy = stepProjectGraphLayout(
           runtime.layout,
           elapsed,
@@ -569,16 +944,22 @@ export function ProjectGraphPanel({
 
       // Link particles keep the loop alive on their own; when the setting is
       // off (or the user prefers reduced motion) the canvas still sleeps once
-      // the layout and camera settle.
+      // the layout and camera settle. Orbit mode animates on its own instead.
       runtime.particlesActive =
-        runtime.settings.linkParticles > 0 && !reduced;
+        runtime.mode === 'force' &&
+        runtime.settings.linkParticles > 0 &&
+        !reduced;
       if (runtime.particlesActive) {
         runtime.particlePhase = (runtime.particlePhase + elapsed) % 1_000;
         moving = true;
       }
 
       if (runtime.dirty || moving) {
-        drawGraph(canvas, runtime);
+        if (runtime.mode === 'orbit') {
+          drawOrbit(canvas, runtime);
+        } else {
+          drawGraph(canvas, runtime);
+        }
         runtime.dirty = false;
       }
       if (moving) {
@@ -638,10 +1019,30 @@ export function ProjectGraphPanel({
         return;
       }
       const point = pointInCanvas(canvas, event.clientX, event.clientY);
-      const node = hitGraphNode(runtime, point);
       canvas.setPointerCapture(event.pointerId);
       runtime.camera.vx = 0;
       runtime.camera.vy = 0;
+
+      if (runtime.mode === 'orbit') {
+        const orbitHit = hitOrbitBody(runtime, point);
+        runtime.pointer = {
+          lastTime: performance.now(),
+          lastX: point.x,
+          lastY: point.y,
+          moved: false,
+          orbitHit,
+          pointerId: event.pointerId,
+        };
+        if (orbitHit?.kind === 'note') {
+          runtime.selectedId = orbitHit.body.id;
+          controller.setSelectedNodeId(orbitHit.body.id);
+        }
+        canvas.dataset.dragging = 'camera';
+        wake();
+        return;
+      }
+
+      const node = hitGraphNode(runtime, point);
       runtime.pointer = {
         lastTime: performance.now(),
         lastX: point.x,
@@ -653,6 +1054,7 @@ export function ProjectGraphPanel({
       if (node) {
         node.pinned = true;
         runtime.selected = node;
+        runtime.selectedId = node.nodeId;
         controller.setSelectedNodeId(node.nodeId);
       }
       canvas.dataset.dragging = node ? 'node' : 'camera';
@@ -663,6 +1065,15 @@ export function ProjectGraphPanel({
       const point = pointInCanvas(canvas, event.clientX, event.clientY);
       const pointer = runtime.pointer;
       if (!pointer || pointer.pointerId !== event.pointerId) {
+        if (runtime.mode === 'orbit') {
+          const orbitHit = hitOrbitBody(runtime, point);
+          if (orbitHit?.body !== runtime.hoveredOrbit) {
+            runtime.hoveredOrbit = orbitHit?.body;
+            canvas.dataset.hovering = orbitHit ? 'true' : 'false';
+            wake();
+          }
+          return;
+        }
         const hovered = hitGraphNode(runtime, point);
         if (hovered !== runtime.hovered) {
           runtime.hovered = hovered;
@@ -711,7 +1122,20 @@ export function ProjectGraphPanel({
       if (!pointer || pointer.pointerId !== event.pointerId) {
         return;
       }
-      if (pointer.node) {
+      if (runtime.mode === 'orbit' && !pointer.moved && pointer.orbitHit) {
+        const { body, kind } = pointer.orbitHit;
+        if (kind === 'note') {
+          onOpenNodeRef.current(orbitBodyToGraphNode(body));
+        } else {
+          const screen = projectGraphWorldToScreen(
+            body,
+            runtime.camera,
+            runtime.width,
+            runtime.height,
+          );
+          onOpenSystemRef.current?.(body, screen.x, screen.y);
+        }
+      } else if (pointer.node) {
         pointer.node.pinned = false;
         if (!pointer.moved) {
           onOpenNodeRef.current(pointer.node);
@@ -764,7 +1188,11 @@ export function ProjectGraphPanel({
 
     const handleDoubleClick = (event: MouseEvent) => {
       const point = pointInCanvas(canvas, event.clientX, event.clientY);
-      if (!hitGraphNode(runtime, point)) {
+      const hit =
+        runtime.mode === 'orbit'
+          ? hitOrbitBody(runtime, point)
+          : hitGraphNode(runtime, point);
+      if (!hit) {
         fitRef.current();
       }
     };
@@ -799,16 +1227,29 @@ export function ProjectGraphPanel({
         runtimeRef.current = undefined;
       }
     };
-  }, [controller, graphState.layout, publishViewState]);
+  }, [controller, graphState.graph, graphState.layout, publishViewState, rootName]);
 
   function handleKeyboard(event: KeyboardEvent<HTMLCanvasElement>): void {
     const runtime = runtimeRef.current;
-    if (!runtime || runtime.layout.nodes.length === 0) {
+    if (!runtime) {
       return;
     }
     if (event.key === 'Home') {
       event.preventDefault();
       fitRef.current();
+      return;
+    }
+    if (runtime.mode === 'orbit') {
+      if (event.key === 'Enter' && runtime.selectedId) {
+        const note = runtime.orbit.byId.get(runtime.selectedId);
+        if (note && note.kind === 'note') {
+          event.preventDefault();
+          onOpenNode(orbitBodyToGraphNode(note));
+        }
+      }
+      return;
+    }
+    if (runtime.layout.nodes.length === 0) {
       return;
     }
     if (event.key === 'Enter' && runtime.selected) {
@@ -841,12 +1282,12 @@ export function ProjectGraphPanel({
   return (
     <section
       aria-busy={graphState.refreshing}
-      aria-label={translate('rail.graph')}
+      aria-label={surfaceName}
       className={`${variant === 'sidebar' ? 'home__sidebar ' : ''}project-graph`}
       data-variant={variant}
     >
       <header className="project-graph__header">
-        <h2>{translate('rail.graph')}</h2>
+        <h2>{surfaceName}</h2>
         <div className="project-graph__actions">
           {onOpenInTab ? (
             <button
@@ -922,10 +1363,79 @@ export function ProjectGraphPanel({
           {!graphState.refreshing && graphState.graph.nodes.length === 0 ? (
             <p className="project-graph__empty">{translate('graph.empty')}</p>
           ) : null}
+          {folderPopup ? (
+            <>
+              <button
+                aria-label={translate('graph.closeFolder')}
+                className="project-graph__folder-backdrop"
+                onClick={() => setFolderPopup(null)}
+                tabIndex={-1}
+                type="button"
+              />
+              <div
+                aria-label={folderPopup.name}
+                className="project-graph__folder"
+                onKeyDown={(event) => {
+                  if (event.key === 'Escape') {
+                    event.preventDefault();
+                    setFolderPopup(null);
+                  }
+                }}
+                role="dialog"
+                style={{
+                  left: `${folderPopup.x}px`,
+                  top: `${folderPopup.y}px`,
+                }}
+              >
+                <header className="project-graph__folder-header">
+                  <h3>
+                    <TwemojiText text={folderPopup.name} />
+                  </h3>
+                  <span>{folderPopup.notes.length + folderPopup.subfolders.length}</span>
+                </header>
+                <ul className="project-graph__folder-list">
+                  {folderPopup.subfolders.map((folder) => (
+                    <li key={folder.id}>
+                      <button
+                        className="project-graph__folder-item"
+                        data-kind="folder"
+                        onClick={() => focusOrbitBody(folder.id)}
+                        type="button"
+                      >
+                        <TwemojiText text={`📁 ${folder.name}`} />
+                      </button>
+                    </li>
+                  ))}
+                  {folderPopup.notes.map((note) => (
+                    <li key={note.nodeId}>
+                      <button
+                        className="project-graph__folder-item"
+                        data-kind="note"
+                        onClick={() => {
+                          setFolderPopup(null);
+                          onOpenNode(note);
+                        }}
+                        type="button"
+                      >
+                        <TwemojiText text={note.name} />
+                      </button>
+                    </li>
+                  ))}
+                  {folderPopup.notes.length + folderPopup.subfolders.length === 0 ? (
+                    <li className="project-graph__folder-empty">
+                      {translate('graph.folderEmpty')}
+                    </li>
+                  ) : null}
+                </ul>
+              </div>
+            </>
+          ) : null}
         </div>
         {variant === 'page' && settingsOpen ? (
           <ProjectGraphSettingsPanel
+            layoutMode={graphState.layoutMode}
             onChange={changeSetting}
+            onChangeMode={changeLayoutMode}
             onClose={closeSettings}
             onFit={() => fitRef.current()}
             onReset={resetSettings}
