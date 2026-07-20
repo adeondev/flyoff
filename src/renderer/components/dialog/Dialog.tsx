@@ -8,6 +8,7 @@ import {
 import { createPortal } from 'react-dom';
 
 import { getTooltipTargetProps } from '../tooltip';
+import { TwemojiText } from '../twemoji';
 import { acquireModalRootLock, restoreModalFocus } from './modal-root-lock';
 
 export interface DialogProps {
@@ -116,8 +117,14 @@ export function Dialog({
       >
         <header className="flyoff-dialog__header">
           <div className="flyoff-dialog__heading">
-            <h2 id={titleId}>{title}</h2>
-            {description ? <p id={descriptionId}>{description}</p> : null}
+            <h2 id={titleId}>
+              <TwemojiText text={title} />
+            </h2>
+            {description ? (
+              <p id={descriptionId}>
+                <TwemojiText text={description} />
+              </p>
+            ) : null}
           </div>
           <button
             aria-label={closeLabel}

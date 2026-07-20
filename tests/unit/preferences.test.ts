@@ -45,7 +45,10 @@ describe('Flyoff preferences', () => {
     expect(normalized.editor.fontSize).toBe(24);
     expect(normalized.editor.lineHeight).toBe(1.3);
     expect(normalized.spellcheck.languages).toEqual(['pt-BR']);
-    expect(normalized.version).toBe(5);
+    expect(normalized.version).toBe(7);
+    expect(normalized.editor.emojiRecent).toEqual([]);
+    expect(normalized.editor.emojiSkinTone).toBe(0);
+    expect(normalized.appearance.accentColor).toBeNull();
     expect(normalized.editor.chromeLayout).toBe('focus');
     expect(normalized.editor.toolbarCollapsed).toBe(false);
     expect(normalized.general.hardwareAcceleration).toBe(true);
@@ -65,6 +68,7 @@ describe('Flyoff preferences', () => {
       accessibility: undefined,
       appearance: {
         ...createDefaultFlyoffPreferences().appearance,
+        accentColor: undefined,
         activePaneIndicator: undefined,
       },
       editor: {
@@ -76,7 +80,10 @@ describe('Flyoff preferences', () => {
 
     const migrated = normalizeFlyoffPreferences(previous);
 
-    expect(migrated.version).toBe(5);
+    expect(migrated.version).toBe(7);
+    expect(migrated.editor.emojiRecent).toEqual([]);
+    expect(migrated.editor.emojiSkinTone).toBe(0);
+    expect(migrated.appearance.accentColor).toBeNull();
     expect(migrated.general.hardwareAcceleration).toBe(true);
     expect(migrated.appearance.activePaneIndicator).toBe('subtle');
     expect(migrated.editor.highlightActiveLine).toBe(true);
@@ -87,6 +94,48 @@ describe('Flyoff preferences', () => {
       focusIndicator: 'standard',
       reduceTransparency: false,
     });
+  });
+
+  it('canonicalizes valid accent colors and rejects unsafe values', () => {
+    expect(
+      normalizeFlyoffPreferences({
+        appearance: { accentColor: '#8f4fc4' },
+      }).appearance.accentColor,
+    ).toBe('#8F4FC4');
+    expect(
+      normalizeFlyoffPreferences({
+        appearance: { accentColor: '#3faB8c' },
+      }).appearance.accentColor,
+    ).toBeNull();
+    expect(
+      normalizeFlyoffPreferences({
+        appearance: { accentColor: '#1234' },
+      }).appearance.accentColor,
+    ).toBeNull();
+    expect(
+      normalizeFlyoffPreferences({
+        appearance: { accentColor: 'rgb(1 2 3)' },
+      }).appearance.accentColor,
+    ).toBeNull();
+  });
+
+  it('normalizes the offline emoji picker state', () => {
+    const recent = Array.from({ length: 30 }, (_, index) =>
+      index % 2 === 0 ? '🚀' : '👋🏽',
+    );
+    const normalized = normalizeFlyoffPreferences({
+      editor: {
+        emojiRecent: ['texto', '', ...recent, '👨‍👩‍👧‍👦'],
+        emojiSkinTone: 9,
+      },
+    });
+
+    expect(normalized.editor.emojiRecent).toEqual([
+      '🚀',
+      '👋🏽',
+      '👨‍👩‍👧‍👦',
+    ]);
+    expect(normalized.editor.emojiSkinTone).toBe(0);
   });
 
   it('persists atomically and recovers from corrupt or oversized files', () => {

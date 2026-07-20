@@ -387,12 +387,14 @@ describe('Flyoff tooltip', () => {
     render(
       <MarkdownToolbar
         onAction={vi.fn()}
+        onEmoji={vi.fn()}
+        onEmojiPickerClose={vi.fn()}
         translate={(key) => key}
       />,
     );
 
     const buttons = screen.getAllByRole('button');
-    expect(buttons).toHaveLength(11);
+    expect(buttons).toHaveLength(12);
     for (const button of buttons) {
       expect(button.textContent).toBe('');
       expect(button.getAttribute('aria-label')).toBeTruthy();
@@ -401,5 +403,43 @@ describe('Flyoff tooltip', () => {
       );
       expect(button.hasAttribute('title')).toBe(false);
     }
+  });
+
+  it('searches and inserts offline emoji without closing the picker', () => {
+    const onEmoji = vi.fn();
+    render(
+      <MarkdownToolbar
+        onAction={vi.fn()}
+        onEmoji={onEmoji}
+        onEmojiPickerClose={vi.fn()}
+        translate={(key) => key}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'toolbar.emoji' }));
+    const dialog = screen.getByRole('dialog', {
+      name: 'toolbar.emojiPicker',
+    });
+    const grid = screen.getByRole('grid');
+    const mountedAtOpen = screen.getAllByRole('gridcell').length;
+    expect(
+      Number(grid.getAttribute('aria-rowcount')) *
+        Number(grid.getAttribute('aria-colcount')),
+    ).toBeGreaterThan(mountedAtOpen);
+    expect(mountedAtOpen).toBeLessThan(100);
+    fireEvent.click(
+      screen.getByRole('tab', { name: /people|pessoas/i }),
+    );
+    expect(screen.getAllByRole('gridcell').length).toBeLessThan(100);
+    fireEvent.change(
+      screen.getByRole('searchbox', { name: 'toolbar.emojiSearch' }),
+      { target: { value: 'rocket' } },
+    );
+    fireEvent.click(screen.getByRole('gridcell', { name: /rocket/i }));
+
+    expect(onEmoji).toHaveBeenCalledWith('🚀');
+    expect(dialog.isConnected).toBe(true);
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(dialog.isConnected).toBe(false);
   });
 });

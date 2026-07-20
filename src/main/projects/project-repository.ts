@@ -3,6 +3,8 @@ import {
   lstat,
   mkdir,
   open as openFile,
+  readdir,
+  readFile,
   rename,
   rm,
   writeFile,
@@ -44,6 +46,8 @@ import { ProjectFileSystem } from './project-filesystem';
 import { ProjectLinkMaintenanceStore } from './project-link-maintenance';
 import type { ProjectFileIdentity } from './project-filesystem';
 import {
+  canContainProjectChildren,
+  effectiveParentId,
   toProjectTreeNode,
   type ContentIndexEntry,
   type ContentIndexPageEntry,
@@ -74,6 +78,99 @@ export interface ProjectRepositoryOptions {
   createId?: () => string;
   now?: () => Date;
   encryptedNoteCrypto?: EncryptedNoteCryptoDependencies;
+}
+
+const TRASH_TRANSACTION_DIRECTORY = 'trash-transactions';
+const TRASH_TRANSACTION_MANIFEST = 'manifest.json';
+const TRASH_TRANSACTION_MANIFEST_MAX_BYTES = 32 * 1024 * 1024;
+
+interface TrashTransactionItem {
+  entry: ContentIndexEntry;
+  entries: readonly ContentIndexEntry[];
+  stagedName: string;
+}
+
+interface TrashTransactionManifest {
+  version: 1;
+  items: readonly TrashTransactionItem[];
+}
+
+function parseTrashTransactionManifest(
+  value: unknown,
+): TrashTransactionManifest | undefined {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    (value as { version?: unknown }).version !== 1 ||
+    !Array.isArray((value as { items?: unknown }).items)
+  ) {
+    return undefined;
+  }
+  const items = (value as { items: unknown[] }).items;
+  if (items.length === 0 || items.length > 500) {
+    return undefined;
+  }
+  const parsed: TrashTransactionItem[] = [];
+  const parseEntry = (value: unknown): ContentIndexEntry | undefined => {
+    if (typeof value !== 'object' || value === null) {
+      return undefined;
+    }
+    const candidate = value as Partial<ContentIndexEntry>;
+    if (
+      (candidate.kind !== 'page' && candidate.kind !== 'folder') ||
+      typeof candidate.nodeId !== 'string' ||
+      typeof candidate.name !== 'string' ||
+      typeof candidate.locator !== 'string' ||
+      (candidate.kind === 'page' && typeof candidate.pageType !== 'string') ||
+      !(
+        candidate.parentId === null ||
+        typeof candidate.parentId === 'string'
+      )
+    ) {
+      return undefined;
+    }
+    return { ...candidate } as ContentIndexEntry;
+  };
+  for (const item of items) {
+    if (typeof item !== 'object' || item === null) {
+      return undefined;
+    }
+    const { entries, entry, stagedName } = item as {
+      entries?: unknown;
+      entry?: unknown;
+      stagedName?: unknown;
+    };
+    if (
+      typeof stagedName !== 'string' ||
+      !/^\d{1,3}$/.test(stagedName) ||
+      !entry
+    ) {
+      return undefined;
+    }
+    const rootEntry = parseEntry(entry);
+    const parsedEntries =
+      entries === undefined
+        ? rootEntry
+          ? [rootEntry]
+          : undefined
+        : Array.isArray(entries) && entries.length > 0 && entries.length <= 250_000
+          ? entries.map(parseEntry)
+          : undefined;
+    if (
+      !rootEntry ||
+      !parsedEntries ||
+      parsedEntries.some((candidate) => !candidate) ||
+      !parsedEntries.some((candidate) => candidate?.nodeId === rootEntry.nodeId)
+    ) {
+      return undefined;
+    }
+    parsed.push({
+      entry: rootEntry,
+      entries: parsedEntries as ContentIndexEntry[],
+      stagedName,
+    });
+  }
+  return { version: 1, items: parsed };
 }
 
 function revisionFor(content: Uint8Array): string {
@@ -305,11 +402,97 @@ export class ProjectRepository {
       { ...options, createId: storage.createId },
     );
 
+    await repository.recoverTrashTransactions();
+
     if (!storage.index) {
       await repository.rebuildIndex();
     }
 
     return repository;
+  }
+
+  private async recoverTrashTransactions(): Promise<void> {
+    const transactionsRoot = path.join(
+      this.rootPath,
+      PROJECT_METADATA_DIRECTORY,
+      TRASH_TRANSACTION_DIRECTORY,
+    );
+    const directories = await readdir(transactionsRoot, {
+      withFileTypes: true,
+    }).catch(() => []);
+
+    for (const directory of directories) {
+      if (!directory.isDirectory() || directory.isSymbolicLink()) {
+        continue;
+      }
+      const transactionRoot = path.join(transactionsRoot, directory.name);
+      const manifestPath = path.join(
+        transactionRoot,
+        TRASH_TRANSACTION_MANIFEST,
+      );
+      const bytes = await readFile(manifestPath).catch(() => undefined);
+      if (
+        !bytes ||
+        bytes.byteLength > TRASH_TRANSACTION_MANIFEST_MAX_BYTES
+      ) {
+        continue;
+      }
+      let manifest: TrashTransactionManifest | undefined;
+      try {
+        manifest = parseTrashTransactionManifest(
+          JSON.parse(bytes.toString('utf8')),
+        );
+      } catch {
+        manifest = undefined;
+      }
+      if (!manifest) {
+        continue;
+      }
+
+      let indexChanged = false;
+      for (const item of manifest.items) {
+        const parts = item.entry.locator.split('/');
+        if (
+          parts.length === 0 ||
+          parts.some((part) => !part || part === '.' || part === '..')
+        ) {
+          throw new ProjectOperationError(
+            'unsafe-path',
+            'An incomplete trash transaction contains an unsafe path.',
+          );
+        }
+        const originalPath = path.join(this.rootPath, ...parts);
+        const stagedPath = path.join(transactionRoot, item.stagedName);
+        if (
+          (await this.fileSystem.pathExists(stagedPath)) &&
+          !(await this.fileSystem.pathExists(originalPath))
+        ) {
+          await mkdir(path.dirname(originalPath), { recursive: true });
+          await rename(stagedPath, originalPath);
+        }
+        for (const entry of item.entries) {
+          if (
+            !this.index.entries.some(
+              ({ nodeId }) => nodeId === entry.nodeId,
+            )
+          ) {
+            this.index.entries.push({ ...entry });
+            indexChanged = true;
+          }
+        }
+      }
+      if (indexChanged) {
+        for (const parentId of new Set(
+          manifest.items.flatMap(({ entries }) =>
+            entries.map(({ parentId }) => parentId),
+          ),
+        )) {
+          this.normalizeBranchOrder(parentId);
+        }
+        await this.persistIndex();
+      }
+      await rm(transactionRoot, { recursive: true, force: true });
+    }
   }
 
   get summary(): ProjectSummary {
@@ -324,15 +507,111 @@ export class ProjectRepository {
   async getNode(nodeId: string): Promise<ProjectTreeNode> {
     const entry = this.requireEntry(nodeId);
     await this.fileSystem.resolveExistingEntry(entry);
-    return toProjectTreeNode(entry);
+    return this.treeNode(entry);
   }
 
   listIndexedNodes(): readonly ProjectTreeNode[] {
-    return this.index.entries.map(toProjectTreeNode);
+    return this.index.entries.map((entry) => this.treeNode(entry));
+  }
+
+  normalizeNodeRoots(nodeIds: readonly string[]): readonly string[] {
+    const requested = new Set(nodeIds);
+    const roots: string[] = [];
+    for (const nodeId of nodeIds) {
+      if (roots.includes(nodeId)) {
+        continue;
+      }
+      let entry = this.requireEntry(nodeId);
+      const visited = new Set([entry.nodeId]);
+      let redundant = false;
+      let parentId = effectiveParentId(entry);
+      while (parentId) {
+        if (requested.has(parentId)) {
+          redundant = true;
+          break;
+        }
+        if (visited.has(parentId)) {
+          throw new ProjectOperationError(
+            'invalid-format',
+            'The project content hierarchy contains a cycle.',
+          );
+        }
+        visited.add(parentId);
+        entry = this.requireEntry(parentId);
+        parentId = effectiveParentId(entry);
+      }
+      if (!redundant) {
+        roots.push(nodeId);
+      }
+    }
+    return roots;
+  }
+
+  normalizePhysicalNodeRoots(nodeIds: readonly string[]): readonly string[] {
+    const requested = new Set(nodeIds);
+    const roots: string[] = [];
+    for (const nodeId of nodeIds) {
+      if (roots.includes(nodeId)) {
+        continue;
+      }
+      let entry = this.requireEntry(nodeId);
+      const visited = new Set([entry.nodeId]);
+      let redundant = false;
+      while (entry.parentId) {
+        if (requested.has(entry.parentId)) {
+          redundant = true;
+          break;
+        }
+        if (visited.has(entry.parentId)) {
+          throw new ProjectOperationError(
+            'invalid-format',
+            'The project storage hierarchy contains a cycle.',
+          );
+        }
+        visited.add(entry.parentId);
+        entry = this.requireEntry(entry.parentId);
+      }
+      if (!redundant) {
+        roots.push(nodeId);
+      }
+    }
+    return roots;
+  }
+
+  descendantNodeIds(nodeIds: readonly string[]): readonly string[] {
+    const roots = new Set(this.normalizePhysicalNodeRoots(nodeIds));
+    const included = new Set(roots);
+    let changed = true;
+    while (changed) {
+      changed = false;
+      for (const entry of this.index.entries) {
+        if (
+          entry.parentId &&
+          included.has(entry.parentId) &&
+          !included.has(entry.nodeId)
+        ) {
+          included.add(entry.nodeId);
+          changed = true;
+        }
+      }
+    }
+    return [...included];
   }
 
   projectRelativePath(nodeId: string): string {
     return this.requireEntry(nodeId).locator.replaceAll('\\', '/');
+  }
+
+  projectedPathForMove(nodeId: string, parentId: string | null): string {
+    const entry = this.requireEntry(nodeId);
+    const destination = this.requireContainer(parentId);
+    if (destination?.kind === 'page') {
+      return entry.locator;
+    }
+    return this.fileSystem.joinLocator(
+      destination?.locator,
+      path.posix.basename(entry.locator),
+    );
   }
 
   async resolvePath(nodeId: string | null): Promise<string> {
@@ -342,7 +621,11 @@ export class ProjectRepository {
   }
 
   async listChildren(parentId: string | null): Promise<readonly ProjectTreeNode[]> {
-    const parent = this.requireFolder(parentId);
+    const parent = this.requireContainer(parentId);
+    if (parent?.kind === 'page') {
+      await this.fileSystem.resolveExistingEntry(parent);
+      return this.childrenOf(parentId).map((entry) => this.treeNode(entry));
+    }
     await this.fileSystem.resolveParentDirectory(parent);
 
     const discovered = await this.fileSystem.scanChildren(parent);
@@ -430,7 +713,7 @@ export class ProjectRepository {
       }
     }
 
-    return this.childrenOf(parentId).map(toProjectTreeNode);
+    return this.childrenOf(parentId).map((entry) => this.treeNode(entry));
   }
 
   async createFolder(
@@ -462,7 +745,7 @@ export class ProjectRepository {
 
     if (entry.name === name) {
       await this.fileSystem.resolveExistingEntry(entry);
-      return toProjectTreeNode(entry);
+      return this.treeNode(entry);
     }
 
     const oldAbsolutePath = await this.fileSystem.resolveExistingEntry(entry);
@@ -512,13 +795,23 @@ export class ProjectRepository {
     beforeNodeId?: string | null,
   ): Promise<ProjectTreeNode> {
     const entry = this.requireEntry(nodeId);
-    const nextParent = this.requireFolder(parentId);
+    const nextParent = this.requireContainer(parentId);
+    const nextStorageParent =
+      nextParent?.kind === 'page'
+        ? this.requireFolder(entry.parentId)
+        : nextParent;
     const explicitPlacement = beforeNodeId !== undefined;
-    const originalParentId = entry.parentId;
+    const originalParentId = effectiveParentId(entry);
+    const nextDisplayParentId =
+      nextParent?.kind === 'page' ? nextParent.nodeId : undefined;
+    const nextEffectiveParentId = nextDisplayParentId ?? parentId;
 
-    if (entry.parentId === parentId && !explicitPlacement) {
+    if (
+      effectiveParentId(entry) === nextEffectiveParentId &&
+      !explicitPlacement
+    ) {
       await this.fileSystem.resolveExistingEntry(entry);
-      return toProjectTreeNode(entry);
+      return this.treeNode(entry);
     }
 
     if (beforeNodeId && beforeNodeId === nodeId) {
@@ -529,14 +822,15 @@ export class ProjectRepository {
     }
     if (beforeNodeId) {
       const reference = this.requireEntry(beforeNodeId);
-      if (reference.parentId !== parentId) {
+      if (effectiveParentId(reference) !== nextEffectiveParentId) {
         throw new ProjectOperationError(
           'invalid-operation',
-          'The requested order reference is not in the destination folder.',
+          'The requested order reference is not in the destination.',
         );
       }
     }
 
+    this.assertValidTreeDestination([entry.nodeId], nextEffectiveParentId);
     if (
       entry.kind === 'folder' &&
       nextParent &&
@@ -550,15 +844,19 @@ export class ProjectRepository {
     }
 
     const oldAbsolutePath = await this.fileSystem.resolveExistingEntry(entry);
-    const parentChanged = entry.parentId !== parentId;
+    const nextStorageParentId = nextStorageParent?.nodeId ?? null;
+    const parentChanged = entry.parentId !== nextStorageParentId;
     const nextParentPath = parentChanged
-      ? await this.fileSystem.resolveParentDirectory(nextParent)
+      ? await this.fileSystem.resolveParentDirectory(nextStorageParent)
       : path.dirname(oldAbsolutePath);
     const diskName = diskNameFor(entry);
     if (parentChanged) {
       await this.fileSystem.ensureNameAvailable(nextParentPath, diskName);
     }
-    const nextLocator = this.fileSystem.joinLocator(nextParent?.locator, diskName);
+    const nextLocator = this.fileSystem.joinLocator(
+      nextStorageParent?.locator,
+      diskName,
+    );
     const nextAbsolutePath = path.join(nextParentPath, diskName);
     const previousEntries = cloneEntries(this.index.entries);
     let renamed = false;
@@ -573,14 +871,20 @@ export class ProjectRepository {
         renamed = true;
       }
       this.replaceEntryAndDescendantLocators(entry.nodeId, {
-        parentId,
+        parentId: nextStorageParentId,
         locator: nextLocator,
       });
+      const movedEntry = this.requireEntry(nodeId);
+      if (nextDisplayParentId === undefined) {
+        delete movedEntry.displayParentId;
+      } else {
+        movedEntry.displayParentId = nextDisplayParentId;
+      }
       this.setEntrySortOrder(nodeId, undefined);
-      if (originalParentId !== parentId) {
+      if (originalParentId !== nextEffectiveParentId) {
         this.normalizeBranchOrder(originalParentId);
       }
-      this.placeEntry(nodeId, parentId, beforeNodeId);
+      this.placeEntry(nodeId, nextEffectiveParentId, beforeNodeId);
       await this.persistIndex();
       return await this.getNode(nodeId);
     } catch (error) {
@@ -595,6 +899,114 @@ export class ProjectRepository {
       await this.persistIndex().catch(() => undefined);
 
       throw normalizeProjectError(error, 'The content could not be moved.');
+    }
+  }
+
+  async moveNodes(
+    nodeIds: readonly string[],
+    parentId: string | null,
+    beforeNodeId?: string | null,
+  ): Promise<readonly ProjectTreeNode[]> {
+    const rootNodeIds = this.normalizeNodeRoots(nodeIds);
+    const entries = rootNodeIds.map((nodeId) => this.requireEntry(nodeId));
+    const destination = this.requireContainer(parentId);
+    const destinationParentId =
+      destination?.kind === 'page' ? destination.nodeId : parentId;
+    const selectedIds = new Set(rootNodeIds);
+    if (beforeNodeId && selectedIds.has(beforeNodeId)) {
+      throw new ProjectOperationError(
+        'invalid-operation',
+        'The destination reference cannot be part of the moved selection.',
+      );
+    }
+    if (beforeNodeId) {
+      const reference = this.requireEntry(beforeNodeId);
+      if (effectiveParentId(reference) !== destinationParentId) {
+        throw new ProjectOperationError(
+          'invalid-operation',
+          'The requested order reference is not in the destination.',
+        );
+      }
+    }
+    this.assertValidTreeDestination(rootNodeIds, destinationParentId);
+    for (const entry of entries) {
+      if (
+        entry.kind === 'folder' &&
+        destination &&
+        (destination.nodeId === entry.nodeId ||
+          destination.locator.startsWith(`${entry.locator}/`))
+      ) {
+        throw new ProjectOperationError(
+          'invalid-operation',
+          'A folder cannot be moved into itself or one of its descendants.',
+        );
+      }
+    }
+
+    const destinationNames =
+      destination?.kind === 'page'
+        ? new Set<string>()
+        : new Set(
+            this.index.entries
+              .filter(
+                (entry) =>
+                  entry.parentId === parentId &&
+                  !selectedIds.has(entry.nodeId),
+              )
+              .map((entry) => diskNameFor(entry).toLocaleLowerCase()),
+          );
+    for (const entry of entries) {
+      const diskName = diskNameFor(entry).toLocaleLowerCase();
+      if (
+        destination?.kind !== 'page' &&
+        entry.parentId !== parentId &&
+        destinationNames.has(diskName)
+      ) {
+        throw new ProjectOperationError(
+          'collision',
+          `The destination already contains "${diskNameFor(entry)}".`,
+        );
+      }
+      destinationNames.add(diskName);
+      await this.fileSystem.resolveExistingEntry(entry);
+    }
+
+    const originalPositions = entries.map((entry) => {
+      const siblings = sortEntries(
+        this.childrenOf(effectiveParentId(entry)),
+      );
+      const index = siblings.findIndex(
+        ({ nodeId }) => nodeId === entry.nodeId,
+      );
+      return {
+        nodeId: entry.nodeId,
+        parentId: effectiveParentId(entry),
+        beforeNodeId: siblings[index + 1]?.nodeId ?? null,
+      };
+    });
+    const moved = new Set<string>();
+
+    try {
+      for (const nodeId of rootNodeIds) {
+        await this.moveNode(nodeId, parentId, beforeNodeId);
+        moved.add(nodeId);
+      }
+      return Promise.all(rootNodeIds.map((nodeId) => this.getNode(nodeId)));
+    } catch (error) {
+      for (const original of [...originalPositions].reverse()) {
+        if (!moved.has(original.nodeId)) {
+          continue;
+        }
+        await this.moveNode(
+          original.nodeId,
+          original.parentId,
+          original.beforeNodeId,
+        ).catch(() => undefined);
+      }
+      throw normalizeProjectError(
+        error,
+        'The selected content could not be moved.',
+      );
     }
   }
 
@@ -629,6 +1041,95 @@ export class ProjectRepository {
     }
 
     return removedNodeIds;
+  }
+
+  async trashNodes(nodeIds: readonly string[]): Promise<readonly string[]> {
+    if (!this.trashItem) {
+      throw new ProjectOperationError(
+        'invalid-operation',
+        'Moving project content to the trash is not available.',
+      );
+    }
+
+    const rootNodeIds = this.normalizePhysicalNodeRoots(nodeIds);
+    const entries = rootNodeIds.map((nodeId) => this.requireEntry(nodeId));
+    const removedNodeIds = this.descendantNodeIds(rootNodeIds);
+    const resolved = await Promise.all(
+      entries.map(async (entry) => ({
+        absolutePath: await this.fileSystem.resolveExistingEntry(entry),
+        entry,
+      })),
+    );
+    const transactionRoot = path.join(
+      this.rootPath,
+      PROJECT_METADATA_DIRECTORY,
+      TRASH_TRANSACTION_DIRECTORY,
+      randomUUID(),
+    );
+    const manifest: TrashTransactionManifest = {
+      version: 1,
+      items: entries.map((entry, index) => ({
+        entry: { ...entry },
+        entries: this.index.entries
+          .filter(
+            (candidate) =>
+              candidate.nodeId === entry.nodeId ||
+              candidate.locator.startsWith(`${entry.locator}/`),
+          )
+          .map((candidate) => ({ ...candidate })),
+        stagedName: String(index),
+      })),
+    };
+    const previousEntries = cloneEntries(this.index.entries);
+    let indexPersisted = false;
+
+    await mkdir(transactionRoot, { recursive: true });
+    await writeJsonAtomically(
+      path.join(transactionRoot, TRASH_TRANSACTION_MANIFEST),
+      manifest,
+      TRASH_TRANSACTION_MANIFEST_MAX_BYTES,
+    );
+
+    try {
+      for (let index = 0; index < resolved.length; index += 1) {
+        await rename(
+          resolved[index]!.absolutePath,
+          path.join(transactionRoot, String(index)),
+        );
+      }
+      const parentIds = new Set<string | null>();
+      for (const entry of entries) {
+        parentIds.add(entry.parentId);
+        this.removeEntryAndDescendants(entry.nodeId);
+      }
+      for (const currentParentId of parentIds) {
+        this.normalizeBranchOrder(currentParentId);
+      }
+      await this.persistIndex();
+      indexPersisted = true;
+      await this.trashItem(transactionRoot);
+      return removedNodeIds;
+    } catch (error) {
+      this.index.entries = previousEntries;
+      if (indexPersisted) {
+        await this.persistIndex().catch(() => undefined);
+      }
+      for (let index = resolved.length - 1; index >= 0; index -= 1) {
+        const stagedPath = path.join(transactionRoot, String(index));
+        if (await this.fileSystem.pathExists(stagedPath)) {
+          await rename(stagedPath, resolved[index]!.absolutePath).catch(
+            () => undefined,
+          );
+        }
+      }
+      await rm(transactionRoot, { recursive: true, force: true }).catch(
+        () => undefined,
+      );
+      throw normalizeProjectError(
+        error,
+        'The selected content could not be moved to the trash.',
+      );
+    }
   }
 
   async getPageProperties(
@@ -1252,7 +1753,11 @@ export class ProjectRepository {
     pageType?: string,
   ): Promise<ProjectTreeNode> {
     assertPortableProjectName(name);
-    const parent = this.requireFolder(parentId);
+    const destination = this.requireContainer(parentId);
+    const parent =
+      destination?.kind === 'page'
+        ? this.requireFolder(destination.parentId)
+        : destination;
     const parentPath = await this.fileSystem.resolveParentDirectory(parent);
     const adapter =
       kind === 'page'
@@ -1266,14 +1771,20 @@ export class ProjectRepository {
       kind === 'folder'
         ? {
             nodeId: this.createId(),
-            parentId,
+            parentId: parent?.nodeId ?? null,
+            ...(destination?.kind === 'page'
+              ? { displayParentId: destination.nodeId }
+              : {}),
             name,
             locator,
             kind: 'folder',
           }
         : {
             nodeId: this.createId(),
-            parentId,
+            parentId: parent?.nodeId ?? null,
+            ...(destination?.kind === 'page'
+              ? { displayParentId: destination.nodeId }
+              : {}),
             name,
             locator,
             kind: 'page',
@@ -1292,15 +1803,16 @@ export class ProjectRepository {
       }
 
       createdIdentity = await this.fileSystem.captureIdentity(absolutePath);
-      const branchWasManual = this.rawChildren(parentId).some(
+      const effectiveDestinationId = destination?.nodeId ?? null;
+      const branchWasManual = this.rawChildren(effectiveDestinationId).some(
         (candidate) => candidate.sortOrder !== undefined,
       );
       this.index.entries.push(entry);
       if (branchWasManual) {
-        this.placeEntry(entry.nodeId, parentId, null);
+        this.placeEntry(entry.nodeId, effectiveDestinationId, null);
       }
       await this.persistIndex();
-      return toProjectTreeNode(entry);
+      return this.treeNode(entry);
     } catch (error) {
       this.index.entries = this.index.entries.filter(
         ({ nodeId }) => nodeId !== entry.nodeId,
@@ -1391,6 +1903,22 @@ export class ProjectRepository {
     return entry;
   }
 
+  private requireContainer(
+    parentId: string | null,
+  ): ContentIndexEntry | undefined {
+    if (parentId === null) {
+      return undefined;
+    }
+    const entry = this.requireEntry(parentId);
+    if (!canContainProjectChildren(entry)) {
+      throw new ProjectOperationError(
+        'invalid-operation',
+        'The selected content cannot contain project items.',
+      );
+    }
+    return entry;
+  }
+
   private requireMarkdownEntry(nodeId: string): ContentIndexPageEntry {
     const entry = this.requireEntry(nodeId);
 
@@ -1419,10 +1947,73 @@ export class ProjectRepository {
       }
     }
 
+    const removedEntries = new Map(
+      this.index.entries
+        .filter((entry) => removed.has(entry.nodeId))
+        .map((entry) => [entry.nodeId, entry]),
+    );
     this.index.entries = this.index.entries.filter(
       ({ nodeId: candidate }) => !removed.has(candidate),
     );
+    for (const entry of this.index.entries) {
+      if (
+        entry.displayParentId === undefined ||
+        entry.displayParentId === null ||
+        !removed.has(entry.displayParentId)
+      ) {
+        continue;
+      }
+      let parentId: string | null = entry.displayParentId;
+      const visited = new Set<string>();
+      while (parentId && removed.has(parentId)) {
+        if (visited.has(parentId)) {
+          parentId = null;
+          break;
+        }
+        visited.add(parentId);
+        const removedParent = removedEntries.get(parentId);
+        parentId = removedParent ? effectiveParentId(removedParent) : null;
+      }
+      if (parentId === entry.parentId) {
+        delete entry.displayParentId;
+      } else {
+        entry.displayParentId = parentId;
+      }
+    }
+    this.normalizeAllBranchOrders();
     return [...removed];
+  }
+
+  private assertValidTreeDestination(
+    nodeIds: readonly string[],
+    parentId: string | null,
+  ): void {
+    if (parentId === null) {
+      return;
+    }
+    const moved = new Set(nodeIds);
+    let cursor: string | null = parentId;
+    const visited = new Set<string>();
+    while (cursor) {
+      if (moved.has(cursor)) {
+        throw new ProjectOperationError(
+          'invalid-operation',
+          'Content cannot be moved into itself or one of its descendants.',
+        );
+      }
+      if (visited.has(cursor)) {
+        throw new ProjectOperationError(
+          'invalid-format',
+          'The project content hierarchy contains a cycle.',
+        );
+      }
+      visited.add(cursor);
+      cursor = effectiveParentId(this.requireEntry(cursor));
+    }
+  }
+
+  private treeNode(entry: ContentIndexEntry): ProjectTreeNode {
+    return toProjectTreeNode(entry, this.index.entries);
   }
 
   private replaceEntryAndDescendantLocators(
@@ -1450,7 +2041,9 @@ export class ProjectRepository {
   }
 
   private rawChildren(parentId: string | null): ContentIndexEntry[] {
-    return this.index.entries.filter((entry) => entry.parentId === parentId);
+    return this.index.entries.filter(
+      (entry) => effectiveParentId(entry) === parentId,
+    );
   }
 
   private childrenOf(parentId: string | null): ContentIndexEntry[] {
@@ -1487,7 +2080,7 @@ export class ProjectRepository {
 
   private normalizeAllBranchOrders(): void {
     const parentIds = new Set(
-      this.index.entries.map((entry) => entry.parentId),
+      this.index.entries.map(effectiveParentId),
     );
     for (const parentId of parentIds) {
       this.normalizeBranchOrder(parentId);

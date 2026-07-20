@@ -6,6 +6,7 @@ import {
   type KeyboardEvent,
 } from 'react';
 
+import { TwemojiText } from '../twemoji';
 import { MenuTree } from './MenuTree';
 import type { MenuBarItem } from './menu-types';
 
@@ -205,7 +206,7 @@ export function MenuBar({
             tabIndex={activeTriggerId === menu.id ? 0 : -1}
             type="button"
           >
-            {menu.label}
+            <TwemojiText text={menu.label} />
           </button>
         );
       })}

@@ -20,6 +20,7 @@ import { isProjectInstanceTypeId } from '../../shared/contracts';
 import type { TranslationKey } from '../../shared/i18n/catalogs';
 import type { Translate } from '../pages/page-types';
 import { useFlyoffPreferences } from '../preferences';
+import { TwemojiText } from '../components/twemoji';
 import {
   readEditorMode,
   updateEditorModeState,
@@ -82,7 +83,7 @@ export interface ProjectPageComponentProps {
   pageState: PageSessionState;
   runtime: ProjectPageRuntime;
   scrollTop: number;
-  onScrollChange: (scrollTop: number) => void;
+  onScrollChange: (scrollTop: number, settled?: boolean) => void;
   onStateChange: (state: PageSessionState) => void;
   translate: Translate;
   viewId?: string;
@@ -221,7 +222,7 @@ function MarkdownProjectPage({
   ) {
     return (
       <main className="project-content-unavailable" role="alert">
-        <h1>{title}</h1>
+        <h1><TwemojiText text={title} /></h1>
         <p>{translate('projects.unavailable')}</p>
         {state.status === 'unavailable' && state.message ? (
           <small>{state.message}</small>

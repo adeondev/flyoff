@@ -401,6 +401,70 @@ describe('tab components', () => {
     expect(view.container.querySelector('.page-tab--closing')).toBeNull();
   });
 
+  it('removes closed content immediately while retaining the real exiting tab', async () => {
+    const animations = installElementAnimations();
+    const presentations = new Map([
+      [overview.tabId, { title: 'Overview', icon: 'project.svg' }],
+      [content.tabId, { title: 'Planning', icon: 'markdown.svg' }],
+      [content2.tabId, { title: 'Roadmap', icon: 'markdown.svg' }],
+    ]);
+    const properties = {
+      activeTabId: content.tabId,
+      tabs: [overview, content, content2],
+      closeLabel: 'Close tab',
+      navigationLabel: 'Pages',
+      getPresentation: (tab: TabDescriptor) => presentations.get(tab.tabId)!,
+      onClose: vi.fn(),
+      onMove: vi.fn(),
+      onSelect: vi.fn(),
+    };
+    let handle: TabBarHandle | null = null;
+    const view = render(
+      <TabBar
+        {...properties}
+        ref={(value) => {
+          handle = value;
+        }}
+      />,
+    );
+
+    const pending = handle!.animateTabExit(content.tabId);
+    const exitingElement = screen
+      .getByRole('tab', { name: 'Planning' })
+      .closest('.page-tab');
+    view.rerender(
+      <TabBar
+        {...properties}
+        activeTabId={content2.tabId}
+        tabs={[overview, content2]}
+        ref={(value) => {
+          handle = value;
+        }}
+      />,
+    );
+
+    expect(screen.getByRole('tab', { name: 'Planning' })).toBeTruthy();
+    expect(
+      screen.getByRole('tab', { name: 'Planning' }).closest('.page-tab'),
+    ).toBe(exitingElement);
+    expect(
+      screen
+        .getByRole('tab', { name: 'Roadmap' })
+        .getAttribute('aria-selected'),
+    ).toBe('true');
+    expect(
+      screen
+        .getByRole('tab', { name: 'Planning' })
+        .getAttribute('aria-selected'),
+    ).toBe('false');
+
+    await act(async () => {
+      animations[0]?.finish();
+      await pending;
+    });
+    expect(screen.queryByRole('tab', { name: 'Planning' })).toBeNull();
+  });
+
   it('opens a new empty tab from the trailing tab control', () => {
     const onNewTab = vi.fn();
     render(

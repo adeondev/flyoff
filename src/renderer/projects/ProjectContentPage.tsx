@@ -17,7 +17,7 @@ export interface ProjectContentPageProps {
   pageType: string;
   runtime: ProjectPageRuntime;
   scrollTop: number;
-  onScrollChange: (scrollTop: number) => void;
+  onScrollChange: (scrollTop: number, settled?: boolean) => void;
   onStateChange: (state: PageSessionState) => void;
   translate: Translate;
   viewId?: string;

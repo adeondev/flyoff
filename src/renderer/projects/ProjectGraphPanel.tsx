@@ -1,23 +1,29 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
+  useSyncExternalStore,
   type KeyboardEvent,
 } from 'react';
 
+import expandIcon from '../../../public/images/icons/actions/expand-outline.svg';
 import refreshIcon from '../../../public/images/icons/actions/refresh.svg';
+import settingsIcon from '../../../public/images/icons/actions/settings-outline.svg';
 import type {
   ProjectGraphNode,
   ProjectGraphSnapshot,
   ProjectResult,
 } from '../../shared/contracts';
+import { TwemojiText } from '../components/twemoji';
 import type { Translate } from '../pages/page-types';
 import { MaskedIcon } from '../components/MaskedIcon';
 import { getTooltipTargetProps } from '../components/tooltip';
+import type { ProjectGraphController } from './project-graph-controller';
+import { ProjectGraphSettingsPanel } from './ProjectGraphSettingsPanel';
 import {
   clampProjectGraphZoom,
-  createProjectGraphLayout,
   fitProjectGraphCamera,
   projectGraphScreenToWorld,
   projectGraphWorldToScreen,
@@ -26,13 +32,23 @@ import {
   type ProjectGraphLayout,
   type ProjectGraphLayoutNode,
 } from './project-graph-layout';
+import {
+  DEFAULT_PROJECT_GRAPH_SETTINGS,
+  type ProjectGraphSettings,
+} from './project-graph-settings';
+import type { ProjectGraphViewState } from './project-graph-state';
 
 interface ProjectGraphPanelProps {
+  controller: ProjectGraphController;
+  initialViewState?: ProjectGraphViewState;
   loadGraph: () => Promise<ProjectResult<ProjectGraphSnapshot>>;
   onError: (message: string) => void;
+  onOpenInTab?: () => void;
   onOpenNode: (node: ProjectGraphNode) => void;
+  onViewStateChange?: (state: ProjectGraphViewState) => void;
   refreshSignal?: unknown;
   translate: Translate;
+  variant?: 'page' | 'sidebar';
 }
 
 interface PointerSession {
@@ -47,7 +63,6 @@ interface PointerSession {
 interface GraphPalette {
   accent: string;
   edge: string;
-  label: string;
   node: string;
   nodeMuted: string;
 }
@@ -60,10 +75,12 @@ interface GraphRuntime {
   layout: ProjectGraphLayout;
   lastFrame: number;
   layoutFrames: number;
+  labels: ReadonlyMap<string, HTMLElement>;
   palette: GraphPalette;
   pointer?: PointerSession;
   raf?: number;
   selected?: ProjectGraphLayoutNode;
+  settings: ProjectGraphSettings;
   visible: boolean;
   wake?: () => void;
   width: number;
@@ -83,14 +100,19 @@ function graphPalette(): GraphPalette {
   return {
     accent: color('--color-accent-bright', '#bd6cff'),
     edge: color('--color-border-strong', '#4c4452'),
-    label: color('--color-text', '#f7f3fa'),
     node: color('--color-accent', '#9c43d7'),
     nodeMuted: color('--color-text-muted', '#a39aa8'),
   };
 }
 
-function nodeRadius(node: ProjectGraphNode): number {
-  return 4.6 + Math.min(4.8, Math.sqrt(node.connectionCount) * 1.1);
+function nodeRadius(
+  node: ProjectGraphNode,
+  settings: ProjectGraphSettings,
+): number {
+  return (
+    (4.6 + Math.min(4.8, Math.sqrt(node.connectionCount) * 1.1)) *
+    settings.nodeScale
+  );
 }
 
 function fitCamera(runtime: GraphRuntime, immediate = false): void {
@@ -131,7 +153,10 @@ function hitGraphNode(
       runtime.width,
       runtime.height,
     );
-    const radius = Math.max(10, nodeRadius(node) * runtime.camera.zoom + 5);
+    const radius = Math.max(
+      10,
+      nodeRadius(node, runtime.settings) * runtime.camera.zoom + 5,
+    );
     if (Math.hypot(point.x - screen.x, point.y - screen.y) <= radius) {
       return node;
     }
@@ -181,7 +206,9 @@ function drawGraph(
       continue;
     }
     context.globalAlpha = Math.min(0.72, 0.26 + edge.weight * 0.08);
-    context.lineWidth = Math.min(2.4, 0.75 + Math.log2(edge.weight + 1) * 0.45);
+    context.lineWidth =
+      Math.min(2.4, 0.75 + Math.log2(edge.weight + 1) * 0.45) *
+      runtime.settings.edgeScale;
     context.beginPath();
     context.moveTo(source.x, source.y);
     context.lineTo(target.x, target.y);
@@ -189,9 +216,8 @@ function drawGraph(
   }
   context.globalAlpha = 1;
 
-  const fontFamily =
-    getComputedStyle(document.body).fontFamily || 'Inter, sans-serif';
   for (const node of runtime.layout.nodes) {
+    const label = runtime.labels.get(node.nodeId);
     const screen = projectGraphWorldToScreen(
       node,
       runtime.camera,
@@ -200,7 +226,10 @@ function drawGraph(
     );
     const radius = Math.max(
       3.2,
-      Math.min(11.5, nodeRadius(node) * runtime.camera.zoom),
+      Math.min(
+        11.5 * runtime.settings.nodeScale,
+        nodeRadius(node, runtime.settings) * runtime.camera.zoom,
+      ),
     );
     if (
       screen.x < -radius - 80 ||
@@ -208,6 +237,9 @@ function drawGraph(
       screen.y < -radius - 20 ||
       screen.y > runtime.height + radius + 20
     ) {
+      if (label) {
+        label.hidden = true;
+      }
       continue;
     }
     const highlighted =
@@ -221,105 +253,181 @@ function drawGraph(
     context.arc(screen.x, screen.y, radius, 0, Math.PI * 2);
     context.fill();
 
-    if (highlighted || runtime.camera.zoom >= 0.72) {
-      context.fillStyle = runtime.palette.label;
-      context.font = `${highlighted ? 600 : 500} 11px ${fontFamily}`;
-      context.textAlign = 'center';
-      context.textBaseline = 'top';
-      const label =
-        node.name.length > 26 ? `${node.name.slice(0, 25)}…` : node.name;
-      context.fillText(label, screen.x, screen.y + radius + 6, 150);
+    if (highlighted || runtime.camera.zoom >= runtime.settings.labelZoom) {
+      if (label) {
+        label.hidden = false;
+        label.dataset.highlighted = highlighted ? 'true' : 'false';
+        label.style.transform =
+          `translate3d(${screen.x}px, ${screen.y + radius + 6}px, 0) ` +
+          'translateX(-50%)';
+      }
+    } else if (label) {
+      label.hidden = true;
     }
   }
 }
 
 export function ProjectGraphPanel({
+  controller,
+  initialViewState,
   loadGraph,
   onError,
+  onOpenInTab,
   onOpenNode,
+  onViewStateChange,
   refreshSignal,
   translate,
+  variant = 'sidebar',
 }: ProjectGraphPanelProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const settingsButtonRef = useRef<HTMLButtonElement>(null);
+  const labelRefs = useRef(new Map<string, HTMLSpanElement>());
   const runtimeRef = useRef<GraphRuntime | undefined>(undefined);
-  const previousLayoutRef = useRef<ProjectGraphLayout | undefined>(undefined);
   const onOpenNodeRef = useRef(onOpenNode);
-  const refreshSequenceRef = useRef(0);
-  const [snapshot, setSnapshot] = useState<ProjectGraphSnapshot>({
-    edges: [],
-    nodes: [],
-  });
-  const [refreshing, setRefreshing] = useState(false);
-  const [selectedPath, setSelectedPath] = useState<string>();
+  const onViewStateChangeRef = useRef(onViewStateChange);
+  const wheelSettleTimerRef = useRef<number | undefined>(undefined);
+  const settingsPublishFrameRef = useRef<number | undefined>(undefined);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const graphState = useSyncExternalStore(
+    controller.subscribe,
+    controller.getSnapshot,
+    controller.getSnapshot,
+  );
   const fitRef = useRef<() => void>(() => undefined);
+  const selectedPath = graphState.graph.nodes.find(
+    ({ nodeId }) => nodeId === graphState.selectedNodeId,
+  )?.path;
+
+  useLayoutEffect(() => {
+    controller.restoreView(initialViewState);
+  }, [controller, initialViewState]);
 
   useEffect(() => {
     onOpenNodeRef.current = onOpenNode;
   }, [onOpenNode]);
 
-  const refresh = useCallback(async () => {
-    const sequence = refreshSequenceRef.current + 1;
-    refreshSequenceRef.current = sequence;
-    setRefreshing(true);
-    try {
-      const result = await loadGraph();
-      if (refreshSequenceRef.current !== sequence) {
-        return;
-      }
-      if (result.ok) {
-        setSnapshot(result.value);
-      } else {
-        onError(result.error.message);
-      }
-    } catch (error) {
-      onError(String(error));
-    } finally {
-      if (refreshSequenceRef.current === sequence) {
-        setRefreshing(false);
-      }
+  useEffect(() => {
+    onViewStateChangeRef.current = onViewStateChange;
+  }, [onViewStateChange]);
+
+  const publishViewState = useCallback(() => {
+    onViewStateChangeRef.current?.(controller.viewState());
+  }, [controller]);
+
+  const scheduleViewState = useCallback(() => {
+    if (settingsPublishFrameRef.current === undefined) {
+      settingsPublishFrameRef.current = window.requestAnimationFrame(() => {
+        settingsPublishFrameRef.current = undefined;
+        publishViewState();
+      });
     }
-  }, [loadGraph, onError]);
+  }, [publishViewState]);
+
+  const closeSettings = useCallback(() => {
+    setSettingsOpen(false);
+    window.requestAnimationFrame(() => settingsButtonRef.current?.focus());
+  }, []);
+
+  const changeSetting = useCallback(
+    (key: keyof ProjectGraphSettings, value: number) => {
+      controller.setSettings({
+        ...controller.getSnapshot().settings,
+        [key]: value,
+      });
+      scheduleViewState();
+    },
+    [controller, scheduleViewState],
+  );
+
+  const resetSettings = useCallback(() => {
+    controller.setSettings({ ...DEFAULT_PROJECT_GRAPH_SETTINGS });
+    scheduleViewState();
+  }, [controller, scheduleViewState]);
+
+  useEffect(
+    () => () => {
+      if (settingsPublishFrameRef.current !== undefined) {
+        window.cancelAnimationFrame(settingsPublishFrameRef.current);
+        settingsPublishFrameRef.current = undefined;
+        publishViewState();
+      }
+    },
+    [publishViewState],
+  );
 
   useEffect(() => {
-    const frame = window.requestAnimationFrame(() => void refresh());
-    return () => {
-      window.cancelAnimationFrame(frame);
-      refreshSequenceRef.current += 1;
-    };
-  }, [refresh, refreshSignal]);
+    const runtime = runtimeRef.current;
+    if (!runtime) {
+      return;
+    }
+    runtime.selected = runtime.layout.nodes.find(
+      ({ nodeId }) => nodeId === graphState.selectedNodeId,
+    );
+    runtime.dirty = true;
+    runtime.wake?.();
+  }, [graphState.selectedNodeId]);
+
+  useEffect(() => {
+    const runtime = runtimeRef.current;
+    if (!runtime) {
+      return;
+    }
+    const previous = runtime.settings;
+    runtime.settings = graphState.settings;
+    if (
+      previous.centerStrength !== graphState.settings.centerStrength ||
+      previous.damping !== graphState.settings.damping ||
+      previous.nodeDistance !== graphState.settings.nodeDistance ||
+      previous.repulsion !== graphState.settings.repulsion ||
+      previous.simulationSpeed !== graphState.settings.simulationSpeed ||
+      previous.springStrength !== graphState.settings.springStrength
+    ) {
+      runtime.layoutFrames = 0;
+    }
+    runtime.dirty = true;
+    runtime.wake?.();
+  }, [graphState.settings]);
+
+  const refresh = useCallback(async () => {
+    await controller.refresh(refreshSignal, loadGraph, onError, true);
+  }, [controller, loadGraph, onError, refreshSignal]);
+
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      void controller.refresh(refreshSignal, loadGraph, onError);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [controller, loadGraph, onError, refreshSignal]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) {
       return;
     }
-    const layout = createProjectGraphLayout(
-      snapshot,
-      previousLayoutRef.current?.nodes,
-    );
-    previousLayoutRef.current = layout;
+    const layout = graphState.layout;
     const runtime: GraphRuntime = {
-      camera: {
-        targetX: 0,
-        targetY: 0,
-        targetZoom: 1,
-        vx: 0,
-        vy: 0,
-        x: 0,
-        y: 0,
-        zoom: 1,
-      },
+      camera: controller.camera,
       dirty: true,
       height: canvas.clientHeight,
       layout,
       lastFrame: performance.now(),
       layoutFrames: 0,
+      labels: new Map(labelRefs.current),
       palette: graphPalette(),
+      settings: controller.getSnapshot().settings,
       visible: true,
       width: canvas.clientWidth,
     };
+    runtime.selected =
+      layout.nodes.find(
+        ({ nodeId }) => nodeId === controller.getSelectedNodeId(),
+      );
     runtimeRef.current = runtime;
-    fitCamera(runtime, true);
+    if (!controller.hasCamera() && layout.nodes.length > 0) {
+      fitCamera(runtime, true);
+      controller.markCameraReady();
+      publishViewState();
+    }
 
     const wake = () => {
       runtime.dirty = true;
@@ -339,7 +447,11 @@ export function ProjectGraphPanel({
       let moving = false;
 
       if (runtime.layoutFrames < 720 && runtime.layout.nodes.length > 1) {
-        const energy = stepProjectGraphLayout(runtime.layout, elapsed);
+        const energy = stepProjectGraphLayout(
+          runtime.layout,
+          elapsed,
+          runtime.settings,
+        );
         runtime.layoutFrames += 1;
         moving = energy > 0.025 && runtime.layoutFrames < 720;
       }
@@ -384,6 +496,8 @@ export function ProjectGraphPanel({
 
     fitRef.current = () => {
       fitCamera(runtime);
+      controller.markCameraReady();
+      publishViewState();
       wake();
     };
 
@@ -447,7 +561,7 @@ export function ProjectGraphPanel({
       if (node) {
         node.pinned = true;
         runtime.selected = node;
-        setSelectedPath(node.path);
+        controller.setSelectedNodeId(node.nodeId);
       }
       canvas.dataset.dragging = node ? 'node' : 'camera';
       wake();
@@ -516,6 +630,7 @@ export function ProjectGraphPanel({
       if (canvas.hasPointerCapture(event.pointerId)) {
         canvas.releasePointerCapture(event.pointerId);
       }
+      publishViewState();
       wake();
     };
 
@@ -533,7 +648,10 @@ export function ProjectGraphPanel({
         runtime.height,
       );
       const zoom = clampProjectGraphZoom(
-        runtime.camera.targetZoom * Math.exp(-event.deltaY * 0.0015),
+        runtime.camera.targetZoom *
+          Math.exp(
+            -event.deltaY * 0.0015 * runtime.settings.zoomSensitivity,
+          ),
       );
       runtime.camera.targetZoom = zoom;
       runtime.camera.targetX =
@@ -542,14 +660,20 @@ export function ProjectGraphPanel({
         anchor.y - (point.y - runtime.height / 2) / zoom;
       runtime.camera.vx = 0;
       runtime.camera.vy = 0;
+      if (wheelSettleTimerRef.current !== undefined) {
+        window.clearTimeout(wheelSettleTimerRef.current);
+      }
+      wheelSettleTimerRef.current = window.setTimeout(() => {
+        wheelSettleTimerRef.current = undefined;
+        publishViewState();
+      }, 120);
       wake();
     };
 
     const handleDoubleClick = (event: MouseEvent) => {
       const point = pointInCanvas(canvas, event.clientX, event.clientY);
       if (!hitGraphNode(runtime, point)) {
-        fitCamera(runtime);
-        wake();
+        fitRef.current();
       }
     };
 
@@ -574,11 +698,16 @@ export function ProjectGraphPanel({
       canvas.removeEventListener('pointercancel', endPointer);
       canvas.removeEventListener('wheel', handleWheel);
       canvas.removeEventListener('dblclick', handleDoubleClick);
+      if (wheelSettleTimerRef.current !== undefined) {
+        window.clearTimeout(wheelSettleTimerRef.current);
+        wheelSettleTimerRef.current = undefined;
+        publishViewState();
+      }
       if (runtimeRef.current === runtime) {
         runtimeRef.current = undefined;
       }
     };
-  }, [snapshot]);
+  }, [controller, graphState.layout, publishViewState]);
 
   function handleKeyboard(event: KeyboardEvent<HTMLCanvasElement>): void {
     const runtime = runtimeRef.current;
@@ -609,52 +738,113 @@ export function ProjectGraphPanel({
       runtime.layout.nodes.length;
     const selected = runtime.layout.nodes[nextIndex]!;
     runtime.selected = selected;
+    controller.setSelectedNodeId(selected.nodeId);
     runtime.camera.targetX = selected.x;
     runtime.camera.targetY = selected.y;
-    setSelectedPath(selected.path);
     runtime.dirty = true;
+    publishViewState();
     runtime.wake?.();
   }
 
   return (
-    <aside
-      aria-busy={refreshing}
+    <section
+      aria-busy={graphState.refreshing}
       aria-label={translate('rail.graph')}
-      className="home__sidebar project-graph"
+      className={`${variant === 'sidebar' ? 'home__sidebar ' : ''}project-graph`}
+      data-variant={variant}
     >
       <header className="project-graph__header">
         <h2>{translate('rail.graph')}</h2>
-        <button
-          aria-label={
-            refreshing
-              ? translate('graph.refreshing')
-              : translate('graph.refresh')
-          }
-          className="project-graph__action"
-          disabled={refreshing}
-          onClick={() => void refresh()}
-          type="button"
-          {...getTooltipTargetProps(translate('graph.refresh'), 'bottom')}
-        >
-          <MaskedIcon icon={refreshIcon} />
-        </button>
+        <div className="project-graph__actions">
+          {onOpenInTab ? (
+            <button
+              aria-label={translate('graph.openInTab')}
+              className="project-graph__action"
+              onClick={onOpenInTab}
+              type="button"
+              {...getTooltipTargetProps(translate('graph.openInTab'), 'bottom')}
+            >
+              <MaskedIcon icon={expandIcon} />
+            </button>
+          ) : null}
+          <button
+            aria-label={
+              graphState.refreshing
+                ? translate('graph.refreshing')
+                : translate('graph.refresh')
+            }
+            className="project-graph__action"
+            disabled={graphState.refreshing}
+            onClick={() => void refresh()}
+            type="button"
+            {...getTooltipTargetProps(translate('graph.refresh'), 'bottom')}
+          >
+            <MaskedIcon icon={refreshIcon} />
+          </button>
+          {variant === 'page' ? (
+            <button
+              aria-expanded={settingsOpen}
+              aria-label={translate('graph.openSettings')}
+              className="project-graph__action"
+              onClick={() => setSettingsOpen((open) => !open)}
+              ref={settingsButtonRef}
+              type="button"
+              {...getTooltipTargetProps(
+                translate('graph.openSettings'),
+                'bottom',
+              )}
+            >
+              <MaskedIcon icon={settingsIcon} />
+            </button>
+          ) : null}
+        </div>
       </header>
-      <div className="project-graph__viewport">
-        <canvas
-          aria-label={translate('graph.canvas')}
-          className="project-graph__canvas"
-          onKeyDown={handleKeyboard}
-          ref={canvasRef}
-          role="img"
-          tabIndex={0}
-        />
-        {!refreshing && snapshot.nodes.length === 0 ? (
-          <p className="project-graph__empty">{translate('graph.empty')}</p>
+      <div className="project-graph__body">
+        <div className="project-graph__viewport">
+          <canvas
+            aria-label={translate('graph.canvas')}
+            className="project-graph__canvas"
+            onKeyDown={handleKeyboard}
+            ref={canvasRef}
+            role="img"
+            tabIndex={0}
+          />
+          <div aria-hidden="true" className="project-graph__labels">
+            {graphState.graph.nodes.map((node) => (
+              <span
+                className="project-graph__label"
+                hidden
+                key={node.nodeId}
+                ref={(element) => {
+                  if (element) {
+                    labelRefs.current.set(node.nodeId, element);
+                  } else {
+                    labelRefs.current.delete(node.nodeId);
+                  }
+                }}
+              >
+                <TwemojiText text={node.name} />
+              </span>
+            ))}
+          </div>
+          {!graphState.refreshing && graphState.graph.nodes.length === 0 ? (
+            <p className="project-graph__empty">{translate('graph.empty')}</p>
+          ) : null}
+        </div>
+        {variant === 'page' && settingsOpen ? (
+          <ProjectGraphSettingsPanel
+            onChange={changeSetting}
+            onClose={closeSettings}
+            onFit={() => fitRef.current()}
+            onReset={resetSettings}
+            settings={graphState.settings}
+            translate={translate}
+          />
         ) : null}
       </div>
       <p className="project-graph__selection" aria-live="polite">
-        {selectedPath ?? '\u00a0'}
+        <TwemojiText text={selectedPath ?? '\u00a0'} />
       </p>
-    </aside>
+    </section>
   );
 }

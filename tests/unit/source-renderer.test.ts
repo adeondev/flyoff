@@ -2,7 +2,11 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { readSource } from '../../src/renderer/projects/source-caret';
+import {
+  readSelection,
+  readSource,
+  writeSelection,
+} from '../../src/renderer/projects/source-caret';
 import {
   reconcileSource,
   updateActiveSourceLine,
@@ -74,6 +78,25 @@ describe('incremental source renderer', () => {
     expect(readSource(root)).toBe('one\ntwo');
   });
 
+  it('keeps emoji Unicode and UTF-16 cursor offsets in the editable source', () => {
+    const root = document.createElement('div');
+    document.body.appendChild(root);
+    const source = 'A 👨‍👩‍👧‍👦 B 👋🏽';
+    reconcileSource(root, source);
+
+    expect(root.querySelectorAll('.twemoji--source')).toHaveLength(2);
+    expect(readSource(root)).toBe(source);
+
+    const afterFamily = source.indexOf(' B');
+    writeSelection(root, afterFamily);
+    expect(readSelection(root)).toEqual({
+      direction: 'none',
+      end: afterFamily,
+      start: afterFamily,
+    });
+    root.remove();
+  });
+
   it('keeps code blocks out of spellcheck unless explicitly enabled', () => {
     const root = document.createElement('div');
     root.dataset.spellcheckEnabled = 'true';
@@ -95,6 +118,81 @@ describe('incremental source renderer', () => {
         '.md-line--code > .md-line__content',
       )?.spellcheck,
     ).toBe(true);
+  });
+
+  it('marks complete, empty and consecutive fenced block boundaries', () => {
+    const root = document.createElement('div');
+    reconcileSource(root, '```\n```\n~~~\nbody\n~~~');
+
+    expect(root.children[0]?.className).toContain('md-line--code-start');
+    expect(root.children[0]?.className).toContain('md-line--code-fence');
+    expect(root.children[1]?.className).toContain('md-line--code-end');
+    expect(root.children[1]?.className).toContain('md-line--code-fence');
+    expect(root.children[2]?.className).toContain('md-line--code-start');
+    expect(root.children[3]?.className).toBe('md-line md-line--code');
+    expect(root.children[4]?.className).toContain('md-line--code-end');
+  });
+
+  it('leaves an unterminated fenced block open through the last line', () => {
+    const root = document.createElement('div');
+    reconcileSource(root, 'before\n```\nbody');
+
+    expect(root.children[0]?.className).toBe('md-line');
+    expect(root.children[1]?.className).toContain('md-line--code-start');
+    expect(root.children[2]?.className).toBe('md-line md-line--code');
+    expect(root.querySelector('.md-line--code-end')).toBeNull();
+    expect(readSource(root)).toBe('before\n```\nbody');
+  });
+
+  it('updates fence boundaries incrementally without replacing the suffix', () => {
+    const root = document.createElement('div');
+    reconcileSource(root, 'before\nplain\nbody\nplain\nafter');
+    const suffix = root.children[4];
+
+    reconcileSource(root, 'before\n```\nbody\n```\nafter');
+
+    expect(root.children[1]?.className).toContain('md-line--code-start');
+    expect(root.children[2]?.className).toBe('md-line md-line--code');
+    expect(root.children[3]?.className).toContain('md-line--code-end');
+    expect(root.children[4]).toBe(suffix);
+
+    reconcileSource(root, 'before\nplain\nbody\nplain\nafter');
+
+    expect(root.querySelector('.md-line--code')).toBeNull();
+    expect(root.children[4]).toBe(suffix);
+  });
+
+  it('shares the longest fenced line width without wrapping each row', () => {
+    const root = document.createElement('div');
+    reconcileSource(root, 'before\n```\na\nlongest-code-line\n```\nafter');
+
+    const codeLines = [
+      ...root.querySelectorAll<HTMLElement>('.md-line--code'),
+    ];
+    expect(
+      codeLines.map((line) =>
+        line.style.getPropertyValue('--md-code-inline-size'),
+      ),
+    ).toEqual(
+      Array.from(
+        { length: 4 },
+        () => 'calc(17ch + 24px)',
+      ),
+    );
+
+    reconcileSource(root, 'before\n```\na\nshort\n```\nafter');
+    expect(
+      [
+        ...root.querySelectorAll<HTMLElement>('.md-line--code'),
+      ].map((line) =>
+        line.style.getPropertyValue('--md-code-inline-size'),
+      ),
+    ).toEqual(
+      Array.from(
+        { length: 4 },
+        () => 'calc(5ch + 24px)',
+      ),
+    );
   });
 
   it('respects the global spellcheck switch and marks the active line', () => {

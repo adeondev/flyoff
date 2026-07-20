@@ -311,6 +311,21 @@ describe('project IPC', () => {
     expect(electronMocks.writeText).toHaveBeenCalledWith(
       'C:\\Projetos\\Projeto',
     );
+
+    const secondNodeId = '44444444-4444-4444-8444-444444444444';
+    await expect(
+      handlerFor(PROJECT_IPC_CHANNELS.copyPaths)(event, {
+        nodeIds: [nodeId, secondNodeId],
+      }),
+    ).resolves.toEqual({ ok: true, value: null });
+    expect(service.resolvePath).toHaveBeenCalledWith(42, {
+      nodeId: secondNodeId,
+    });
+    expect(electronMocks.writeText).toHaveBeenLastCalledWith(
+      `C:\\Projetos\\Projeto${
+        process.platform === 'win32' ? '\r\n' : '\n'
+      }C:\\Projetos\\Projeto`,
+    );
   });
 
   it('validates and forwards every page property and protection operation', async () => {

@@ -1,12 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  clampProjectGraphZoom,
   createProjectGraphLayout,
   fitProjectGraphCamera,
   projectGraphScreenToWorld,
   projectGraphWorldToScreen,
   stepProjectGraphLayout,
 } from '../../src/renderer/projects/project-graph-layout';
+import { DEFAULT_PROJECT_GRAPH_SETTINGS } from '../../src/renderer/projects/project-graph-settings';
 import type { ProjectGraphSnapshot } from '../../src/shared/contracts';
 
 const snapshot: ProjectGraphSnapshot = {
@@ -50,7 +52,11 @@ describe('project graph layout', () => {
   it('advances the force simulation and fits its bounds', () => {
     const layout = createProjectGraphLayout(snapshot);
     const before = layout.nodes.map(({ x, y }) => ({ x, y }));
-    const energy = stepProjectGraphLayout(layout, 1 / 60);
+    const energy = stepProjectGraphLayout(
+      layout,
+      1 / 60,
+      DEFAULT_PROJECT_GRAPH_SETTINGS,
+    );
     expect(energy).toBeGreaterThan(0);
     expect(layout.nodes.map(({ x, y }) => ({ x, y }))).not.toEqual(before);
 
@@ -66,5 +72,26 @@ describe('project graph layout', () => {
     expect(
       projectGraphScreenToWorld(screen, camera, 900, 700),
     ).toEqual(world);
+  });
+
+  it('supports closer inspection and applies custom simulation forces', () => {
+    expect(clampProjectGraphZoom(20)).toBe(6);
+
+    const defaultLayout = createProjectGraphLayout(snapshot);
+    const expandedLayout = createProjectGraphLayout(snapshot);
+    stepProjectGraphLayout(
+      defaultLayout,
+      1 / 60,
+      DEFAULT_PROJECT_GRAPH_SETTINGS,
+    );
+    stepProjectGraphLayout(expandedLayout, 1 / 60, {
+      ...DEFAULT_PROJECT_GRAPH_SETTINGS,
+      nodeDistance: 220,
+      repulsion: 14_000,
+    });
+
+    expect(
+      expandedLayout.nodes.map(({ vx, vy }) => ({ vx, vy })),
+    ).not.toEqual(defaultLayout.nodes.map(({ vx, vy }) => ({ vx, vy })));
   });
 });

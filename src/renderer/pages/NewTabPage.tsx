@@ -10,6 +10,7 @@ import flickBooks from '../../../public/images/flick/flick_books.png';
 import searchIcon from '../../../public/images/icons/actions/search.svg';
 import noteIcon from '../../../public/images/icons/instances/note.svg';
 import { MaskedIcon } from '../components/MaskedIcon';
+import { TwemojiText } from '../components/twemoji';
 import type { InternalPageProps } from './page-types';
 
 export interface NewTabNoteItem {
@@ -156,12 +157,12 @@ export function NewTabPage({
           <MaskedIcon icon={noteIcon} />
         </span>
         <span className="new-tab-page__note-body">
-          <span className="new-tab-page__note-name">{note.name}</span>
-          <span className="new-tab-page__note-path">{note.path}</span>
+          <TwemojiText className="new-tab-page__note-name" text={note.name} />
+          <TwemojiText className="new-tab-page__note-path" text={note.path} />
           {note.excerpt ? (
             <span className="new-tab-page__note-excerpt">
               {note.line ? `${note.line}: ` : ''}
-              {note.excerpt}
+              <TwemojiText text={note.excerpt} />
             </span>
           ) : null}
         </span>

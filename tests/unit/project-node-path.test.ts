@@ -13,18 +13,24 @@ function nodeMap(
 }
 
 const baby: ProjectTreeNode = {
+  canContainChildren: true,
+  hasChildren: true,
   kind: 'folder',
   name: 'baby',
   nodeId: 'baby',
   parentId: null,
 };
 const notes: ProjectTreeNode = {
+  canContainChildren: true,
+  hasChildren: true,
   kind: 'folder',
   name: 'Notas',
   nodeId: 'notes',
   parentId: baby.nodeId,
 };
 const doll: ProjectTreeNode = {
+  canContainChildren: true,
+  hasChildren: false,
   kind: 'page',
   name: 'doll',
   nodeId: 'doll',

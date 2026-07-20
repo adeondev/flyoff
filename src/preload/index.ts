@@ -62,8 +62,11 @@ import {
   isCreateProjectNodeRequest,
   isRenameProjectNodeRequest,
   isMoveProjectNodeRequest,
+  isMoveProjectNodesRequest,
   isProjectPathRequest,
+  isProjectPathsRequest,
   isTrashProjectNodeRequest,
+  isTrashProjectNodesRequest,
   isTrashProjectNodeOutcome,
   isReadMarkdownDocumentRequest,
   isSaveMarkdownDocumentRequest,
@@ -75,6 +78,7 @@ import {
   isProjectSearchRequest,
   isProjectLinkTargetList,
   isProjectNodeMutationOutcome,
+  isProjectNodesMutationOutcome,
   isProjectNoteActivityEntry,
   isProjectNoteActivityEntryList,
   isProjectNoteActivityEvent,
@@ -102,8 +106,11 @@ import {
   type CreateProjectNodeRequest,
   type RenameProjectNodeRequest,
   type MoveProjectNodeRequest,
+  type MoveProjectNodesRequest,
   type ProjectPathRequest,
+  type ProjectPathsRequest,
   type TrashProjectNodeRequest,
+  type TrashProjectNodesRequest,
   type ReadMarkdownDocumentRequest,
   type SaveMarkdownDocumentRequest,
   type ProjectInternalLinkRequest,
@@ -535,6 +542,22 @@ const flyoffApi: FlyoffApi = Object.freeze({
 
     return result;
   },
+  async moveProjectNodes(request: MoveProjectNodesRequest) {
+    if (!isMoveProjectNodesRequest(request)) {
+      throw new TypeError('Invalid project nodes move request.');
+    }
+
+    const result: unknown = await ipcRenderer.invoke(
+      PROJECT_IPC_CHANNELS.moveNodes,
+      request,
+    );
+
+    if (!isProjectResult(result, isProjectNodesMutationOutcome)) {
+      throw new Error('The main process returned an invalid batch mutation.');
+    }
+
+    return result;
+  },
   async trashProjectNode(request: TrashProjectNodeRequest) {
     if (!isTrashProjectNodeRequest(request)) {
       throw new TypeError('Invalid project node trash request.');
@@ -547,6 +570,22 @@ const flyoffApi: FlyoffApi = Object.freeze({
 
     if (!isProjectResult(result, isTrashProjectNodeOutcome)) {
       throw new Error('The main process returned an invalid trash result.');
+    }
+
+    return result;
+  },
+  async trashProjectNodes(request: TrashProjectNodesRequest) {
+    if (!isTrashProjectNodesRequest(request)) {
+      throw new TypeError('Invalid project nodes trash request.');
+    }
+
+    const result: unknown = await ipcRenderer.invoke(
+      PROJECT_IPC_CHANNELS.trashNodes,
+      request,
+    );
+
+    if (!isProjectResult(result, isTrashProjectNodeOutcome)) {
+      throw new Error('The main process returned an invalid batch trash result.');
     }
 
     return result;
@@ -579,6 +618,22 @@ const flyoffApi: FlyoffApi = Object.freeze({
 
     if (!isProjectResult(result, isNull)) {
       throw new Error('The main process returned an invalid path copy result.');
+    }
+
+    return result;
+  },
+  async copyProjectPaths(request: ProjectPathsRequest) {
+    if (!isProjectPathsRequest(request)) {
+      throw new TypeError('Invalid project paths request.');
+    }
+
+    const result: unknown = await ipcRenderer.invoke(
+      PROJECT_IPC_CHANNELS.copyPaths,
+      request,
+    );
+
+    if (!isProjectResult(result, isNull)) {
+      throw new Error('The main process returned an invalid paths copy result.');
     }
 
     return result;

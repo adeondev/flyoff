@@ -7,14 +7,17 @@ import {
   useState,
   type CSSProperties,
 } from 'react';
+import { flushSync } from 'react-dom';
 
 import flyoffLogo from '../../public/images/flyoff/flyoff-logo.svg';
-import sidebarToggleIcon from '../../public/images/icons/actions/sidebar-toggle.svg';
+import sidebarCloseIcon from '../../public/images/icons/actions/sidebar-close.svg';
+import sidebarOpenIcon from '../../public/images/icons/actions/sidebar-open.svg';
 import closeMenuIcon from '../../public/images/icons/actions/close-pane.svg';
 import infoMenuIcon from '../../public/images/icons/actions/info.svg';
 import refreshMenuIcon from '../../public/images/icons/actions/refresh.svg';
 import markdownPageIcon from '../../public/images/icons/instances/note-solid.svg';
 import projectOverviewIcon from '../../public/images/icons/instances/project.svg';
+import projectGraphIcon from '../../public/images/icons/navigation/graph.svg';
 import {
   APPLICATION_MENU_COMMANDS,
   APPLICATION_MENU_DEFINITIONS,
@@ -44,6 +47,7 @@ import {
   type ProjectInternalLinkTarget,
   type ProjectLinkTarget,
   type ProjectPageNode,
+  type ProjectNodesMutationOutcome,
   type ProjectLocationSelection,
   type ProjectNoteActivityEntry,
   type ProjectFailureDetails,
@@ -123,6 +127,7 @@ import {
   MarkdownDocumentController,
   ProjectContentPage,
   ProjectEmptyState,
+  ProjectGraphController,
   ProjectGraphPanel,
   ProjectOverview,
   ProjectPagePropertiesDialog,
@@ -130,8 +135,10 @@ import {
   getProjectPageTypeDefinition,
   type ProjectSidebarHandle,
   type MarkdownLinkNavigation,
+  createProjectGraphPageState,
   projectNodeDisplayName,
   projectNodeLogicalPath,
+  readProjectGraphViewState,
   resolveProjectNodeLineage,
   useProjectPageProperties,
 } from './projects';
@@ -234,7 +241,10 @@ function Titlebar({
         type="button"
         {...getTooltipTargetProps(toggleSidebarLabel, 'bottom')}
       >
-        <MaskedIcon className="titlebar__sidebar-toggle-icon" icon={sidebarToggleIcon} />
+        <MaskedIcon
+          className="titlebar__sidebar-toggle-icon"
+          icon={sidebarCollapsed ? sidebarOpenIcon : sidebarCloseIcon}
+        />
       </button>
       {!isMacOS && menus.length > 0 ? (
         <MenuBar
@@ -267,6 +277,8 @@ function applyDefaultProjectPageState(
   if (
     (action.type === 'open-target' ||
       action.type === 'move-or-open-target' ||
+      action.type === 'open-target-reusing-new-tab' ||
+      action.type === 'move-or-open-target-reusing-new-tab' ||
       action.type === 'split-pane-with-target') &&
     action.target.type === 'project-content' &&
     action.initialPageState === undefined
@@ -404,11 +416,16 @@ function tracksProjectActivation(action: WorkspaceAction): boolean {
   return (
     action.type === 'open-target' ||
     action.type === 'move-or-open-target' ||
+    action.type === 'open-target-reusing-new-tab' ||
+    action.type === 'move-or-open-target-reusing-new-tab' ||
     action.type === 'split-pane-with-target' ||
+    action.type === 'split-pane-with-targets' ||
     action.type === 'select-tab' ||
     action.type === 'select-pane'
   );
 }
+
+const WORKSPACE_SCROLL_SETTLE_MS = 120;
 
 export function App() {
   const [platform, setPlatform] = useState<FlyoffPlatform>();
@@ -457,6 +474,13 @@ export function App() {
     string | null
   >(null);
   const workspaceStateRef = useRef(workspaceState);
+  const scrollCommitTimerRef = useRef<number | undefined>(undefined);
+  const pendingScrollPositionsRef = useRef(
+    new Map<
+      string,
+      { paneId: string; scrollTop: number; tabId: string }
+    >(),
+  );
   const projectRef = useRef<ProjectSummary | null>(null);
   const projectNodesRef = useRef<ReadonlyMap<string, ProjectTreeNode>>(
     new Map(),
@@ -525,6 +549,10 @@ export function App() {
   const graphRefreshSignal = useMemo(
     () => ({ graphDocumentRevision, projectNodes }),
     [graphDocumentRevision, projectNodes],
+  );
+  const projectGraphController = useMemo(
+    () => new ProjectGraphController(project?.projectId),
+    [project?.projectId],
   );
 
   useEffect(() => {
@@ -724,6 +752,87 @@ export function App() {
     [],
   );
 
+  const applyPendingWorkspaceScroll = useCallback(
+    (state: WorkspaceState): WorkspaceState => {
+      let next = state;
+      for (const pending of pendingScrollPositionsRef.current.values()) {
+        next = workspaceReducer(next, {
+          type: 'update-scroll',
+          ...pending,
+        });
+      }
+      pendingScrollPositionsRef.current.clear();
+      return next;
+    },
+    [],
+  );
+
+  const commitWorkspaceScroll = useCallback((): void => {
+    if (scrollCommitTimerRef.current !== undefined) {
+      window.clearTimeout(scrollCommitTimerRef.current);
+      scrollCommitTimerRef.current = undefined;
+    }
+    if (pendingScrollPositionsRef.current.size === 0) {
+      return;
+    }
+    const current = applyPendingWorkspaceScroll(workspaceStateRef.current);
+    workspaceStateRef.current = current;
+    userInteractedRef.current = true;
+    resolveRestoreCandidate('ignore', serializeWorkspace(current));
+    dispatchWorkspace({ type: 'replace-workspace-state', state: current });
+  }, [applyPendingWorkspaceScroll, resolveRestoreCandidate]);
+
+  const serializeCurrentWorkspace = useCallback((): WorkspaceSessionSnapshot => {
+    commitWorkspaceScroll();
+    return serializeWorkspace(workspaceStateRef.current);
+  }, [commitWorkspaceScroll]);
+
+  const recordWorkspaceScroll = useCallback(
+    (
+      paneId: string,
+      tabId: string,
+      scrollTop: number,
+      settled = false,
+    ): void => {
+      if (closeRequestRef.current || restorePendingRef.current) {
+        return;
+      }
+      const key = `${paneId}\u0000${tabId}`;
+      const previous = pendingScrollPositionsRef.current.get(key);
+      if (previous?.scrollTop !== scrollTop) {
+        pendingScrollPositionsRef.current.set(key, {
+          paneId,
+          scrollTop,
+          tabId,
+        });
+      }
+      if (settled) {
+        commitWorkspaceScroll();
+        return;
+      }
+      if (pendingScrollPositionsRef.current.size === 0) {
+        return;
+      }
+      if (scrollCommitTimerRef.current !== undefined) {
+        window.clearTimeout(scrollCommitTimerRef.current);
+      }
+      scrollCommitTimerRef.current = window.setTimeout(
+        commitWorkspaceScroll,
+        WORKSPACE_SCROLL_SETTLE_MS,
+      );
+    },
+    [commitWorkspaceScroll],
+  );
+
+  useEffect(
+    () => () => {
+      if (scrollCommitTimerRef.current !== undefined) {
+        window.clearTimeout(scrollCommitTimerRef.current);
+      }
+    },
+    [],
+  );
+
   const dispatchUserAction = useCallback(
     (action: WorkspaceAction): void => {
       if (closeRequestRef.current || restorePendingRef.current) {
@@ -734,10 +843,24 @@ export function App() {
         action,
         preferencesController.preferences.editor.defaultMode,
       );
-      const current = workspaceStateRef.current;
+      const hadPendingScroll = pendingScrollPositionsRef.current.size > 0;
+      if (scrollCommitTimerRef.current !== undefined) {
+        window.clearTimeout(scrollCommitTimerRef.current);
+        scrollCommitTimerRef.current = undefined;
+      }
+      const current = applyPendingWorkspaceScroll(workspaceStateRef.current);
+      workspaceStateRef.current = current;
       const next = workspaceReducer(current, resolvedAction);
 
       if (next === current) {
+        if (hadPendingScroll) {
+          userInteractedRef.current = true;
+          resolveRestoreCandidate('ignore', serializeWorkspace(current));
+          dispatchWorkspace({
+            type: 'replace-workspace-state',
+            state: current,
+          });
+        }
         return;
       }
 
@@ -754,6 +877,7 @@ export function App() {
       }
     },
     [
+      applyPendingWorkspaceScroll,
       preferencesController.preferences.editor.defaultMode,
       recordProjectActivity,
       resolveRestoreCandidate,
@@ -787,7 +911,9 @@ export function App() {
 
       if (
         (action.type === 'open-target' ||
-          action.type === 'move-or-open-target') &&
+          action.type === 'move-or-open-target' ||
+          action.type === 'open-target-reusing-new-tab' ||
+          action.type === 'move-or-open-target-reusing-new-tab') &&
         isProjectTarget(action.target) &&
         projectRef.current?.projectId !== action.target.projectId
       ) {
@@ -884,23 +1010,29 @@ export function App() {
         }
       }
 
+      const exit = workspaceExitTarget(initial, action);
+      if (exit?.kind === 'tab') {
+        const motion =
+          workspacePaneHostRef.current?.animateTabExit(
+            exit.paneId,
+            exit.tabId,
+          ) ?? Promise.resolve();
+        flushSync(() => dispatchUserAction(action));
+        for (const nodeId of removedProjectNodeIds) {
+          recordProjectActivity('closed', nodeId);
+        }
+        await motion;
+        return true;
+      }
       if (action.type === 'close-all-project-tabs') {
         await workspacePaneHostRef.current?.animateAllTabsAndPanesExit();
-      } else {
-        const exit = workspaceExitTarget(initial, action);
-        if (exit?.kind === 'pane') {
-          await workspacePaneHostRef.current?.animatePaneExit(exit.paneId);
-        } else if (exit?.kind === 'tab-and-pane') {
-          await workspacePaneHostRef.current?.animateTabAndPaneExit(
-            exit.paneId,
-            exit.tabId,
-          );
-        } else if (exit?.kind === 'tab') {
-          await workspacePaneHostRef.current?.animateTabExit(
-            exit.paneId,
-            exit.tabId,
-          );
-        }
+      } else if (exit?.kind === 'pane') {
+        await workspacePaneHostRef.current?.animatePaneExit(exit.paneId);
+      } else if (exit?.kind === 'tab-and-pane') {
+        await workspacePaneHostRef.current?.animateTabAndPaneExit(
+          exit.paneId,
+          exit.tabId,
+        );
       }
       dispatchUserAction(action);
       for (const nodeId of removedProjectNodeIds) {
@@ -1049,9 +1181,9 @@ export function App() {
   );
 
   const openCreateProjectDialog = useCallback((): void => {
-    resolveRestoreCandidate('ignore', serializeWorkspace(workspaceStateRef.current));
+    resolveRestoreCandidate('ignore', serializeCurrentWorkspace());
     setCreateProjectOpen(true);
-  }, [resolveRestoreCandidate]);
+  }, [resolveRestoreCandidate, serializeCurrentWorkspace]);
 
   const createProject = useCallback(
     async (request: Parameters<FlyoffApi['createProject']>[0]) => {
@@ -1090,7 +1222,7 @@ export function App() {
   );
 
   const openProject = useCallback(async (): Promise<void> => {
-    resolveRestoreCandidate('ignore', serializeWorkspace(workspaceStateRef.current));
+    resolveRestoreCandidate('ignore', serializeCurrentWorkspace());
     if (!(await flushProjectDocuments())) {
       return;
     }
@@ -1119,6 +1251,7 @@ export function App() {
     flushProjectDocuments,
     notifyProjectError,
     resolveRestoreCandidate,
+    serializeCurrentWorkspace,
     translate,
   ]);
 
@@ -1297,6 +1430,41 @@ export function App() {
     [discardRemovedPageData],
   );
 
+  const moveProjectNodes = useCallback(
+    (request: Parameters<FlyoffApi['moveProjectNodes']>[0]) =>
+      enqueueWorkspaceTransition(async () => {
+        if (!(await flushProjectDocumentsForTreeMutation())) {
+          return unavailableProjectResult<ProjectNodesMutationOutcome>(
+            translate('projects.saveFailed'),
+          );
+        }
+
+        const operation = getApi().moveProjectNodes;
+        if (!operation) {
+          return unavailableProjectResult<ProjectNodesMutationOutcome>(
+            translate('projects.operationFailed'),
+          );
+        }
+        const result = await operation(request);
+        if (result.ok) {
+          cacheProjectNodes(result.value.nodes);
+          await Promise.all(
+            result.value.updatedDocumentNodeIds
+              .filter((nodeId) => documentController.getSnapshot(nodeId))
+              .map((nodeId) => documentController.reload(nodeId)),
+          );
+        }
+        return result;
+      }),
+    [
+      cacheProjectNodes,
+      documentController,
+      enqueueWorkspaceTransition,
+      flushProjectDocumentsForTreeMutation,
+      translate,
+    ],
+  );
+
   const searchProject = useCallback(
     (request: Parameters<FlyoffApi['searchProject']>[0]) => {
       const operation = getApi().searchProject;
@@ -1341,6 +1509,34 @@ export function App() {
     ],
   );
 
+  const trashProjectNodes = useCallback(
+    (request: Parameters<FlyoffApi['trashProjectNodes']>[0]) =>
+      enqueueWorkspaceTransition(async () => {
+        if (!(await flushProjectDocumentsForTreeMutation())) {
+          return unavailableProjectResult<TrashProjectNodeOutcome>(
+            translate('projects.saveFailed'),
+          );
+        }
+        const operation = getApi().trashProjectNodes;
+        if (!operation) {
+          return unavailableProjectResult<TrashProjectNodeOutcome>(
+            translate('projects.operationFailed'),
+          );
+        }
+        const result = await operation(request);
+        if (result.ok) {
+          await commitProjectNodeTrashed(result.value.nodeIds);
+        }
+        return result;
+      }),
+    [
+      commitProjectNodeTrashed,
+      enqueueWorkspaceTransition,
+      flushProjectDocumentsForTreeMutation,
+      translate,
+    ],
+  );
+
   const revealProjectPath = useCallback(
     (request: Parameters<FlyoffApi['revealProjectPath']>[0]) => {
       const operation = getApi().revealProjectPath;
@@ -1369,6 +1565,20 @@ export function App() {
     [translate],
   );
 
+  const copyProjectPaths = useCallback(
+    (request: Parameters<FlyoffApi['copyProjectPaths']>[0]) => {
+      const operation = getApi().copyProjectPaths;
+      return operation
+        ? operation(request)
+        : Promise.resolve(
+            unavailableProjectResult<null>(
+              translate('projects.operationFailed'),
+            ),
+          );
+    },
+    [translate],
+  );
+
   const openProjectNode = useCallback(
     (node: ProjectTreeNode): void => {
       if (node.kind !== 'page' || !projectRef.current) {
@@ -1384,6 +1594,30 @@ export function App() {
           pageType: node.pageType,
         },
       });
+    },
+    [cacheProjectNodes, dispatchGuardedTabAction],
+  );
+
+  const openProjectNodes = useCallback(
+    (nodes: readonly ProjectPageNode[]): void => {
+      const activeProject = projectRef.current;
+      if (!activeProject || nodes.length === 0) {
+        return;
+      }
+      cacheProjectNodes(nodes);
+      void (async () => {
+        for (const node of nodes) {
+          await dispatchGuardedTabAction({
+            type: 'open-target',
+            target: {
+              type: 'project-content',
+              projectId: activeProject.projectId,
+              nodeId: node.nodeId,
+              pageType: node.pageType,
+            },
+          });
+        }
+      })();
     },
     [cacheProjectNodes, dispatchGuardedTabAction],
   );
@@ -1498,6 +1732,7 @@ export function App() {
     async (
       target: ProjectInternalLinkTarget | ProjectLinkTarget,
       navigation?: { headingPath: readonly string[]; offset?: number },
+      reuseNewTab = false,
     ): Promise<void> => {
       const currentProject = projectRef.current;
       const getNode = getApi().getProjectNode;
@@ -1517,15 +1752,23 @@ export function App() {
       }
 
       cacheProjectNodes([node]);
-      await dispatchGuardedTabAction({
-        type: 'open-target',
-        target: {
-          type: 'project-content',
-          projectId: currentProject.projectId,
-          nodeId: node.nodeId,
-          pageType: node.pageType,
-        },
-      });
+      const contentTarget = {
+        type: 'project-content' as const,
+        projectId: currentProject.projectId,
+        nodeId: node.nodeId,
+        pageType: node.pageType,
+      };
+      await dispatchGuardedTabAction(
+        reuseNewTab
+          ? {
+              type: 'open-target-reusing-new-tab',
+              target: contentTarget,
+            }
+          : {
+              type: 'open-target',
+              target: contentTarget,
+            },
+      );
       linkNavigationSequenceRef.current += 1;
       setLinkNavigation({
         headingPath:
@@ -1811,10 +2054,15 @@ export function App() {
       submitCloseResponse({
         requestId: request.requestId,
         decision: 'confirm',
-        session: serializeWorkspace(workspaceStateRef.current),
+        session: serializeCurrentWorkspace(),
       });
     });
-  }, [flushProjectDocuments, submitCloseResponse, waitForWorkspaceTransitions]);
+  }, [
+    flushProjectDocuments,
+    serializeCurrentWorkspace,
+    submitCloseResponse,
+    waitForWorkspaceTransitions,
+  ]);
 
   const restorePreviousSession = useCallback(async (): Promise<void> => {
     const candidate = restoreCandidateRef.current;
@@ -1965,7 +2213,7 @@ export function App() {
           void api
             .resolveRestorableTabSession?.(
               'ignore',
-              serializeWorkspace(workspaceStateRef.current),
+              serializeCurrentWorkspace(),
             )
             .catch(() => undefined);
           return;
@@ -1975,7 +2223,7 @@ export function App() {
           void api
             .resolveRestorableTabSession?.(
               'ignore',
-              serializeWorkspace(workspaceStateRef.current),
+              serializeCurrentWorkspace(),
             )
             .catch(() => undefined);
           return;
@@ -1994,6 +2242,7 @@ export function App() {
     preferencesController.preferences.general.startupBehavior,
     preferencesController.ready,
     restorePreviousSession,
+    serializeCurrentWorkspace,
   ]);
 
   useEffect(() => {
@@ -2002,11 +2251,15 @@ export function App() {
     }
 
     const timeout = window.setTimeout(() => {
-      resolveRestoreCandidate('ignore', serializeWorkspace(workspaceStateRef.current));
+      resolveRestoreCandidate('ignore', serializeCurrentWorkspace());
     }, 8_000);
 
     return () => window.clearTimeout(timeout);
-  }, [resolveRestoreCandidate, restoreCandidate]);
+  }, [
+    resolveRestoreCandidate,
+    restoreCandidate,
+    serializeCurrentWorkspace,
+  ]);
 
   useEffect(() => {
     if (
@@ -2072,7 +2325,7 @@ export function App() {
         return;
       }
 
-      resolveRestoreCandidate('ignore', serializeWorkspace(workspaceStateRef.current));
+      resolveRestoreCandidate('ignore', serializeCurrentWorkspace());
 
       const previous = closeRequestRef.current;
       if (previous && previous.requestId !== request.requestId) {
@@ -2093,7 +2346,7 @@ export function App() {
         submitCloseResponse({
           requestId: request.requestId,
           decision: 'confirm',
-          session: serializeWorkspace(workspaceStateRef.current),
+          session: serializeCurrentWorkspace(),
         });
         return;
       }
@@ -2114,6 +2367,7 @@ export function App() {
     executeRendererMenuCommand,
     resolveRestoreCandidate,
     respondToClose,
+    serializeCurrentWorkspace,
     submitCloseResponse,
   ]);
 
@@ -2274,6 +2528,13 @@ export function App() {
         };
       }
 
+      if (target.type === 'project-graph') {
+        return {
+          title: translate('rail.graph'),
+          icon: projectGraphIcon,
+        };
+      }
+
       const node = projectNodes.get(target.nodeId);
       return {
         title: node
@@ -2350,7 +2611,7 @@ export function App() {
               {...(props as InternalPageProps)}
               frequentNotes={frequentNewTabNotes}
               onOpenNote={(note) =>
-                void openProjectLinkTarget(note)
+                void openProjectLinkTarget(note, undefined, true)
               }
               onSearch={project ? searchNewTab : undefined}
               recentNotes={recentNewTabNotes}
@@ -2391,6 +2652,26 @@ export function App() {
         );
       }
 
+      if (target.type === 'project-graph') {
+        return (
+          <ProjectGraphPanel
+            controller={projectGraphController}
+            initialViewState={readProjectGraphViewState(
+              props.descriptor.pageState,
+            )}
+            loadGraph={loadProjectGraph}
+            onError={notifyProjectError}
+            onOpenNode={(node) => void openProjectGraphNode(node)}
+            onViewStateChange={(view) =>
+              props.onStateChange(createProjectGraphPageState(view))
+            }
+            refreshSignal={graphRefreshSignal}
+            translate={translate}
+            variant="page"
+          />
+        );
+      }
+
       const node = projectNodes.get(target.nodeId);
       return (
         <ProjectContentPage
@@ -2414,11 +2695,16 @@ export function App() {
       );
     },
     [
+      graphRefreshSignal,
+      loadProjectGraph,
+      notifyProjectError,
       openCreateProjectDialog,
       openProject,
+      openProjectGraphNode,
       openProjectLinkTarget,
       frequentNewTabNotes,
       project,
+      projectGraphController,
       projectNodes,
       projectPageRuntime,
       preferencesController.preferences.documents.showPath,
@@ -2506,6 +2792,7 @@ export function App() {
         )}
         {project ? (
           <ProjectSidebar
+            key={project.projectId}
             activeNodeId={
               activeProjectTarget?.type === 'project-content'
                 ? activeProjectTarget.nodeId
@@ -2515,10 +2802,13 @@ export function App() {
             hidden={layout.railViewId !== RAIL_VIEW_IDS.project}
             loadChildren={listProjectChildren}
             onBeforeNodeChange={() => flushProjectDocumentsForTreeMutation()}
+            onBeforeNodesChange={() => flushProjectDocumentsForTreeMutation()}
             onCopyPath={copyProjectPath}
+            onCopyPaths={copyProjectPaths}
             onCreateNode={createProjectNode}
             onError={notifyProjectError}
             onMoveNode={moveProjectNode}
+            onMoveNodes={moveProjectNodes}
             onNodeChanged={(node) => cacheProjectNodes([node])}
             onNotice={notifyProjectInfo}
             onCloseProject={() => void closeProjectWorkspace()}
@@ -2528,6 +2818,10 @@ export function App() {
             onOpenNode={(node) => {
               setRailViewId(RAIL_VIEW_IDS.project);
               openProjectNode(node);
+            }}
+            onOpenNodes={(nodes) => {
+              setRailViewId(RAIL_VIEW_IDS.project);
+              openProjectNodes(nodes);
             }}
             onRequestProperties={openPageProperties}
             onOpenOverview={() => {
@@ -2551,6 +2845,7 @@ export function App() {
             onRenameNode={renameProjectNode}
             onSearch={searchProject}
             onTrashNode={trashProjectNode}
+            onTrashNodes={trashProjectNodes}
             overviewActive={
               layout.railViewId !== RAIL_VIEW_IDS.settings &&
               activeProjectTarget?.type === 'project-overview'
@@ -2567,8 +2862,22 @@ export function App() {
         {workspaceContext === 'project' &&
         layout.railViewId === RAIL_VIEW_IDS.graph ? (
           <ProjectGraphPanel
+            controller={projectGraphController}
             loadGraph={loadProjectGraph}
             onError={notifyProjectError}
+            onOpenInTab={() => {
+              setRailViewId(RAIL_VIEW_IDS.project);
+              void dispatchGuardedTabAction({
+                type: 'open-target',
+                initialPageState: createProjectGraphPageState(
+                  projectGraphController.viewState(),
+                ),
+                target: {
+                  type: 'project-graph',
+                  projectId: project!.projectId,
+                },
+              });
+            }}
             onOpenNode={(node) => void openProjectGraphNode(node)}
             refreshSignal={graphRefreshSignal}
             translate={translate}
@@ -2650,16 +2959,30 @@ export function App() {
                 target,
               })
             }
-            onNewTab={(paneId) =>
-              dispatchUserAction({
-                type: 'open-target',
-                paneId,
-                target: {
-                  type: 'internal',
-                  pageId: INTERNAL_PAGE_IDS.newTab,
-                  instanceKey: crypto.randomUUID(),
-                },
-              })
+            onOpenTargets={(paneId, targets) => {
+              void (async () => {
+                for (const target of targets) {
+                  await dispatchGuardedTabAction({
+                    type: 'move-or-open-target',
+                    paneId,
+                    target,
+                  });
+                }
+              })();
+            }}
+            onNewTab={
+              workspaceContext === 'project'
+                ? (paneId) =>
+                    dispatchUserAction({
+                      type: 'open-target',
+                      paneId,
+                      target: {
+                        type: 'internal',
+                        pageId: INTERNAL_PAGE_IDS.newTab,
+                        instanceKey: crypto.randomUUID(),
+                      },
+                    })
+                : undefined
             }
             onPageStateChange={(paneId, tabId, pageState) =>
               dispatchUserAction({
@@ -2672,14 +2995,7 @@ export function App() {
             onResizeSplit={(splitId, ratio) =>
               dispatchUserAction({ type: 'resize-split', splitId, ratio })
             }
-            onScrollChange={(paneId, tabId, scrollTop) =>
-              dispatchUserAction({
-                type: 'update-scroll',
-                paneId,
-                tabId,
-                scrollTop,
-              })
-            }
+            onScrollChange={recordWorkspaceScroll}
             onSelectPane={(paneId) =>
               dispatchUserAction({ type: 'select-pane', paneId })
             }
@@ -2719,6 +3035,20 @@ export function App() {
                 type: 'split-pane-with-target',
                 targetPaneId,
                 target,
+                direction,
+                before,
+              })
+            }
+            onSplitPaneWithTargets={(
+              targetPaneId,
+              targets,
+              direction,
+              before,
+            ) =>
+              dispatchUserAction({
+                type: 'split-pane-with-targets',
+                targetPaneId,
+                targets,
                 direction,
                 before,
               })
@@ -2764,7 +3094,7 @@ export function App() {
       {restoreCandidate ? (
         <SessionRestoreToast
           onIgnore={() =>
-            resolveRestoreCandidate('ignore', serializeWorkspace(workspaceStateRef.current))
+            resolveRestoreCandidate('ignore', serializeCurrentWorkspace())
           }
           onRestore={() =>
             void restorePreviousSession()

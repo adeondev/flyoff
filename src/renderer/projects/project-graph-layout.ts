@@ -2,6 +2,7 @@ import type {
   ProjectGraphNode,
   ProjectGraphSnapshot,
 } from '../../shared/contracts';
+import type { ProjectGraphSettings } from './project-graph-settings';
 
 export interface ProjectGraphLayoutNode extends ProjectGraphNode {
   pinned: boolean;
@@ -39,7 +40,7 @@ export interface ProjectGraphPoint {
 }
 
 export const PROJECT_GRAPH_MIN_ZOOM = 0.18;
-export const PROJECT_GRAPH_MAX_ZOOM = 3.4;
+export const PROJECT_GRAPH_MAX_ZOOM = 6;
 
 function nodeHash(value: string): number {
   let hash = 2_166_136_261;
@@ -102,17 +103,24 @@ export function createProjectGraphLayout(
 export function stepProjectGraphLayout(
   layout: ProjectGraphLayout,
   elapsedSeconds: number,
+  settings: ProjectGraphSettings,
 ): number {
-  const delta = Math.min(0.032, Math.max(0.001, elapsedSeconds));
+  const delta = Math.min(
+    0.05,
+    Math.max(0.001, elapsedSeconds * settings.simulationSpeed),
+  );
   const forces = new Map<
     ProjectGraphLayoutNode,
     { x: number; y: number }
   >();
-  const cellSize = 150;
+  const cellSize = Math.max(90, settings.nodeDistance * 1.35);
   const cells = new Map<string, ProjectGraphLayoutNode[]>();
 
   for (const node of layout.nodes) {
-    forces.set(node, { x: -node.x * 0.025, y: -node.y * 0.025 });
+    forces.set(node, {
+      x: -node.x * settings.centerStrength,
+      y: -node.y * settings.centerStrength,
+    });
     const cellX = Math.floor(node.x / cellSize);
     const cellY = Math.floor(node.y / cellSize);
     const key = `${cellX}:${cellY}`;
@@ -156,7 +164,7 @@ export function stepProjectGraphLayout(
             continue;
           }
           const distance = Math.sqrt(distanceSquared);
-          const strength = 7_200 / (distanceSquared + 80);
+          const strength = settings.repulsion / (distanceSquared + 80);
           const forceX = (dx / distance) * strength;
           const forceY = (dy / distance) * strength;
           const nodeForce = forces.get(node)!;
@@ -174,9 +182,15 @@ export function stepProjectGraphLayout(
     const dx = edge.target.x - edge.source.x;
     const dy = edge.target.y - edge.source.y;
     const distance = Math.max(1, Math.hypot(dx, dy));
-    const restLength = 112 - Math.min(22, Math.log2(edge.weight + 1) * 8);
+    const restLength =
+      settings.nodeDistance -
+      Math.min(
+        settings.nodeDistance * 0.196,
+        Math.log2(edge.weight + 1) * (settings.nodeDistance / 14),
+      );
     const strength =
-      (distance - restLength) * (0.055 + Math.min(edge.weight, 5) * 0.008);
+      (distance - restLength) *
+      (settings.springStrength + Math.min(edge.weight, 5) * 0.008);
     const forceX = (dx / distance) * strength;
     const forceY = (dy / distance) * strength;
     const sourceForce = forces.get(edge.source)!;
@@ -187,7 +201,7 @@ export function stepProjectGraphLayout(
     targetForce.y -= forceY;
   }
 
-  const damping = Math.exp(-5.4 * delta);
+  const damping = Math.exp(-settings.damping * delta);
   let energy = 0;
   for (const node of layout.nodes) {
     if (node.pinned) {
@@ -199,9 +213,10 @@ export function stepProjectGraphLayout(
     node.vx = (node.vx + force.x * delta * 48) * damping;
     node.vy = (node.vy + force.y * delta * 48) * damping;
     const speed = Math.hypot(node.vx, node.vy);
-    if (speed > 720) {
-      node.vx = (node.vx / speed) * 720;
-      node.vy = (node.vy / speed) * 720;
+    const maximumSpeed = 720 * Math.max(1, settings.simulationSpeed);
+    if (speed > maximumSpeed) {
+      node.vx = (node.vx / speed) * maximumSpeed;
+      node.vy = (node.vy / speed) * maximumSpeed;
     }
     node.x += node.vx * delta;
     node.y += node.vy * delta;

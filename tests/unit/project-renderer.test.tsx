@@ -54,12 +54,16 @@ const project: ProjectSummary = {
   formatVersion: 1,
 };
 const folder: ProjectTreeNode = {
+  canContainChildren: true,
+  hasChildren: true,
   nodeId: '56ef1bfa-1355-4ba0-ac9b-b66da816006c',
   parentId: null,
   name: 'Docs',
   kind: 'folder',
 };
 const note: ProjectTreeNode = {
+  canContainChildren: true,
+  hasChildren: false,
   nodeId: 'ffbf978c-43d7-4135-a3ea-f6e4e3ec76fb',
   parentId: null,
   name: 'Todo',
@@ -67,6 +71,8 @@ const note: ProjectTreeNode = {
   pageType: 'markdown',
 };
 const nestedNote: ProjectTreeNode = {
+  canContainChildren: true,
+  hasChildren: false,
   nodeId: 'fa1a9d28-9cb3-45fe-a11c-28e8fe3cfb8b',
   parentId: folder.nodeId,
   name: 'Plan',
@@ -912,6 +918,40 @@ describe('project sidebar', () => {
     expect(screen.getByRole('button', { name: 'Todo' })).toBeTruthy();
   });
 
+  it('executes actions from a node context menu without starting marquee selection', async () => {
+    render(
+      <ProjectSidebar
+        loadChildren={vi.fn(async () => ({ ok: true as const, value: [note] }))}
+        onCreateNode={vi.fn()}
+        onMoveNode={vi.fn()}
+        onOpenNode={vi.fn()}
+        onOpenOverview={vi.fn()}
+        onRenameNode={vi.fn()}
+        onTrashNode={vi.fn()}
+        project={project}
+        translate={translate}
+      />,
+    );
+
+    const node = await screen.findByRole('button', { name: 'Todo' });
+    const item = node.closest<HTMLElement>('[role="treeitem"]')!;
+    fireEvent.contextMenu(item, { clientX: 20, clientY: 20 });
+    const rename = screen.getByRole('menuitem', { name: 'projects.rename' });
+    fireEvent.pointerDown(rename, {
+      button: 0,
+      clientX: 24,
+      clientY: 24,
+      isPrimary: true,
+      pointerId: 8,
+      pointerType: 'mouse',
+    });
+    fireEvent.click(rename);
+
+    expect(
+      screen.getByRole('textbox', { name: 'projects.name' }),
+    ).toBeTruthy();
+  });
+
   it('moves a node onto a folder with drag and drop', async () => {
     const moved = { ...note, parentId: folder.nodeId };
     const onMoveNode = vi.fn(async () => ({
@@ -1559,8 +1599,8 @@ describe('Markdown editor', () => {
     });
     expect(editor.scrollTop).toBe(72);
     editor.scrollTop = 144;
-    fireEvent.scroll(editor);
-    expect(onScrollChange).toHaveBeenCalledWith(144);
+    fireEvent(editor, new Event('scrollend', { bubbles: true }));
+    expect(onScrollChange).toHaveBeenCalledWith(144, true);
   });
 
   it('commits Enter and multiline paste as visible, undoable steps', async () => {

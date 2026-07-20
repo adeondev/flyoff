@@ -37,6 +37,11 @@ export interface ProjectOverviewTabTarget {
   projectId: string;
 }
 
+export interface ProjectGraphTabTarget {
+  type: 'project-graph';
+  projectId: string;
+}
+
 export interface ProjectContentTabTarget {
   type: 'project-content';
   projectId: string;
@@ -46,6 +51,7 @@ export interface ProjectContentTabTarget {
 
 export type ProjectTabTarget =
   | ProjectOverviewTabTarget
+  | ProjectGraphTabTarget
   | ProjectContentTabTarget;
 
 export type TabTarget = InternalTabTarget | ProjectTabTarget;
@@ -176,6 +182,13 @@ export function isTabTarget(value: unknown): value is TabTarget {
     );
   }
 
+  if (target.type === 'project-graph') {
+    return (
+      hasOnlyKeys(target, ['type', 'projectId']) &&
+      isProjectIdentifier(target.projectId)
+    );
+  }
+
   return (
     target.type === 'project-content' &&
     hasOnlyKeys(target, ['type', 'projectId', 'nodeId', 'pageType']) &&
@@ -215,6 +228,8 @@ export function getTabTargetKey(target: TabTarget): string {
       }`;
     case 'project-overview':
       return `project-overview:${target.projectId}`;
+    case 'project-graph':
+      return `project-graph:${target.projectId}`;
     case 'project-content':
       return `project-content:${target.projectId}:${target.nodeId}`;
   }
@@ -228,6 +243,8 @@ export function createTabIdForTarget(target: TabTarget): string {
       }`;
     case 'project-overview':
       return `project:${target.projectId}:overview`;
+    case 'project-graph':
+      return `project:${target.projectId}:graph`;
     case 'project-content':
       return `project:${target.projectId}:node:${target.nodeId}`;
   }
@@ -397,6 +414,7 @@ function shouldKeepCurrentRawTab(value: unknown): boolean {
 
   return (
     rawTarget.type === 'project-overview' ||
+    rawTarget.type === 'project-graph' ||
     rawTarget.type === 'project-content'
   );
 }

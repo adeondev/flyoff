@@ -7,6 +7,7 @@ import {
   type RefObject,
 } from 'react';
 
+import { useScrollPositionReporter } from '../hooks/use-scroll-position-reporter';
 import type { FlyoffApi } from '../../shared/contracts';
 import type { SourceEditTransaction } from './markdown-history';
 import {
@@ -25,6 +26,7 @@ import {
   type SourceSelection,
 } from './source-caret';
 import {
+  handleSourceHorizontalNavigation,
   installSourceMouseSelection,
   revealSourceSelectionAfterNavigation,
 } from './source-interaction';
@@ -62,7 +64,7 @@ export interface RichSourceEditorProps {
   onKeyDown?: (event: KeyboardEvent<HTMLDivElement>) => void;
   onContextMenuRequest?: (request: SourceMenuRequest) => void;
   onRedo: () => void;
-  onScroll?: (scrollTop: number) => void;
+  onScroll?: (scrollTop: number, settled?: boolean) => void;
   onSelectionChange: (selection: SourceSelection) => void;
   onTransaction: (transaction: SourceEditTransaction) => void;
   onUndo: () => void;
@@ -98,6 +100,7 @@ export function RichSourceEditor({
   spellcheckScope = '',
   value,
 }: RichSourceEditorProps) {
+  const scrollReporter = useScrollPositionReporter(onScroll);
   const composingRef = useRef(false);
   const [spellcheckRevision, setSpellcheckRevision] = useState(0);
   const spellcheckCacheRef = useRef(new Map<string, boolean>());
@@ -664,6 +667,18 @@ export function RichSourceEditor({
 
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
     onKeyDown?.(event);
+    const nextSelection = handleSourceHorizontalNavigation(
+      event.currentTarget,
+      event.nativeEvent,
+      stateRef.current.content,
+    );
+    if (nextSelection) {
+      stateRef.current = {
+        content: stateRef.current.content,
+        selection: nextSelection,
+      };
+      callbacksRef.current.onSelectionChange(nextSelection);
+    }
     revealSourceSelectionAfterNavigation(event.currentTarget, event);
   }
 
@@ -692,7 +707,12 @@ export function RichSourceEditor({
         data-spellcheck-enabled={String(spellCheck)}
         onContextMenu={handleContextMenu}
         onKeyDown={handleKeyDown}
-        onScroll={(event) => onScroll?.(event.currentTarget.scrollTop)}
+        onScroll={(event) =>
+          scrollReporter.reportScroll(event.currentTarget.scrollTop)
+        }
+        onScrollEnd={(event) =>
+          scrollReporter.reportScrollEnd(event.currentTarget.scrollTop)
+        }
         ref={editorRef}
         role="textbox"
         spellCheck={spellCheck}

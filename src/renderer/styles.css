@@ -103,7 +103,6 @@ img {
     )
   );
   padding-left: max(8px, env(titlebar-area-x, 0px));
-  border-bottom: 1px solid var(--color-border);
   background: var(--color-titlebar);
   user-select: none;
   -webkit-app-region: drag;
@@ -236,11 +235,6 @@ img {
   min-height: 0;
   overflow: hidden;
   background: var(--color-surface);
-  border-right: 1px solid var(--color-border);
-}
-
-.workspace[data-collapsed] .home__sidebar {
-  border-right-color: transparent;
 }
 
 .home__navigation {
@@ -400,6 +394,10 @@ img {
   overflow: hidden;
 }
 
+.workspace-pane[data-pane-exiting] > .page-host {
+  display: none;
+}
+
 @keyframes workspace-split-enter-row-start {
   from {
     grid-template-columns:
@@ -502,6 +500,7 @@ img {
   height: 100%;
   min-width: 0;
   min-height: 0;
+  container: workspace-pane / inline-size;
   grid-template-rows: 44px minmax(0, 1fr);
   background: var(--color-background);
   box-shadow: inset 0 0 0 1px transparent;
@@ -527,6 +526,16 @@ img {
   display: flex;
   min-width: 0;
   background: var(--color-titlebar);
+}
+
+@container workspace-pane (max-width: 320px) {
+  .workspace-pane__actions {
+    padding-inline: 1px 4px;
+  }
+
+  .workspace-pane__action {
+    width: 27px;
+  }
 }
 
 .workspace-pane__bar .pages-bar {
@@ -686,7 +695,6 @@ img {
 .pages-bar {
   display: flex;
   min-width: 0;
-  border-bottom: 1px solid var(--color-border);
   background: var(--color-titlebar);
   user-select: none;
 }
@@ -1479,6 +1487,44 @@ html[data-workspace-dragging] *::after {
 
   .new-tab-page__books {
     max-width: min(420px, 92%);
+  }
+}
+
+@container workspace-pane (max-width: 480px) {
+  .new-tab-page {
+    padding-inline: 14px;
+  }
+
+  .new-tab-page__content {
+    width: 100%;
+  }
+
+  .new-tab-page__activity {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .new-tab-page__books {
+    max-width: min(72%, 240px);
+  }
+}
+
+@container workspace-pane (max-width: 320px) {
+  .new-tab-page {
+    padding-inline: 9px;
+  }
+
+  .new-tab-page__search {
+    min-height: 46px;
+    padding-inline: 14px;
+  }
+
+  .new-tab-page__search-icon {
+    width: 24px;
+    height: 24px;
+  }
+
+  .new-tab-page__note {
+    padding-inline: 8px;
   }
 }
 

@@ -114,49 +114,56 @@ export function SettingsPage({ translate }: InternalPageProps) {
   return (
     <main
       aria-busy={!ready || saveStatus === 'saving'}
-      className="settings-page"
+      className="settings-page-container"
     >
-      <aside className="settings-page__sidebar">
-        <div className="settings-page__heading">
-          <h1>{translate('settings.title')}</h1>
-        </div>
-        <input
-          aria-label={translate('settings.search')}
-          onChange={(event) => setQuery(event.currentTarget.value)}
-          placeholder={translate('settings.search')}
-          type="search"
-          value={query}
-        />
-        <nav aria-label={translate('settings.title')}>
-          {sections.map((section) => (
-            <button
-              aria-current={activeSection === section.id ? 'page' : undefined}
-              key={section.id}
-              onClick={() => selectSection(section.id)}
-              type="button"
-            >
-              {section.label}
+      <div className="settings-page">
+        <aside className="settings-page__sidebar">
+          <div className="settings-page__heading">
+            <h1>{translate('settings.title')}</h1>
+          </div>
+          <input
+            aria-label={translate('settings.search')}
+            onChange={(event) => setQuery(event.currentTarget.value)}
+            placeholder={translate('settings.search')}
+            type="search"
+            value={query}
+          />
+          <nav aria-label={translate('settings.title')}>
+            {sections.map((section) => (
+              <button
+                aria-current={
+                  activeSection === section.id ? 'page' : undefined
+                }
+                key={section.id}
+                onClick={() => selectSection(section.id)}
+                type="button"
+              >
+                {section.label}
+              </button>
+            ))}
+          </nav>
+          <div className="settings-page__sidebar-footer">
+            <span aria-live="polite">{status}</span>
+            <button disabled={!ready} onClick={resetAll} type="button">
+              {translate('settings.resetAll')}
             </button>
-          ))}
-        </nav>
-        <div className="settings-page__sidebar-footer">
-          <span aria-live="polite">{status}</span>
-          <button disabled={!ready} onClick={resetAll} type="button">
-            {translate('settings.resetAll')}
-          </button>
+          </div>
+        </aside>
+        <div className="settings-page__content">
+          {query
+            ? sections.map((section) => (
+                <div
+                  className="settings-page__search-section"
+                  key={section.id}
+                >
+                  {renderSection(section.id)}
+                </div>
+              ))
+            : renderSection(activeSection)}
+          <p className="settings-page__no-results">
+            {translate('settings.noResults')}
+          </p>
         </div>
-      </aside>
-      <div className="settings-page__content">
-        {query
-          ? sections.map((section) => (
-              <div className="settings-page__search-section" key={section.id}>
-                {renderSection(section.id)}
-              </div>
-            ))
-          : renderSection(activeSection)}
-        <p className="settings-page__no-results">
-          {translate('settings.noResults')}
-        </p>
       </div>
     </main>
   );

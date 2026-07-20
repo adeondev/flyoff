@@ -31,6 +31,7 @@ import type {
   LockProjectPageRequest,
   ListProjectBacklinksRequest,
   MoveProjectNodeRequest,
+  MoveProjectNodesRequest,
   ProjectBacklinksOutcome,
   ProjectGraphSnapshot,
   ProjectInternalLinkRequest,
@@ -38,7 +39,9 @@ import type {
   ProjectLinkTarget,
   ProjectLocationSelection,
   ProjectNodeMutationOutcome,
+  ProjectNodesMutationOutcome,
   ProjectPathRequest,
+  ProjectPathsRequest,
   ProjectPageProperties,
   ProjectResult,
   ProjectSearchOutcome,
@@ -54,6 +57,7 @@ import type {
   ProtectProjectPageRequest,
   UnlockProjectPageRequest,
   TrashProjectNodeRequest,
+  TrashProjectNodesRequest,
   TrashProjectNodeOutcome,
 } from './projects';
 import type {
@@ -152,14 +156,23 @@ export interface FlyoffApi {
   moveProjectNode(
     request: MoveProjectNodeRequest,
   ): Promise<ProjectResult<ProjectNodeMutationOutcome>>;
+  moveProjectNodes(
+    request: MoveProjectNodesRequest,
+  ): Promise<ProjectResult<ProjectNodesMutationOutcome>>;
   trashProjectNode(
     request: TrashProjectNodeRequest,
+  ): Promise<ProjectResult<TrashProjectNodeOutcome>>;
+  trashProjectNodes(
+    request: TrashProjectNodesRequest,
   ): Promise<ProjectResult<TrashProjectNodeOutcome>>;
   revealProjectPath(
     request: ProjectPathRequest,
   ): Promise<ProjectResult<null>>;
   copyProjectPath(
     request: ProjectPathRequest,
+  ): Promise<ProjectResult<null>>;
+  copyProjectPaths(
+    request: ProjectPathsRequest,
   ): Promise<ProjectResult<null>>;
   readMarkdownDocument(
     request: ReadMarkdownDocumentRequest,

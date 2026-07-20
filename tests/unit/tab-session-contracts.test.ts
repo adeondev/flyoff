@@ -69,8 +69,23 @@ describe('tab session contracts', () => {
           scrollTop: 48,
           pageState: { version: 1, data: { mode: 'source' } },
         },
+        {
+          tabId: `project:${PROJECT_ID}:graph`,
+          target: {
+            type: 'project-graph',
+            projectId: PROJECT_ID,
+          },
+          scrollTop: 0,
+          pageState: {
+            version: 1,
+            data: {
+              camera: { x: 12, y: -8, zoom: 1.25 },
+              selectedNodeId: NODE_ID,
+            },
+          },
+        },
       ],
-      activeTabId: `project:${PROJECT_ID}:node:${NODE_ID}`,
+      activeTabId: `project:${PROJECT_ID}:graph`,
     };
 
     expect(isTabSessionSnapshot(home)).toBe(true);

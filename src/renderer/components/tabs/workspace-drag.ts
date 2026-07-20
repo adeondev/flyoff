@@ -20,7 +20,7 @@ export interface WorkspaceTabDragPayload {
 export interface WorkspaceProjectNodeDragPayload {
   kind: 'project-node';
   sessionId: string;
-  target: Extract<TabTarget, { type: 'project-content' }>;
+  targets: readonly Extract<TabTarget, { type: 'project-content' }>[];
 }
 
 export type WorkspaceDragPayload =
@@ -227,16 +227,22 @@ export function readWorkspaceDrag(
   const projectNode = parsePayload<WorkspaceProjectNodeDragPayload>(
     dataTransfer.getData(WORKSPACE_PROJECT_NODE_DRAG_TYPE),
     (parsed) => {
-      const target = parsed.target;
+      const targets = parsed.targets;
       return (
         parsed.kind === 'project-node' &&
         typeof parsed.sessionId === 'string' &&
-        typeof target === 'object' &&
-        target !== null &&
-        (target as Record<string, unknown>).type === 'project-content' &&
-        typeof (target as Record<string, unknown>).projectId === 'string' &&
-        typeof (target as Record<string, unknown>).nodeId === 'string' &&
-        typeof (target as Record<string, unknown>).pageType === 'string'
+        Array.isArray(targets) &&
+        targets.length > 0 &&
+        targets.length <= 500 &&
+        targets.every(
+          (target) =>
+            typeof target === 'object' &&
+            target !== null &&
+            (target as Record<string, unknown>).type === 'project-content' &&
+            typeof (target as Record<string, unknown>).projectId === 'string' &&
+            typeof (target as Record<string, unknown>).nodeId === 'string' &&
+            typeof (target as Record<string, unknown>).pageType === 'string',
+        )
       );
     },
   );
@@ -272,7 +278,7 @@ export function beginWorkspaceTabPointerDrag(
 }
 
 export function beginWorkspaceProjectNodePointerDrag(
-  target: WorkspaceProjectNodeDragPayload['target'],
+  targets: WorkspaceProjectNodeDragPayload['targets'],
   pointerId: number,
   clientX: number,
   clientY: number,
@@ -281,7 +287,7 @@ export function beginWorkspaceProjectNodePointerDrag(
     payload: {
       kind: 'project-node',
       sessionId: nextWorkspaceDragId(),
-      target,
+      targets,
     },
     pointerId,
     startX: clientX,
@@ -377,17 +383,17 @@ export function writeWorkspaceTabDrag(
 
 export function writeWorkspaceProjectNodeDrag(
   dataTransfer: DataTransfer,
-  target: WorkspaceProjectNodeDragPayload['target'],
+  targets: WorkspaceProjectNodeDragPayload['targets'],
 ): void {
   const candidate = pointerDragCandidate?.payload;
   const payload: WorkspaceProjectNodeDragPayload =
     candidate?.kind === 'project-node' &&
-    getTargetKey(candidate.target) === getTargetKey(target)
+    getTargetKeys(candidate.targets) === getTargetKeys(targets)
       ? candidate
       : {
           kind: 'project-node',
           sessionId: nextWorkspaceDragId(),
-          target,
+          targets,
         };
   activeWorkspaceDrag = payload;
   dataTransfer.setData(
@@ -404,8 +410,13 @@ export function setWorkspaceDragActive(active: boolean): void {
   }
 }
 
-function getTargetKey(
-  target: WorkspaceProjectNodeDragPayload['target'],
+function getTargetKeys(
+  targets: WorkspaceProjectNodeDragPayload['targets'],
 ): string {
-  return `${target.projectId}:${target.nodeId}:${target.pageType}`;
+  return targets
+    .map(
+      (target) =>
+        `${target.projectId}:${target.nodeId}:${target.pageType}`,
+    )
+    .join('|');
 }

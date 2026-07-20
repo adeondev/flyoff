@@ -5,10 +5,55 @@ import {
   type BlockNode,
   type InlineNode,
 } from '../../shared/markdown';
+import {
+  twemojiAssetUrl,
+  twemojiSegments,
+} from '../components/twemoji';
 
 const SCHEME = /^([a-z][a-z0-9+.-]*):/i;
 const ALLOWED_ASSET_SCHEMES = /^(https?|flyoff)$/i;
 const ALLOWED_EXTERNAL_SCHEMES = /^(https?|mailto)$/i;
+function appendTwemojiText(parent: Node, value: string): void {
+  for (const segment of twemojiSegments(value)) {
+    if (!segment.codepoint || !segment.emoji) {
+      parent.appendChild(document.createTextNode(segment.text));
+      continue;
+    }
+    const wrapper = document.createElement('span');
+    const unicode = document.createElement('span');
+    const assetUrl = twemojiAssetUrl(segment.codepoint);
+    wrapper.className = 'twemoji';
+    wrapper.dataset.twemoji = segment.codepoint;
+    wrapper.setAttribute('aria-label', segment.emoji);
+    wrapper.setAttribute('role', 'img');
+    unicode.className = 'twemoji__unicode';
+    unicode.setAttribute('aria-hidden', 'true');
+    unicode.textContent = segment.emoji;
+    wrapper.appendChild(unicode);
+    if (assetUrl) {
+      const image = document.createElement('img');
+      image.alt = '';
+      image.setAttribute('aria-hidden', 'true');
+      image.className = 'twemoji__glyph';
+      image.decoding = 'async';
+      image.draggable = false;
+      image.loading = 'lazy';
+      image.src = assetUrl;
+      image.addEventListener(
+        'error',
+        () => {
+          wrapper.classList.add('twemoji--fallback');
+          image.remove();
+        },
+        { once: true },
+      );
+      wrapper.appendChild(image);
+    } else {
+      wrapper.classList.add('twemoji--fallback');
+    }
+    parent.appendChild(wrapper);
+  }
+}
 
 function safeAssetUrl(url: string): string | null {
   const trimmed = url.trim();
@@ -41,14 +86,14 @@ function renderInline(nodes: readonly InlineNode[], parent: Node): void {
   for (const node of nodes) {
     switch (node.type) {
       case 'text':
-        parent.appendChild(document.createTextNode(node.value));
+        appendTwemojiText(parent, node.value);
         break;
       case 'break':
         parent.appendChild(document.createElement('br'));
         break;
       case 'inlineCode': {
         const element = document.createElement('code');
-        element.textContent = node.value;
+        appendTwemojiText(element, node.value);
         parent.appendChild(element);
         break;
       }
@@ -189,7 +234,7 @@ function renderBlocks(
         if (node.lang) {
           code.dataset.lang = node.lang;
         }
-        code.textContent = node.value;
+        appendTwemojiText(code, node.value);
         pre.appendChild(code);
         parent.appendChild(pre);
         break;

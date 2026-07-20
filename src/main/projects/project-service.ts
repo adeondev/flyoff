@@ -14,8 +14,10 @@ import {
   type MarkdownDocument,
   type LockProjectPageRequest,
   type MoveProjectNodeRequest,
+  type MoveProjectNodesRequest,
   type ProjectLocationSelection,
   type ProjectNodeMutationOutcome,
+  type ProjectNodesMutationOutcome,
   type ProjectBacklinksOutcome,
   type ProjectGraphSnapshot,
   type ProjectInternalLinkRequest,
@@ -36,6 +38,7 @@ import {
   type SetProjectPageReadOnlyRequest,
   type ProtectProjectPageRequest,
   type TrashProjectNodeRequest,
+  type TrashProjectNodesRequest,
   type TrashProjectNodeOutcome,
   type UnlockProjectPageRequest,
 } from '../../shared/contracts/projects';
@@ -356,13 +359,9 @@ export class ProjectService {
   ): Promise<ProjectResult<ProjectNodeMutationOutcome>> {
     return this.withActiveProject(senderKey, async (repository) => {
       const currentPath = repository.projectRelativePath(request.nodeId);
-      const parentPath =
-        request.parentId === null
-          ? ''
-          : repository.projectRelativePath(request.parentId);
-      const nextPath = path.posix.join(
-        parentPath,
-        path.posix.basename(currentPath),
+      const nextPath = repository.projectedPathForMove(
+        request.nodeId,
+        request.parentId,
       );
       if (nextPath === currentPath) {
         return {
@@ -405,12 +404,125 @@ export class ProjectService {
     });
   }
 
+  moveNodes(
+    senderKey: ProjectSenderKey,
+    request: MoveProjectNodesRequest,
+  ): Promise<ProjectResult<ProjectNodesMutationOutcome>> {
+    return this.withActiveProject(senderKey, async (repository) => {
+      const rootNodeIds = repository.normalizeNodeRoots(request.nodeIds);
+      const projected = new Map(this.markdownPaths(repository));
+      let pathsChanged = false;
+      for (const nodeId of rootNodeIds) {
+        const currentRoot = repository.projectRelativePath(nodeId);
+        const nextRoot = repository.projectedPathForMove(
+          nodeId,
+          request.parentId,
+        );
+        if (
+          nextRoot === currentRoot ||
+          nextRoot.startsWith(`${currentRoot}/`)
+        ) {
+          if (nextRoot.startsWith(`${currentRoot}/`)) {
+            throw new ProjectOperationError(
+              'invalid-operation',
+              'A folder cannot be moved into itself or one of its descendants.',
+            );
+          }
+          continue;
+        }
+        const prefix = `${currentRoot}/`;
+        for (const [markdownNodeId, currentPath] of projected) {
+          if (
+            currentPath !== currentRoot &&
+            !currentPath.startsWith(prefix)
+          ) {
+            continue;
+          }
+          projected.set(
+            markdownNodeId,
+            currentPath === currentRoot
+              ? nextRoot
+              : `${nextRoot}/${currentPath.slice(prefix.length)}`,
+          );
+        }
+        pathsChanged = true;
+      }
+
+      if (!pathsChanged) {
+        return {
+          nodes: await repository.moveNodes(
+            rootNodeIds,
+            request.parentId,
+            request.beforeNodeId,
+          ),
+          skippedLockedNodeIds: [],
+          updatedDocumentNodeIds: [],
+        };
+      }
+
+      const rewrite = await this.applyProjectedLinkRewrites(
+        senderKey,
+        repository,
+        projected,
+      );
+      try {
+        const nodes = await repository.moveNodes(
+          rootNodeIds,
+          request.parentId,
+          request.beforeNodeId,
+        );
+        this.invalidateProjectReferenceIndexes(repository.summary.projectId);
+        return {
+          nodes,
+          skippedLockedNodeIds: rewrite.skippedLockedNodeIds,
+          updatedDocumentNodeIds: rewrite.updatedDocumentNodeIds,
+        };
+      } catch (error) {
+        await rewrite.rollback();
+        throw error;
+      }
+    });
+  }
+
   trashNode(
     senderKey: ProjectSenderKey,
     request: TrashProjectNodeRequest,
   ): Promise<ProjectResult<TrashProjectNodeOutcome>> {
     return this.withActiveProject(senderKey, async (repository) => {
       const nodeIds = await repository.trashNode(request.nodeId);
+      await Promise.all(
+        nodeIds.map((nodeId) =>
+          repository.linkMaintenance.complete(nodeId),
+        ),
+      ).catch(() => undefined);
+      const removed = new Set(nodeIds);
+      try {
+        this.activityStore?.removeMany(repository.summary.projectId, removed);
+      } catch {
+        // Stale entries are filtered and removed the next time activity is read.
+      }
+      for (const [clientId, active] of this.activeProjects) {
+        if (active.summary.projectId !== repository.summary.projectId) {
+          continue;
+        }
+        for (const nodeId of removed) {
+          this.noteKeys.remove(
+            this.keyScope(clientId, repository, nodeId),
+          );
+          active.referenceIndex.clearNode(nodeId);
+        }
+        active.referenceIndex.invalidate();
+      }
+      return { nodeIds };
+    });
+  }
+
+  trashNodes(
+    senderKey: ProjectSenderKey,
+    request: TrashProjectNodesRequest,
+  ): Promise<ProjectResult<TrashProjectNodeOutcome>> {
+    return this.withActiveProject(senderKey, async (repository) => {
+      const nodeIds = await repository.trashNodes(request.nodeIds);
       await Promise.all(
         nodeIds.map((nodeId) =>
           repository.linkMaintenance.complete(nodeId),

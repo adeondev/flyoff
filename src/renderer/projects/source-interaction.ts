@@ -5,6 +5,11 @@ import {
   writeSelection,
   type SourceSelection,
 } from './source-caret';
+import { twemojiSegments } from '../components/twemoji';
+import {
+  nextGraphemeBoundary,
+  previousGraphemeBoundary,
+} from './source-grapheme';
 import {
   expandDoubleClickSelection,
   expandTripleClickSelection,
@@ -26,6 +31,13 @@ interface KeyboardNavigation {
   defaultPrevented: boolean;
   key: string;
   metaKey: boolean;
+}
+
+interface HorizontalKeyboardNavigation extends KeyboardNavigation {
+  altKey: boolean;
+  isComposing: boolean;
+  shiftKey: boolean;
+  preventDefault: () => void;
 }
 
 interface SourceMouseSelectionOptions {
@@ -67,6 +79,105 @@ function directedSelection(
           ? 'forward'
           : 'backward',
   };
+}
+
+interface EmojiRange {
+  start: number;
+  end: number;
+}
+
+function adjacentEmojiRange(
+  content: string,
+  offset: number,
+  direction: -1 | 1,
+): EmojiRange | undefined {
+  const windowStart = Math.max(0, offset - 48);
+  const windowEnd = Math.min(content.length, offset + 48);
+  let cursor = windowStart;
+  for (const segment of twemojiSegments(
+    content.slice(windowStart, windowEnd),
+  )) {
+    const start = cursor;
+    const end = start + segment.text.length;
+    cursor = end;
+    if (!segment.codepoint) {
+      continue;
+    }
+    if (
+      (direction === 1 && start <= offset && offset < end) ||
+      (direction === -1 && start < offset && offset <= end)
+    ) {
+      return { start, end };
+    }
+  }
+  return undefined;
+}
+
+function focusInsideSourceEmoji(editor: HTMLElement): boolean {
+  const focusNode = editor.ownerDocument.getSelection()?.focusNode;
+  const focusElement =
+    focusNode?.nodeType === Node.ELEMENT_NODE
+      ? (focusNode as Element)
+      : focusNode?.parentElement;
+  return Boolean(focusElement?.closest('.twemoji--source'));
+}
+
+export function resolveSourceHorizontalNavigation(
+  content: string,
+  selection: SourceSelection,
+  direction: -1 | 1,
+  extend: boolean,
+  focusInsideEmoji = false,
+): SourceSelection | undefined {
+  if (!extend && selection.start !== selection.end) {
+    return undefined;
+  }
+  const anchor = selectionAnchor(selection);
+  const focus = selectionFocus(selection);
+  const emoji = adjacentEmojiRange(content, focus, direction);
+  if (!emoji && !focusInsideEmoji) {
+    return undefined;
+  }
+  const nextFocus = emoji
+    ? direction === 1
+      ? emoji.end
+      : emoji.start
+    : direction === 1
+      ? nextGraphemeBoundary(content, focus)
+      : previousGraphemeBoundary(content, focus);
+  return extend
+    ? directedSelection(anchor, nextFocus)
+    : collapsedSelection(nextFocus);
+}
+
+export function handleSourceHorizontalNavigation(
+  editor: HTMLElement,
+  event: HorizontalKeyboardNavigation,
+  content: string,
+): SourceSelection | undefined {
+  if (
+    event.defaultPrevented ||
+    event.isComposing ||
+    event.altKey ||
+    event.ctrlKey ||
+    event.metaKey ||
+    (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')
+  ) {
+    return undefined;
+  }
+  const next = resolveSourceHorizontalNavigation(
+    content,
+    readSelection(editor),
+    event.key === 'ArrowRight' ? 1 : -1,
+    event.shiftKey,
+    focusInsideSourceEmoji(editor),
+  );
+  if (!next) {
+    return undefined;
+  }
+  event.preventDefault();
+  writeSelection(editor, next);
+  return next;
 }
 
 function revealSelectionFocus(root: HTMLElement): void {

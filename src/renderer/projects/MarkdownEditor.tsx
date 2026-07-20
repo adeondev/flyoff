@@ -16,6 +16,7 @@ import openToolbarIcon from '../../../public/images/icons/actions/open-toolbar.s
 import type { MarkdownDocument } from '../../shared/contracts';
 import { extractInternalLinks } from '../../shared/markdown';
 import { MaskedIcon } from '../components/MaskedIcon';
+import { TwemojiText } from '../components/twemoji';
 import type { MenuItem } from '../components/menu';
 import { getTooltipTargetProps } from '../components/tooltip';
 import type { Translate } from '../pages/page-types';
@@ -77,7 +78,7 @@ export interface MarkdownEditorProps {
   onDirtyChange?: (dirty: boolean) => void;
   onError?: (message: string) => void;
   onModeChange?: (mode: EditorMode) => void;
-  onScrollChange?: (scrollTop: number) => void;
+  onScrollChange?: (scrollTop: number, settled?: boolean) => void;
   scrollTop?: number;
   linkRuntime?: MarkdownLinkRuntime;
   navigation?: MarkdownLinkNavigation;
@@ -392,17 +393,25 @@ export const MarkdownEditor = forwardRef<
     edit: SourceContextEdit,
     beforeSelection: SourceSelection,
     inputType: string,
+    restoreFocus = true,
   ): void {
-    if (editingDisabled || edit.content === snapshot.content) {
+    const currentContent =
+      controller.getSnapshot(nodeId, viewId)?.content ?? snapshot.content;
+    if (editingDisabled || edit.content === currentContent) {
       return;
     }
 
     controller.commitEditorTransaction(nodeId, {
-      before: { content: snapshot.content, selection: beforeSelection },
+      before: { content: currentContent, selection: beforeSelection },
       after: edit,
       inputType,
       timestamp: performance.now(),
     }, viewId);
+    if (!restoreFocus) {
+      selectionRef.current = edit.selection;
+      publishLiveSelection(edit.selection);
+      return;
+    }
     requestAnimationFrame(() => {
       const editor = editorRef.current;
       editor?.focus();
@@ -450,6 +459,39 @@ export const MarkdownEditor = forwardRef<
     );
   }
 
+  function handleEmojiInsert(emoji: string): void {
+    if (editingDisabled) {
+      return;
+    }
+    const currentSelection = selectionRef.current;
+    const currentContent =
+      controller.getSnapshot(nodeId, viewId)?.content ?? snapshot.content;
+    const content =
+      currentContent.slice(0, currentSelection.start) +
+      emoji +
+      currentContent.slice(currentSelection.end);
+    const caret = currentSelection.start + emoji.length;
+    commitContextEdit(
+      {
+        content,
+        selection: { start: caret, end: caret, direction: 'none' },
+      },
+      currentSelection,
+      'toolbar:emoji',
+      false,
+    );
+  }
+
+  function restoreEditorFocus(): void {
+    requestAnimationFrame(() => {
+      const editor = editorRef.current;
+      editor?.focus();
+      if (editor) {
+        writeSelection(editor, selectionRef.current);
+      }
+    });
+  }
+
   function handleTransaction(transaction: SourceEditTransaction): void {
     if (editingDisabled) {
       return;
@@ -495,7 +537,9 @@ export const MarkdownEditor = forwardRef<
       {focusLayout ? null : (
         <header className="markdown-editor__header">
           {title ? (
-            <h1 {...getTooltipTargetProps(title, 'bottom')}>{title}</h1>
+            <h1 {...getTooltipTargetProps(title, 'bottom')}>
+              <TwemojiText text={title} />
+            </h1>
           ) : (
             <span />
           )}
@@ -565,6 +609,8 @@ export const MarkdownEditor = forwardRef<
       editorPreferences.showToolbar ? (
         <MarkdownToolbar
           disabled={editingDisabled}
+          onEmoji={handleEmojiInsert}
+          onEmojiPickerClose={restoreEditorFocus}
           onAction={handleMarkdownAction}
           translate={translate}
         />
@@ -579,6 +625,8 @@ export const MarkdownEditor = forwardRef<
           <div className="markdown-editor__toolbar-drawer">
             <MarkdownToolbar
               disabled={editingDisabled}
+              onEmoji={handleEmojiInsert}
+              onEmojiPickerClose={restoreEditorFocus}
               onAction={handleMarkdownAction}
               translate={translate}
             />
@@ -628,8 +676,8 @@ export const MarkdownEditor = forwardRef<
             onContextMenuRequest={sourceMenu.open}
             onKeyDown={handleKeyDown}
             onRedo={() => controller.redo(nodeId, viewId)}
-            onScroll={(scrollPosition) => {
-              onScrollChange?.(scrollPosition);
+            onScroll={(scrollPosition, settled) => {
+              onScrollChange?.(scrollPosition, settled);
               splitScroll.handleSourceScroll();
             }}
             onSelectionChange={(next) => {

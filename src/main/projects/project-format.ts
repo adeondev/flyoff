@@ -6,6 +6,7 @@ import {
   PROJECT_FORMAT_VERSION,
   PROJECT_INDEX_FORMAT,
   PROJECT_INDEX_LEGACY_VERSION,
+  PROJECT_INDEX_OLDER_VERSION,
   PROJECT_INDEX_PREVIOUS_VERSION,
   PROJECT_INDEX_VERSION,
   isProjectInstanceTypeId,
@@ -27,6 +28,7 @@ export interface ProjectManifest {
 interface ContentIndexEntryBase {
   nodeId: string;
   parentId: string | null;
+  displayParentId?: string | null;
   name: string;
   locator: string;
   sortOrder?: number;
@@ -117,6 +119,7 @@ function parseContentIndexEntry(
   value: unknown,
   version:
     | typeof PROJECT_INDEX_LEGACY_VERSION
+    | typeof PROJECT_INDEX_OLDER_VERSION
     | typeof PROJECT_INDEX_PREVIOUS_VERSION
     | typeof PROJECT_INDEX_VERSION,
 ): ContentIndexEntry | undefined {
@@ -136,11 +139,24 @@ function parseContentIndexEntry(
   }
 
   const sortOrder = legacy ? undefined : (value.sortOrder as number | undefined);
+  const displayParentId =
+    version === PROJECT_INDEX_VERSION &&
+    Object.prototype.hasOwnProperty.call(value, 'displayParentId')
+      ? value.displayParentId
+      : undefined;
+  if (
+    displayParentId !== undefined &&
+    displayParentId !== null &&
+    !isUuid(displayParentId)
+  ) {
+    return undefined;
+  }
 
   if (value.kind === 'folder') {
     return {
       nodeId: value.nodeId,
       parentId: value.parentId,
+      ...(displayParentId === undefined ? {} : { displayParentId }),
       name: value.name,
       locator: value.locator,
       kind: 'folder',
@@ -157,7 +173,8 @@ function parseContentIndexEntry(
 
   if (value.kind === 'page' && pageType) {
     if (
-      version === PROJECT_INDEX_VERSION &&
+      (version === PROJECT_INDEX_PREVIOUS_VERSION ||
+        version === PROJECT_INDEX_VERSION) &&
       value.attributes !== undefined &&
       (!isRecord(value.attributes) ||
         Object.keys(value.attributes).some((key) => key !== 'readOnly') ||
@@ -167,12 +184,14 @@ function parseContentIndexEntry(
       return undefined;
     }
     const readOnly =
-      version === PROJECT_INDEX_VERSION &&
+      (version === PROJECT_INDEX_PREVIOUS_VERSION ||
+        version === PROJECT_INDEX_VERSION) &&
       isRecord(value.attributes) &&
       value.attributes.readOnly === true;
     return {
       nodeId: value.nodeId,
       parentId: value.parentId,
+      ...(displayParentId === undefined ? {} : { displayParentId }),
       name: value.name,
       locator: value.locator,
       kind: 'page',
@@ -190,8 +209,21 @@ function hasValidRelationships(entries: readonly ContentIndexEntry[]): boolean {
 
   for (const entry of entries) {
     const parent = entry.parentId === null ? undefined : byId.get(entry.parentId);
+    const displayParent =
+      entry.displayParentId === undefined || entry.displayParentId === null
+        ? undefined
+        : byId.get(entry.displayParentId);
 
     if (entry.parentId !== null && parent?.kind !== 'folder') {
+      return false;
+    }
+    if (
+      entry.displayParentId !== undefined &&
+      entry.displayParentId !== null &&
+      (!displayParent ||
+        (displayParent.kind === 'page' &&
+          displayParent.pageType !== 'markdown'))
+    ) {
       return false;
     }
 
@@ -218,15 +250,30 @@ function hasValidRelationships(entries: readonly ContentIndexEntry[]): boolean {
     }
 
     const ancestors = new Set<string>([entry.nodeId]);
-    let cursor = parent;
+    const effectiveParentId =
+      entry.displayParentId !== undefined
+        ? entry.displayParentId
+        : entry.parentId;
+    let cursor =
+      effectiveParentId === null ? undefined : byId.get(effectiveParentId);
+    let depth = 0;
 
     while (cursor) {
+      depth += 1;
+      if (depth > 256) {
+        return false;
+      }
       if (ancestors.has(cursor.nodeId)) {
         return false;
       }
 
       ancestors.add(cursor.nodeId);
-      cursor = cursor.parentId === null ? undefined : byId.get(cursor.parentId);
+      const cursorParentId =
+        cursor.displayParentId !== undefined
+          ? cursor.displayParentId
+          : cursor.parentId;
+      cursor =
+        cursorParentId === null ? undefined : byId.get(cursorParentId);
     }
   }
 
@@ -242,6 +289,7 @@ export function parseProjectContentIndex(
     !isRecord(value) ||
     value.format !== PROJECT_INDEX_FORMAT ||
     (version !== PROJECT_INDEX_LEGACY_VERSION &&
+      version !== PROJECT_INDEX_OLDER_VERSION &&
       version !== PROJECT_INDEX_PREVIOUS_VERSION &&
       version !== PROJECT_INDEX_VERSION) ||
     value.projectId !== projectId ||
@@ -255,6 +303,7 @@ export function parseProjectContentIndex(
       entry,
       version as
         | typeof PROJECT_INDEX_LEGACY_VERSION
+        | typeof PROJECT_INDEX_OLDER_VERSION
         | typeof PROJECT_INDEX_PREVIOUS_VERSION
         | typeof PROJECT_INDEX_VERSION,
     ),
@@ -265,6 +314,27 @@ export function parseProjectContentIndex(
   }
 
   const parsedEntries = entries as ContentIndexEntry[];
+  const entriesById = new Map(
+    parsedEntries.map((entry) => [entry.nodeId, entry]),
+  );
+  let repairedVisualParent = false;
+  for (const entry of parsedEntries) {
+    if (
+      entry.displayParentId === undefined ||
+      entry.displayParentId === null
+    ) {
+      continue;
+    }
+    const displayParent = entriesById.get(entry.displayParentId);
+    if (
+      displayParent &&
+      canContainProjectChildren(displayParent)
+    ) {
+      continue;
+    }
+    delete entry.displayParentId;
+    repairedVisualParent = true;
+  }
   const identifiers = new Set(parsedEntries.map(({ nodeId }) => nodeId));
   const locators = new Set(
     parsedEntries.map(({ locator }) => locator.toLowerCase()),
@@ -285,23 +355,45 @@ export function parseProjectContentIndex(
       projectId,
       entries: parsedEntries,
     },
-    migrated: version !== PROJECT_INDEX_VERSION,
+    migrated: version !== PROJECT_INDEX_VERSION || repairedVisualParent,
   };
 }
 
-export function toProjectTreeNode(entry: ContentIndexEntry): ProjectTreeNode {
+export function effectiveParentId(entry: ContentIndexEntry): string | null {
+  return entry.displayParentId !== undefined
+    ? entry.displayParentId
+    : entry.parentId;
+}
+
+export function canContainProjectChildren(entry: ContentIndexEntry): boolean {
+  return entry.kind === 'folder' ||
+    (entry.kind === 'page' && entry.pageType === 'markdown');
+}
+
+export function toProjectTreeNode(
+  entry: ContentIndexEntry,
+  entries: readonly ContentIndexEntry[] = [],
+): ProjectTreeNode {
+  const parentId = effectiveParentId(entry);
+  const hasChildren = entries.some(
+    (candidate) => effectiveParentId(candidate) === entry.nodeId,
+  );
   if (entry.kind === 'folder') {
     return {
+      canContainChildren: true,
+      hasChildren,
       nodeId: entry.nodeId,
-      parentId: entry.parentId,
+      parentId,
       name: entry.name,
       kind: 'folder',
     };
   }
 
   return {
+    canContainChildren: entry.pageType === 'markdown',
+    hasChildren,
     nodeId: entry.nodeId,
-    parentId: entry.parentId,
+    parentId,
     name: entry.name,
     kind: 'page',
     pageType: entry.pageType,

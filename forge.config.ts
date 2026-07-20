@@ -16,6 +16,7 @@ const config: ForgeConfig = {
     appBundleId: 'com.flyoff.app',
     asar: true,
     executableName: 'Flyoff',
+    extraResource: ['./public/images/twemoji'],
     icon: './resources/icons/flyoff',
   },
   rebuildConfig: {},

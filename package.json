@@ -23,12 +23,14 @@
     "test:watch": "vitest --configLoader native --pool=threads",
     "test:native": "npm run test --workspace=@flyoff/native-core",
     "test:e2e": "playwright test",
+    "assets:twemoji": "node scripts/sync-twemoji-assets.mjs",
     "verify": "npm run lint && npm run typecheck && npm run test && npm run test:native"
   },
   "dependencies": {
     "@flyoff/native-core": "0.1.0",
     "@fontsource/inter": "5.2.8",
     "@fontsource/nunito-sans": "5.2.7",
+    "@twemoji/parser": "17.0.2",
     "dictionary-en": "4.0.0",
     "dictionary-pt": "4.0.0",
     "hunspell-wasm": "0.3.0",
@@ -56,6 +58,7 @@
     "@vercel/webpack-asset-relocator-loader": "1.7.3",
     "css-loader": "7.1.4",
     "electron": "43.1.0",
+    "emojibase-data": "17.0.0",
     "eslint": "10.7.0",
     "eslint-plugin-react-hooks": "7.1.1",
     "globals": "17.7.0",

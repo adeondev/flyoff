@@ -62,6 +62,18 @@ type PaneEntryPlacement =
   | 'column-end';
 const PANE_DROP_EDGE_RATIO = 0.25;
 const PANE_TAB_BAR_HEIGHT = 48;
+export const WORKSPACE_MIN_PANE_SIZE = 240;
+const WORKSPACE_SPLIT_DIVIDER_SIZE = 5;
+
+export function canSplitWorkspacePane(
+  size: Pick<DOMRect, 'height' | 'width'>,
+  direction: WorkspaceSplitDirection,
+): boolean {
+  return (
+    (direction === 'row' ? size.width : size.height) >=
+    WORKSPACE_MIN_PANE_SIZE * 2 + WORKSPACE_SPLIT_DIVIDER_SIZE
+  );
+}
 
 interface PaneDropIntent {
   duplicate: boolean;
@@ -69,6 +81,7 @@ interface PaneDropIntent {
 }
 
 interface HostDropIntent extends PaneDropIntent {
+  count: number;
   height: number;
   left: number;
   paneId: string;
@@ -103,7 +116,8 @@ interface WorkspacePaneHostProps {
     tabId: string,
   ) => void;
   onOpenTarget: (paneId: string, target: TabTarget) => void;
-  onNewTab: (paneId: string) => void;
+  onOpenTargets: (paneId: string, targets: readonly TabTarget[]) => void;
+  onNewTab?: (paneId: string) => void;
   onPageStateChange: (
     paneId: string,
     tabId: string,
@@ -114,6 +128,7 @@ interface WorkspacePaneHostProps {
     paneId: string,
     tabId: string,
     scrollTop: number,
+    settled?: boolean,
   ) => void;
   onSelectPane: (paneId: string) => void;
   onSelectTab: (paneId: string, tabId: string) => void;
@@ -131,6 +146,12 @@ interface WorkspacePaneHostProps {
   onSplitPaneWithTarget: (
     targetPaneId: string,
     target: TabTarget,
+    direction: WorkspaceSplitDirection,
+    before: boolean,
+  ) => void;
+  onSplitPaneWithTargets: (
+    targetPaneId: string,
+    targets: readonly TabTarget[],
     direction: WorkspaceSplitDirection,
     before: boolean,
   ) => void;
@@ -168,6 +189,20 @@ function containsPane(
     return node.paneId === paneId;
   }
   return containsPane(node.first, paneId) || containsPane(node.second, paneId);
+}
+
+function minimumWorkspaceSize(
+  node: WorkspaceLayoutSnapshot,
+  axis: WorkspaceSplitDirection,
+): number {
+  if (node.kind === 'pane') {
+    return WORKSPACE_MIN_PANE_SIZE;
+  }
+  const first = minimumWorkspaceSize(node.first, axis);
+  const second = minimumWorkspaceSize(node.second, axis);
+  return node.direction === axis
+    ? first + WORKSPACE_SPLIT_DIVIDER_SIZE + second
+    : Math.max(first, second);
 }
 
 export function findNewWorkspaceTabIds(
@@ -233,7 +268,9 @@ function targetKeyForWorkspaceDrag(
   dragged: WorkspaceDragPayload,
 ): string | undefined {
   if (dragged.kind === 'project-node') {
-    return getTabTargetKey(dragged.target);
+    return dragged.targets.length === 1
+      ? getTabTargetKey(dragged.targets[0]!)
+      : undefined;
   }
   if (dragged.targetKey) {
     return dragged.targetKey;
@@ -271,21 +308,32 @@ function resolveWorkspaceHostDrop(
     return undefined;
   }
   const paneBounds = target.getBoundingClientRect();
-  const edge = resolvePaneDropEdge(
+  let edge = resolvePaneDropEdge(
     paneBounds,
     clientX,
     clientY,
-    paneCount < WORKSPACE_MAX_PANES,
+    paneCount < WORKSPACE_MAX_PANES &&
+      (canSplitWorkspacePane(paneBounds, 'row') ||
+        canSplitWorkspacePane(paneBounds, 'column')),
     dragged,
     paneId,
   );
   if (!edge) {
     return undefined;
   }
+  if (
+    ((edge === 'left' || edge === 'right') &&
+      !canSplitWorkspacePane(paneBounds, 'row')) ||
+    ((edge === 'top' || edge === 'bottom') &&
+      !canSplitWorkspacePane(paneBounds, 'column'))
+  ) {
+    edge = 'center';
+  }
   const targetKey = targetKeyForWorkspaceDrag(root, dragged);
   const hostBounds = host.getBoundingClientRect();
   return {
     intent: {
+      count: dragged.kind === 'project-node' ? dragged.targets.length : 1,
       duplicate:
         edge === 'center' &&
         Boolean(
@@ -317,7 +365,7 @@ function performWorkspaceDrop(
     if (dragged.kind === 'tab') {
       props.onMoveTabBetweenPanes(dragged.paneId, paneId, dragged.tabId);
     } else {
-      props.onOpenTarget(paneId, dragged.target);
+      props.onOpenTargets(paneId, dragged.targets);
     }
     return;
   }
@@ -339,7 +387,12 @@ function performWorkspaceDrop(
     );
     return;
   }
-  props.onSplitPaneWithTarget(paneId, dragged.target, direction, before);
+  props.onSplitPaneWithTargets(
+    paneId,
+    dragged.targets,
+    direction,
+    before,
+  );
 }
 
 function PaneLeaf(props: PaneTreeProps & {
@@ -351,21 +404,53 @@ function PaneLeaf(props: PaneTreeProps & {
     x: number;
     y: number;
   }>();
-  const canSplit = props.paneCount < WORKSPACE_MAX_PANES;
+  const paneRef = useRef<HTMLElement>(null);
+  const [paneSize, setPaneSize] = useState({ height: 0, width: 0 });
+  useLayoutEffect(() => {
+    const pane = paneRef.current;
+    if (!pane) {
+      return;
+    }
+    const update = (): void => {
+      const bounds = pane.getBoundingClientRect();
+      setPaneSize((current) =>
+        current.height === bounds.height && current.width === bounds.width
+          ? current
+          : { height: bounds.height, width: bounds.width },
+      );
+    };
+    update();
+    if (typeof ResizeObserver === 'undefined') {
+      window.addEventListener('resize', update);
+      return () => window.removeEventListener('resize', update);
+    }
+    const observer = new ResizeObserver(update);
+    observer.observe(pane);
+    return () => observer.disconnect();
+  }, []);
+  const belowPaneLimit = props.paneCount < WORKSPACE_MAX_PANES;
+  const canSplitRight =
+    belowPaneLimit &&
+    (paneSize.width === 0 ||
+      canSplitWorkspacePane(paneSize, 'row'));
+  const canSplitBelow =
+    belowPaneLimit &&
+    (paneSize.height === 0 ||
+      canSplitWorkspacePane(paneSize, 'column'));
   const items: readonly MenuItem[] = [
     {
       kind: 'action',
       id: 'split-right',
       label: props.translate('pages.splitRight'),
       icon: splitRightIcon,
-      disabled: !canSplit,
+      disabled: !canSplitRight,
     },
     {
       kind: 'action',
       id: 'split-below',
       label: props.translate('pages.splitBelow'),
       icon: splitDownIcon,
-      disabled: !canSplit,
+      disabled: !canSplitBelow,
     },
     { kind: 'separator', id: 'pane-separator' },
     {
@@ -419,6 +504,7 @@ function PaneLeaf(props: PaneTreeProps & {
         event.dataTransfer.dropEffect =
           dragged?.kind === 'project-node' ? 'copy' : 'move';
       }}
+      ref={paneRef}
     >
       <div className="workspace-pane__bar">
         <TabBar
@@ -429,12 +515,18 @@ function PaneLeaf(props: PaneTreeProps & {
           closeLabel={props.closeLabel}
           getPresentation={props.getPresentation}
           navigationLabel={props.navigationLabel}
-          newTabLabel={props.translate('pages.newTab')}
+          newTabLabel={
+            props.onNewTab ? props.translate('pages.newTab') : undefined
+          }
           onClose={(tabId) => props.onCloseTab(node.paneId, tabId)}
           onMove={(tabId, toIndex) =>
             props.onMoveTab(node.paneId, tabId, toIndex)
           }
-          onNewTab={() => props.onNewTab(node.paneId)}
+          onNewTab={
+            props.onNewTab
+              ? () => props.onNewTab?.(node.paneId)
+              : undefined
+          }
           onContextMenu={(tabId, position) =>
             setTabMenu({ tabId, ...position })
           }
@@ -488,8 +580,8 @@ function PaneLeaf(props: PaneTreeProps & {
         onPageStateChange={(tabId, state) =>
           props.onPageStateChange(node.paneId, tabId, state)
         }
-        onScrollChange={(tabId, scrollTop) =>
-          props.onScrollChange(node.paneId, tabId, scrollTop)
+        onScrollChange={(tabId, scrollTop, settled) =>
+          props.onScrollChange(node.paneId, tabId, scrollTop, settled)
         }
         paneId={node.paneId}
         renderPage={props.renderPage}
@@ -505,14 +597,14 @@ function PaneLeaf(props: PaneTreeProps & {
               id: 'split-right',
               label: props.translate('pages.splitRight'),
               icon: splitRightIcon,
-              disabled: !canSplit,
+              disabled: !canSplitRight,
             },
             {
               kind: 'action',
               id: 'split-below',
               label: props.translate('pages.splitBelow'),
               icon: splitDownIcon,
-              disabled: !canSplit,
+              disabled: !canSplitBelow,
             },
             { kind: 'separator', id: 'tab-separator' },
             {
@@ -568,16 +660,43 @@ function SplitDivider(
   const { node } = props;
   const vertical = node.direction === 'row';
 
+  function clampRatio(parent: HTMLElement, ratio: number): number {
+    const bounds = parent.getBoundingClientRect();
+    const available = Math.max(
+      1,
+      vertical ? bounds.width : bounds.height,
+    );
+    const firstMinimum = minimumWorkspaceSize(
+      node.first,
+      node.direction,
+    );
+    const secondMinimum = minimumWorkspaceSize(
+      node.second,
+      node.direction,
+    );
+    if (
+      available <
+      firstMinimum + WORKSPACE_SPLIT_DIVIDER_SIZE + secondMinimum
+    ) {
+      return node.ratio;
+    }
+    return Math.min(
+      (available - WORKSPACE_SPLIT_DIVIDER_SIZE - secondMinimum) / available,
+      Math.max(firstMinimum / available, ratio),
+    );
+  }
+
   function updateFromPointer(event: PointerEvent<HTMLDivElement>): void {
     const parent = event.currentTarget.parentElement;
     if (!parent) {
       return;
     }
     const bounds = parent.getBoundingClientRect();
+    const size = Math.max(1, vertical ? bounds.width : bounds.height);
     const ratio = vertical
-      ? (event.clientX - bounds.left) / Math.max(1, bounds.width)
-      : (event.clientY - bounds.top) / Math.max(1, bounds.height);
-    props.onResizeSplit(node.splitId, ratio);
+      ? (event.clientX - bounds.left) / size
+      : (event.clientY - bounds.top) / size;
+    props.onResizeSplit(node.splitId, clampRatio(parent, ratio));
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
@@ -596,7 +715,13 @@ function SplitDivider(
       return;
     }
     event.preventDefault();
-    props.onResizeSplit(node.splitId, node.ratio + direction * 0.02);
+    const parent = event.currentTarget.parentElement;
+    if (parent) {
+      props.onResizeSplit(
+        node.splitId,
+        clampRatio(parent, node.ratio + direction * 0.02),
+      );
+    }
   }
 
   return (
@@ -607,7 +732,12 @@ function SplitDivider(
       aria-valuemin={10}
       aria-valuenow={Math.round(node.ratio * 100)}
       className="workspace-split__divider"
-      onDoubleClick={() => props.onResizeSplit(node.splitId, 0.5)}
+      onDoubleClick={(event) => {
+        const parent = event.currentTarget.parentElement;
+        if (parent) {
+          props.onResizeSplit(node.splitId, clampRatio(parent, 0.5));
+        }
+      }}
       onKeyDown={handleKeyDown}
       onPointerDown={(event) => {
         event.currentTarget.setPointerCapture(event.pointerId);
@@ -728,7 +858,6 @@ export const WorkspacePaneHost = forwardRef<
         ) ?? [])].find((candidate) => candidate.dataset.paneId === paneId);
         const tabExit =
           tabBars.get(paneId)?.animateTabExit(tabId) ?? Promise.resolve();
-        await waitForWorkspaceMotion(45);
         const paneExit = animateWorkspacePaneExit(pane ?? null, 80);
         await Promise.all([tabExit, paneExit]);
       },
@@ -938,6 +1067,7 @@ export const WorkspacePaneHost = forwardRef<
     const current = dropIntentRef.current;
     if (
       current?.paneId === next.paneId &&
+      current.count === next.count &&
       current.edge === next.edge &&
       current.duplicate === next.duplicate &&
       current.left === next.left &&
@@ -1055,7 +1185,12 @@ export const WorkspacePaneHost = forwardRef<
             className={`workspace-pane__drop-preview workspace-pane__drop-preview--${dropOverlay.intent.edge}`}
           >
             {dropOverlay.intent.edge === 'center' ? (
-              <span>{props.translate('pages.openInPane')}</span>
+              <span>
+                {dropOverlay.intent.count > 1
+                  ? `${dropOverlay.intent.count} \u00b7 `
+                  : ''}
+                {props.translate('pages.openInPane')}
+              </span>
             ) : null}
           </div>
         </div>

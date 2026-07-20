@@ -216,6 +216,7 @@ function targetIsWorkspaceUnique(target: TabTarget): boolean {
   }
   return (
     target.type === 'project-overview' ||
+    target.type === 'project-graph' ||
     target.type === 'project-content'
   );
 }
@@ -276,6 +277,77 @@ export function openPaneTarget(
   return { root, activePaneId: paneId };
 }
 
+function activeNewTab(
+  workspace: PaneWorkspaceState,
+  paneId: string,
+): TabDescriptor | undefined {
+  const pane = findPane(workspace.root, paneId);
+  const active = pane?.tabs.find(({ tabId }) => tabId === pane.activeTabId);
+  return active?.target.type === 'internal' &&
+    active.target.pageId === INTERNAL_PAGE_IDS.newTab
+    ? active
+    : undefined;
+}
+
+function replacePaneTabTarget(
+  workspace: PaneWorkspaceState,
+  paneId: string,
+  tabId: string,
+  target: TabTarget,
+  initialPageState?: PageSessionState,
+): PaneWorkspaceState {
+  const descriptor = createDescriptor(target, initialPageState);
+  const root = updatePane(workspace.root, paneId, (pane) => ({
+    ...pane,
+    activeTabId: tabId,
+    tabs: pane.tabs.map((tab) =>
+      tab.tabId === tabId ? { ...descriptor, tabId } : tab,
+    ),
+  }));
+  return root === workspace.root
+    ? workspace
+    : { root, activePaneId: paneId };
+}
+
+export function openPaneTargetReusingNewTab(
+  workspace: PaneWorkspaceState,
+  target: TabTarget,
+  paneId = workspace.activePaneId,
+  initialPageState?: PageSessionState,
+): PaneWorkspaceState {
+  const placeholder = activeNewTab(workspace, paneId);
+  if (!placeholder) {
+    return openPaneTarget(workspace, target, paneId, initialPageState);
+  }
+
+  const targetKey = getTabTargetKey(target);
+  for (const pane of collectPanes(workspace.root)) {
+    const existing = pane.tabs.find(
+      ({ target: current }) => getTabTargetKey(current) === targetKey,
+    );
+    if (existing) {
+      const withoutPlaceholder = closePaneTab(
+        workspace,
+        paneId,
+        placeholder.tabId,
+      );
+      return selectPaneAndTab(
+        withoutPlaceholder,
+        pane.paneId,
+        existing.tabId,
+      );
+    }
+  }
+
+  return replacePaneTabTarget(
+    workspace,
+    paneId,
+    placeholder.tabId,
+    target,
+    initialPageState,
+  );
+}
+
 export function moveOrOpenPaneTarget(
   workspace: PaneWorkspaceState,
   target: TabTarget,
@@ -310,6 +382,73 @@ export function moveOrOpenPaneTarget(
     }
   }
   return openPaneTarget(workspace, target, paneId, initialPageState);
+}
+
+export function moveOrOpenPaneTargetReusingNewTab(
+  workspace: PaneWorkspaceState,
+  target: TabTarget,
+  paneId: string,
+  initialPageState?: PageSessionState,
+): PaneWorkspaceState {
+  const placeholder = activeNewTab(workspace, paneId);
+  if (!placeholder) {
+    return moveOrOpenPaneTarget(
+      workspace,
+      target,
+      paneId,
+      initialPageState,
+    );
+  }
+
+  const targetKey = getTabTargetKey(target);
+  const destination = findPane(workspace.root, paneId);
+  const destinationTab = destination?.tabs.find(
+    ({ target: current }) => getTabTargetKey(current) === targetKey,
+  );
+  if (destinationTab) {
+    const withoutPlaceholder = closePaneTab(
+      workspace,
+      paneId,
+      placeholder.tabId,
+      true,
+    );
+    return selectPaneAndTab(
+      withoutPlaceholder,
+      paneId,
+      destinationTab.tabId,
+    );
+  }
+
+  for (const pane of collectPanes(workspace.root)) {
+    if (pane.paneId === paneId) {
+      continue;
+    }
+    const existing = pane.tabs.find(
+      ({ target: current }) => getTabTargetKey(current) === targetKey,
+    );
+    if (existing) {
+      const withoutPlaceholder = closePaneTab(
+        workspace,
+        paneId,
+        placeholder.tabId,
+        true,
+      );
+      return moveTabBetweenPanes(
+        withoutPlaceholder,
+        pane.paneId,
+        paneId,
+        existing.tabId,
+      );
+    }
+  }
+
+  return replacePaneTabTarget(
+    workspace,
+    paneId,
+    placeholder.tabId,
+    target,
+    initialPageState,
+  );
 }
 
 export function selectPane(
@@ -629,6 +768,35 @@ export function splitPaneWithTarget(
     root: replacePane(workspace.root, targetPaneId, split),
     activePaneId: newPane.paneId,
   };
+}
+
+export function splitPaneWithTargets(
+  workspace: PaneWorkspaceState,
+  targetPaneId: string,
+  targets: readonly TabTarget[],
+  direction: WorkspaceSplitDirection,
+  before: boolean,
+): PaneWorkspaceState {
+  const [first, ...remaining] = targets;
+  if (!first) {
+    return workspace;
+  }
+  let next = splitPaneWithTarget(
+    workspace,
+    targetPaneId,
+    first,
+    direction,
+    before,
+  );
+  const destinationPaneId = next.activePaneId;
+  for (const target of remaining) {
+    next = moveOrOpenPaneTargetReusingNewTab(
+      next,
+      target,
+      destinationPaneId,
+    );
+  }
+  return next;
 }
 
 export function closeWorkspacePane(

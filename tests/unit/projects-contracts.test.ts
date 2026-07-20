@@ -15,6 +15,7 @@ import {
   isLockProjectPageRequest,
   isMarkdownDocument,
   isMoveProjectNodeRequest,
+  isMoveProjectNodesRequest,
   isNewProjectPassword,
   isProjectBacklinksOutcome,
   isProjectGraphSnapshot,
@@ -24,6 +25,7 @@ import {
   isProjectPageProperties,
   isProjectPassword,
   isProjectPathRequest,
+  isProjectPathsRequest,
   isProtectProjectPageRequest,
   isRemoveProjectPagePasswordRequest,
   isProjectResult,
@@ -33,6 +35,7 @@ import {
   isProjectSummary,
   isSaveMarkdownDocumentRequest,
   isTrashProjectNodeOutcome,
+  isTrashProjectNodesRequest,
   isUnlockProjectPageRequest,
   projectFailure,
   projectSuccess,
@@ -128,9 +131,27 @@ describe('project contracts', () => {
         beforeNodeId: 'invalid',
       }),
     ).toBe(false);
+    expect(
+      isMoveProjectNodesRequest({
+        nodeIds: [nodeId, randomUUID()],
+        parentId: null,
+        beforeNodeId: null,
+      }),
+    ).toBe(true);
+    expect(
+      isMoveProjectNodesRequest({
+        nodeIds: [nodeId, nodeId],
+        parentId: null,
+      }),
+    ).toBe(false);
+    expect(isTrashProjectNodesRequest({ nodeIds: [nodeId] })).toBe(true);
+    expect(isTrashProjectNodesRequest({ nodeIds: [] })).toBe(false);
     expect(isProjectPathRequest({ nodeId: null })).toBe(true);
     expect(isProjectPathRequest({ nodeId })).toBe(true);
     expect(isProjectPathRequest({ nodeId: 'invalid' })).toBe(false);
+    expect(isProjectPathsRequest({ nodeIds: [nodeId] })).toBe(true);
+    expect(isProjectPathsRequest({ nodeIds: [] })).toBe(false);
+    expect(isProjectPathsRequest({ nodeIds: [nodeId, nodeId] })).toBe(false);
     expect(
       isSaveMarkdownDocumentRequest({
         nodeId,
@@ -189,6 +210,8 @@ describe('project contracts', () => {
     const sourceNodeId = randomUUID();
     const targetNodeId = randomUUID();
     const node = {
+      canContainChildren: true,
+      hasChildren: false,
       kind: 'page' as const,
       name: 'Nota',
       nodeId: targetNodeId,

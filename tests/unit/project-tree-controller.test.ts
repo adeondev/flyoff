@@ -4,7 +4,14 @@ import { ProjectTreeController } from '../../src/renderer/projects/project-tree-
 import type { ProjectTreeNode } from '../../src/shared/contracts';
 
 function folder(nodeId: string, parentId: string | null): ProjectTreeNode {
-  return { kind: 'folder', name: nodeId, nodeId, parentId };
+  return {
+    canContainChildren: true,
+    hasChildren: true,
+    kind: 'folder',
+    name: nodeId,
+    nodeId,
+    parentId,
+  };
 }
 
 describe('ProjectTreeController branch operations', () => {

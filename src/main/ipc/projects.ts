@@ -18,7 +18,9 @@ import {
   isListProjectChildrenRequest,
   isListProjectBacklinksRequest,
   isMoveProjectNodeRequest,
+  isMoveProjectNodesRequest,
   isProjectPathRequest,
+  isProjectPathsRequest,
   isReadMarkdownDocumentRequest,
   isProjectInternalLinkRequest,
   isProjectSearchRequest,
@@ -30,6 +32,7 @@ import {
   isSaveMarkdownDocumentRequest,
   isSetProjectPageReadOnlyRequest,
   isTrashProjectNodeRequest,
+  isTrashProjectNodesRequest,
   isUnlockProjectPageRequest,
   projectFailure,
   projectSuccess,
@@ -223,6 +226,19 @@ export function registerProjectHandlers({
   );
 
   ipcMain.handle(
+    PROJECT_IPC_CHANNELS.moveNodes,
+    async (event, value: unknown) => {
+      const { senderKey } = trustedSender(event, 'Project content batch move');
+
+      if (!isMoveProjectNodesRequest(value)) {
+        throw new TypeError('Invalid project nodes move request.');
+      }
+
+      return projectService.moveNodes(senderKey, value);
+    },
+  );
+
+  ipcMain.handle(
     PROJECT_IPC_CHANNELS.trashNode,
     async (event, value: unknown) => {
       const { senderKey } = trustedSender(event, 'Project content deletion');
@@ -232,6 +248,22 @@ export function registerProjectHandlers({
       }
 
       return projectService.trashNode(senderKey, value);
+    },
+  );
+
+  ipcMain.handle(
+    PROJECT_IPC_CHANNELS.trashNodes,
+    async (event, value: unknown) => {
+      const { senderKey } = trustedSender(
+        event,
+        'Project content batch deletion',
+      );
+
+      if (!isTrashProjectNodesRequest(value)) {
+        throw new TypeError('Invalid project nodes trash request.');
+      }
+
+      return projectService.trashNodes(senderKey, value);
     },
   );
 
@@ -282,6 +314,41 @@ export function registerProjectHandlers({
         return projectFailure(
           'io-error',
           'The project path could not be copied.',
+        );
+      }
+    },
+  );
+
+  ipcMain.handle(
+    PROJECT_IPC_CHANNELS.copyPaths,
+    async (event, value: unknown) => {
+      const { senderKey } = trustedSender(event, 'Project paths copy');
+
+      if (!isProjectPathsRequest(value)) {
+        throw new TypeError('Invalid project paths request.');
+      }
+
+      const resolved = await Promise.all(
+        value.nodeIds.map((nodeId) =>
+          projectService.resolvePath(senderKey, { nodeId }),
+        ),
+      );
+      const failed = resolved.find((result) => !result.ok);
+      if (failed && !failed.ok) {
+        return failed;
+      }
+
+      try {
+        copyPathToClipboard(
+          resolved
+            .flatMap((result) => result.ok ? [result.value] : [])
+            .join(process.platform === 'win32' ? '\r\n' : '\n'),
+        );
+        return projectSuccess(null);
+      } catch {
+        return projectFailure(
+          'io-error',
+          'The project paths could not be copied.',
         );
       }
     },

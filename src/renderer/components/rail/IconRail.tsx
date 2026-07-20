@@ -1,5 +1,6 @@
 import type { Translate } from '../../pages/page-types';
-import sidebarToggleIcon from '../../../../public/images/icons/actions/sidebar-toggle.svg';
+import sidebarCloseIcon from '../../../../public/images/icons/actions/sidebar-close.svg';
+import sidebarOpenIcon from '../../../../public/images/icons/actions/sidebar-open.svg';
 import { MaskedIcon } from '../MaskedIcon';
 import { getTooltipTargetProps } from '../tooltip';
 import type { RailView } from './rail-views';
@@ -42,7 +43,10 @@ export function IconRail({
             'right',
           )}
         >
-          <MaskedIcon className="icon-rail__icon" icon={sidebarToggleIcon} />
+          <MaskedIcon
+            className="icon-rail__icon"
+            icon={sidebarCollapsed ? sidebarOpenIcon : sidebarCloseIcon}
+          />
         </button>
       ) : null}
       {views.map((view) => {

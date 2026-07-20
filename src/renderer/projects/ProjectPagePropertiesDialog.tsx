@@ -9,6 +9,7 @@ import {
   type ProjectResult,
 } from '../../shared/contracts';
 import { Dialog } from '../components/dialog';
+import { TwemojiText } from '../components/twemoji';
 import { getTooltipTargetProps } from '../components/tooltip';
 import type { Translate } from '../pages/page-types';
 import { useFlyoffPreferences } from '../preferences';
@@ -337,7 +338,7 @@ export function ProjectPagePropertiesDialog({
           <dl className="project-page-properties__details">
             <div>
               <dt>{translate('projects.name')}</dt>
-              <dd>{node.name}</dd>
+              <dd><TwemojiText text={node.name} /></dd>
             </div>
             <div>
               <dt>{translate('projects.propertiesType')}</dt>
@@ -345,7 +346,9 @@ export function ProjectPagePropertiesDialog({
             </div>
             <div>
               <dt>{translate('projects.location')}</dt>
-              <dd {...getTooltipTargetProps(location, 'bottom')}>{location}</dd>
+              <dd {...getTooltipTargetProps(location, 'bottom')}>
+                <TwemojiText text={location} />
+              </dd>
             </div>
             <div>
               <dt>{translate('projects.propertiesContentSize')}</dt>

@@ -9,6 +9,7 @@ import {
   type KeyboardEvent,
   type WheelEvent,
 } from 'react';
+import { flushSync } from 'react-dom';
 
 import plusIcon from '../../../../public/images/icons/actions/plus.svg';
 import {
@@ -19,12 +20,13 @@ import {
 import type { TabPresentation } from '../../pages/page-types';
 import { MaskedIcon } from '../MaskedIcon';
 import { getTooltipTargetProps } from '../tooltip';
+import { TwemojiText } from '../twemoji';
 import {
   beginWorkspaceTabPointerDrag,
   setWorkspaceDragActive,
   writeWorkspaceTabDrag,
 } from './workspace-drag';
-import { animateTabExit } from './tab-motion';
+import { animateTabExit as runTabExitAnimation } from './tab-motion';
 
 interface TabBarProps {
   paneId?: string;
@@ -48,6 +50,19 @@ interface TabBarProps {
 interface DropTarget {
   tabId: string;
   edge: 'before' | 'after';
+}
+
+interface ExitingTab {
+  active: boolean;
+  index: number;
+  presentation: TabPresentation;
+  tab: TabDescriptor;
+}
+
+interface VisualTab {
+  exiting?: ExitingTab;
+  presentation: TabPresentation;
+  tab: TabDescriptor;
 }
 
 const TAB_MOTION_DURATION_MS = 120;
@@ -127,6 +142,38 @@ export const TabBar = forwardRef<TabBarHandle, TabBarProps>(function TabBar({
   const [dropTarget, setDropTarget] = useState<DropTarget>();
   const [draggingTabId, setDraggingTabId] = useState<string>();
   const [draggedTabWidth, setDraggedTabWidth] = useState(0);
+  const [exitingTabs, setExitingTabs] = useState<readonly ExitingTab[]>([]);
+  const pendingExitsRef = useRef(new Map<string, Promise<void>>());
+  const visualTabsRef = useRef<readonly VisualTab[]>([]);
+
+  const exitingById = new Map(
+    exitingTabs.map((exiting) => [exiting.tab.tabId, exiting]),
+  );
+  const visualTabs: VisualTab[] = tabs.map((tab) => {
+    const exiting = exitingById.get(tab.tabId);
+    return {
+      exiting,
+      presentation: exiting?.presentation ?? getPresentation(tab),
+      tab,
+    };
+  });
+  for (const exiting of [...exitingTabs].sort(
+    (first, second) => first.index - second.index,
+  )) {
+    if (tabs.some(({ tabId }) => tabId === exiting.tab.tabId)) {
+      continue;
+    }
+    visualTabs.splice(
+      Math.min(exiting.index, visualTabs.length),
+      0,
+      {
+        exiting,
+        presentation: exiting.presentation,
+        tab: exiting.tab,
+      },
+    );
+  }
+  visualTabsRef.current = visualTabs;
 
   useImperativeHandle(
     ref,
@@ -148,10 +195,48 @@ export const TabBar = forwardRef<TabBarHandle, TabBarProps>(function TabBar({
         const timeout = window.setTimeout(finish, TAB_MOTION_DURATION_MS + 80);
         element.addEventListener('animationend', finish);
       },
-      animateTabExit: (tabId) =>
-        animateTabExit(wrapperRefs.current.get(tabId) ?? null),
+      animateTabExit: (tabId) => {
+        const existing = pendingExitsRef.current.get(tabId);
+        if (existing) {
+          return existing;
+        }
+        const index = visualTabsRef.current.findIndex(
+          ({ tab }) => tab.tabId === tabId,
+        );
+        const visual = visualTabsRef.current[index];
+        if (!visual) {
+          return Promise.resolve();
+        }
+        flushSync(() => {
+          setExitingTabs((current) =>
+            current.some(({ tab }) => tab.tabId === tabId)
+              ? current
+              : [
+                  ...current,
+                  {
+                    active: tabId === activeTabId,
+                    index,
+                    presentation: visual.presentation,
+                    tab: visual.tab,
+                  },
+                ],
+          );
+        });
+        const pending = runTabExitAnimation(
+          wrapperRefs.current.get(tabId) ?? null,
+        ).finally(() => {
+          if (pendingExitsRef.current.get(tabId) === pending) {
+            pendingExitsRef.current.delete(tabId);
+          }
+          setExitingTabs((current) =>
+            current.filter(({ tab }) => tab.tabId !== tabId),
+          );
+        });
+        pendingExitsRef.current.set(tabId, pending);
+        return pending;
+      },
     }),
-    [],
+    [activeTabId],
   );
 
   useEffect(() => {
@@ -380,23 +465,27 @@ export const TabBar = forwardRef<TabBarHandle, TabBarProps>(function TabBar({
           } as CSSProperties
         }
       >
-        {tabs.map((tab, index) => {
-          const presentation = getPresentation(tab);
+        {visualTabs.map(({ exiting, presentation, tab }) => {
+          const index = tabs.findIndex(({ tabId }) => tabId === tab.tabId);
           const label = presentation.title;
-          const active = tab.tabId === activeTabId;
-          const closable = !(
+          const selected = !exiting && tab.tabId === activeTabId;
+          const visuallyActive = exiting?.active ?? selected;
+          const closable = !exiting && !(
             tabs.length === 1 &&
             !canCloseSoleTab &&
             (isHomeTarget(tab.target) ||
               (tab.target.type === 'internal' &&
                 tab.target.pageId === 'new-tab'))
           );
-          const dragShift = tabReorderShift(
-            index,
-            draggedIndex,
-            insertionIndex,
-            draggedTabWidth,
-          );
+          const dragShift =
+            exiting || index < 0
+              ? 0
+              : tabReorderShift(
+                  index,
+                  draggedIndex,
+                  insertionIndex,
+                  draggedTabWidth,
+                );
           const draggingClass =
             draggingTabId === tab.tabId
               ? ` page-tab--dragging${dropTarget ? ' page-tab--drag-source' : ''}`
@@ -405,8 +494,8 @@ export const TabBar = forwardRef<TabBarHandle, TabBarProps>(function TabBar({
                 : ' page-tab--drag-shift';
           return (
             <div
-              className={`page-tab${active ? ' page-tab--active' : ''}${draggingClass}`}
-              draggable
+              className={`page-tab${visuallyActive ? ' page-tab--active' : ''}${draggingClass}`}
+              draggable={!exiting}
               key={tab.tabId}
               onDragEnd={clearDragState}
               onPointerDown={(event) => {
@@ -489,10 +578,14 @@ export const TabBar = forwardRef<TabBarHandle, TabBarProps>(function TabBar({
               <div className="page-tab__content">
                 <button
                   aria-controls={`page-panel-${paneId}-${tab.tabId}`}
-                  aria-selected={active}
+                  aria-selected={selected}
                   className="page-tab__trigger"
                   id={`page-tab-${paneId}-${tab.tabId}`}
-                  onClick={() => onSelect(tab.tabId)}
+                  onClick={() => {
+                    if (!exiting) {
+                      onSelect(tab.tabId);
+                    }
+                  }}
                   onKeyDown={(event) => handleKeyDown(event, tab, index)}
                   ref={(element) => {
                     if (element) {
@@ -502,14 +595,14 @@ export const TabBar = forwardRef<TabBarHandle, TabBarProps>(function TabBar({
                     }
                   }}
                   role="tab"
-                  tabIndex={active ? 0 : -1}
+                  tabIndex={selected ? 0 : -1}
                   type="button"
                 >
                   <MaskedIcon
                     className="page-tab__icon"
                     icon={presentation.icon}
                   />
-                  <span className="page-tab__label">{label}</span>
+                  <TwemojiText className="page-tab__label" text={label} />
                 </button>
                 <button
                   aria-hidden={!closable}

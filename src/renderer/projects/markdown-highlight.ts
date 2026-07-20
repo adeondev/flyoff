@@ -1,11 +1,33 @@
+import {
+  twemojiAssetUrl,
+  twemojiSegments,
+} from '../components/twemoji';
+
 const ESCAPE: Record<string, string> = {
   '&': '&amp;',
   '<': '&lt;',
   '>': '&gt;',
 };
 
-function escapeHtml(value: string): string {
+function escapePlainHtml(value: string): string {
   return value.replace(/[&<>]/g, (char) => ESCAPE[char]!);
+}
+
+function escapeHtml(value: string): string {
+  return twemojiSegments(value)
+    .map((segment) => {
+      if (!segment.codepoint || !segment.emoji) {
+        return escapePlainHtml(segment.text);
+      }
+      const emoji = escapePlainHtml(segment.emoji);
+      const assetUrl = twemojiAssetUrl(segment.codepoint);
+      const fallbackClass = assetUrl ? '' : ' twemoji--fallback';
+      const image = assetUrl
+        ? `<img alt="" aria-hidden="true" class="twemoji__glyph" contenteditable="false" data-md-decoration decoding="async" draggable="false" loading="lazy" src="${assetUrl}">`
+        : '';
+      return `<span aria-label="${emoji}" class="twemoji twemoji--source${fallbackClass}" data-twemoji="${segment.codepoint}" role="img"><span aria-hidden="true" class="twemoji__unicode">${emoji}</span>${image}</span>`;
+    })
+    .join('');
 }
 
 function span(className: string, value: string): string {
@@ -258,11 +280,33 @@ const lineCache = new Map<string, string>();
 
 export interface HighlightedSourceLine {
   code: boolean;
+  codeEnd: boolean;
+  codeStart: boolean;
   fenceAfter: boolean;
   fenceBefore: boolean;
+  fenceLine: boolean;
   html: string;
   key: string;
   source: string;
+}
+
+export function sourceLineClassName(line: HighlightedSourceLine): string {
+  const classes = ['md-line'];
+
+  if (line.code) {
+    classes.push('md-line--code');
+  }
+  if (line.codeStart) {
+    classes.push('md-line--code-start');
+  }
+  if (line.codeEnd) {
+    classes.push('md-line--code-end');
+  }
+  if (line.fenceLine) {
+    classes.push('md-line--code-fence');
+  }
+
+  return classes.join(' ');
 }
 
 function highlightCachedLine(key: string, compute: () => string): string {
@@ -287,7 +331,7 @@ export function highlightSourceLine(
   fenceBefore: boolean,
 ): HighlightedSourceLine {
   const isFence = FENCE_LINE.test(source);
-  const state = isFence ? 'f' : fenceBefore ? 'c' : 'n';
+  const state = isFence ? (fenceBefore ? 'fc' : 'fo') : fenceBefore ? 'c' : 'n';
   const key = `${state}\u0000${source}`;
   const html = highlightCachedLine(key, () =>
     isFence
@@ -299,8 +343,11 @@ export function highlightSourceLine(
 
   return {
     code: state !== 'n',
+    codeEnd: isFence && fenceBefore,
+    codeStart: isFence && !fenceBefore,
     fenceAfter: isFence ? !fenceBefore : fenceBefore,
     fenceBefore,
+    fenceLine: isFence,
     html,
     key,
     source,
@@ -325,8 +372,8 @@ export function highlightSourceLines(
 export function highlightSource(source: string): string {
   return highlightSourceLines(source)
     .map(
-      ({ code, html }, index) =>
-        `<span class="md-line${code ? ' md-line--code' : ''}" data-line="${index + 1}"><span aria-hidden="true" class="md-line__gutter" contenteditable="false" data-md-gutter>${index + 1}</span><span class="md-line__content">${html || '<br data-md-placeholder>'}</span></span>`,
+      (line, index) =>
+        `<span class="${sourceLineClassName(line)}" data-line="${index + 1}"><span aria-hidden="true" class="md-line__gutter" contenteditable="false" data-md-gutter>${index + 1}</span><span class="md-line__content">${line.html || '<br data-md-placeholder>'}</span></span>`,
     )
     .join('');
 }

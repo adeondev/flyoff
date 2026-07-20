@@ -2,9 +2,10 @@ export const PROJECT_FORMAT = 'flyoff-project' as const;
 export const PROJECT_FORMAT_VERSION = 2 as const;
 export const PROJECT_FORMAT_LEGACY_VERSION = 1 as const;
 export const PROJECT_INDEX_FORMAT = 'flyoff-content-index' as const;
-export const PROJECT_INDEX_VERSION = 3 as const;
+export const PROJECT_INDEX_VERSION = 4 as const;
 export const PROJECT_INDEX_LEGACY_VERSION = 1 as const;
-export const PROJECT_INDEX_PREVIOUS_VERSION = 2 as const;
+export const PROJECT_INDEX_OLDER_VERSION = 2 as const;
+export const PROJECT_INDEX_PREVIOUS_VERSION = 3 as const;
 
 export const PROJECT_MANIFEST_MAX_BYTES = 64 * 1024;
 export const PROJECT_INDEX_MAX_BYTES = 32 * 1024 * 1024;
@@ -25,9 +26,12 @@ export const PROJECT_IPC_CHANNELS = {
   createNode: 'flyoff:projects:nodes:create',
   renameNode: 'flyoff:projects:nodes:rename',
   moveNode: 'flyoff:projects:nodes:move',
+  moveNodes: 'flyoff:projects:nodes:move-batch',
   trashNode: 'flyoff:projects:nodes:trash',
+  trashNodes: 'flyoff:projects:nodes:trash-batch',
   revealPath: 'flyoff:projects:path:reveal',
   copyPath: 'flyoff:projects:path:copy',
+  copyPaths: 'flyoff:projects:paths:copy',
   readMarkdown: 'flyoff:projects:markdown:read',
   saveMarkdown: 'flyoff:projects:markdown:save',
   listLinkTargets: 'flyoff:projects:links:targets:list',
@@ -81,6 +85,8 @@ export interface ProjectSummary {
 }
 
 interface ProjectTreeNodeBase {
+  canContainChildren: boolean;
+  hasChildren: boolean;
   nodeId: string;
   parentId: string | null;
   name: string;
@@ -160,8 +166,18 @@ export interface MoveProjectNodeRequest {
   beforeNodeId?: string | null;
 }
 
+export interface MoveProjectNodesRequest {
+  nodeIds: readonly string[];
+  parentId: string | null;
+  beforeNodeId?: string | null;
+}
+
 export interface TrashProjectNodeRequest {
   nodeId: string;
+}
+
+export interface TrashProjectNodesRequest {
+  nodeIds: readonly string[];
 }
 
 export interface ProjectNodeMutationOutcome {
@@ -170,8 +186,18 @@ export interface ProjectNodeMutationOutcome {
   skippedLockedNodeIds: readonly string[];
 }
 
+export interface ProjectNodesMutationOutcome {
+  nodes: readonly ProjectTreeNode[];
+  updatedDocumentNodeIds: readonly string[];
+  skippedLockedNodeIds: readonly string[];
+}
+
 export interface ProjectPathRequest {
   nodeId: string | null;
+}
+
+export interface ProjectPathsRequest {
+  nodeIds: readonly string[];
 }
 
 export interface TrashProjectNodeOutcome {
@@ -500,6 +526,8 @@ export function isProjectTreeNode(value: unknown): value is ProjectTreeNode {
     !isRecord(value) ||
     !isProjectIdentifier(value.nodeId) ||
     (value.parentId !== null && !isProjectIdentifier(value.parentId)) ||
+    typeof value.canContainChildren !== 'boolean' ||
+    typeof value.hasChildren !== 'boolean' ||
     !isPortableProjectName(value.name)
   ) {
     return false;
@@ -658,10 +686,39 @@ export function isMoveProjectNodeRequest(
   );
 }
 
+function isProjectNodeIdBatch(value: unknown): value is readonly string[] {
+  return (
+    Array.isArray(value) &&
+    value.length > 0 &&
+    value.length <= 500 &&
+    value.every(isProjectIdentifier) &&
+    new Set(value).size === value.length
+  );
+}
+
+export function isMoveProjectNodesRequest(
+  value: unknown,
+): value is MoveProjectNodesRequest {
+  return (
+    isRecord(value) &&
+    isProjectNodeIdBatch(value.nodeIds) &&
+    hasNodeParent(value) &&
+    (value.beforeNodeId === undefined ||
+      value.beforeNodeId === null ||
+      isProjectIdentifier(value.beforeNodeId))
+  );
+}
+
 export function isTrashProjectNodeRequest(
   value: unknown,
 ): value is TrashProjectNodeRequest {
   return isRecord(value) && isProjectIdentifier(value.nodeId);
+}
+
+export function isTrashProjectNodesRequest(
+  value: unknown,
+): value is TrashProjectNodesRequest {
+  return isRecord(value) && isProjectNodeIdBatch(value.nodeIds);
 }
 
 export function isProjectNodeMutationOutcome(
@@ -687,12 +744,54 @@ export function isProjectNodeMutationOutcome(
   );
 }
 
+export function isProjectNodesMutationOutcome(
+  value: unknown,
+): value is ProjectNodesMutationOutcome {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, [
+      'nodes',
+      'updatedDocumentNodeIds',
+      'skippedLockedNodeIds',
+    ]) &&
+    Array.isArray(value.nodes) &&
+    value.nodes.length > 0 &&
+    value.nodes.length <= 500 &&
+    value.nodes.every(isProjectTreeNode) &&
+    new Set(value.nodes.map((node) => node.nodeId)).size ===
+      value.nodes.length &&
+    Array.isArray(value.updatedDocumentNodeIds) &&
+    value.updatedDocumentNodeIds.length <= 250_000 &&
+    value.updatedDocumentNodeIds.every(isProjectIdentifier) &&
+    new Set(value.updatedDocumentNodeIds).size ===
+      value.updatedDocumentNodeIds.length &&
+    Array.isArray(value.skippedLockedNodeIds) &&
+    value.skippedLockedNodeIds.length <= 250_000 &&
+    value.skippedLockedNodeIds.every(isProjectIdentifier) &&
+    new Set(value.skippedLockedNodeIds).size === value.skippedLockedNodeIds.length
+  );
+}
+
 export function isProjectPathRequest(
   value: unknown,
 ): value is ProjectPathRequest {
   return (
     isRecord(value) &&
     (value.nodeId === null || isProjectIdentifier(value.nodeId))
+  );
+}
+
+export function isProjectPathsRequest(
+  value: unknown,
+): value is ProjectPathsRequest {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ['nodeIds']) &&
+    Array.isArray(value.nodeIds) &&
+    value.nodeIds.length > 0 &&
+    value.nodeIds.length <= 500 &&
+    value.nodeIds.every(isProjectIdentifier) &&
+    new Set(value.nodeIds).size === value.nodeIds.length
   );
 }
 

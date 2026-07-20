@@ -46,7 +46,21 @@ describe('markdown source highlighter', () => {
 
     expect(html).toContain('md-tok-fence');
     expect(html).not.toContain('md-tok-strong');
-    expect(html.match(/md-line--code/g)).toHaveLength(3);
+    expect(html.match(/md-line--code(?=[ "\n])/g)).toHaveLength(3);
+    expect(html.match(/md-line--code-start/g)).toHaveLength(1);
+    expect(html.match(/md-line--code-end/g)).toHaveLength(1);
+    expect(html.match(/md-line--code-fence/g)).toHaveLength(2);
+  });
+
+  it('renders Twemoji from the isolated asset protocol without SVG use nodes', () => {
+    const html = highlightSource('Hello 👋🏽');
+
+    expect(html).toContain(
+      'src="flyoff-asset://app/twemoji/1f44b-1f3fd.svg"',
+    );
+    expect(html).toContain('class="twemoji__glyph"');
+    expect(html).not.toContain('<use');
+    expect(html).not.toContain('twemoji-sprite');
   });
 
   it('tokenises links and the color attribute', () => {

@@ -1,4 +1,7 @@
-import type { HighlightedSourceLine } from './markdown-highlight';
+import {
+  sourceLineClassName,
+  type HighlightedSourceLine,
+} from './markdown-highlight';
 import {
   createSourceDocumentModel,
   sourceLineIndexAtOffset,
@@ -14,6 +17,76 @@ interface SourceRenderState {
 
 const renderStates = new WeakMap<HTMLElement, SourceRenderState>();
 
+function enableTwemojiFallback(root: ParentNode): void {
+  for (const image of root.querySelectorAll<HTMLImageElement>(
+    'img.twemoji__glyph',
+  )) {
+    const fallback = (): void => {
+      const wrapper = image.closest('.twemoji');
+      wrapper?.classList.add('twemoji--fallback');
+      image.remove();
+    };
+
+    image.addEventListener('error', fallback, { once: true });
+    if (image.complete && image.naturalWidth === 0) {
+      fallback();
+    }
+  }
+}
+
+function applyCodeBlockWidths(
+  root: HTMLElement,
+  model: SourceDocumentModel,
+  change: SourceChangeRange,
+): void {
+  let start = change.full ? 0 : Math.max(0, change.startLine - 1);
+  while (
+    start > 0 &&
+    (model.lines[start]?.code || model.lines[start - 1]?.code)
+  ) {
+    start -= 1;
+  }
+  let end = change.full
+    ? model.lines.length
+    : Math.min(model.lines.length, change.endLine + 1);
+  while (
+    end < model.lines.length &&
+    (model.lines[end]?.code || model.lines[end - 1]?.code)
+  ) {
+    end += 1;
+  }
+
+  for (let lineIndex = start; lineIndex < end; lineIndex += 1) {
+    (root.children[lineIndex] as HTMLElement | undefined)?.style.removeProperty(
+      '--md-code-inline-size',
+    );
+  }
+
+  let index = start;
+  while (index < end) {
+    if (!model.lines[index]?.code) {
+      index += 1;
+      continue;
+    }
+    const start = index;
+    let maximumLength = 0;
+    while (index < model.lines.length && model.lines[index]?.code) {
+      maximumLength = Math.max(
+        maximumLength,
+        model.lines[index]!.source.replaceAll('\t', '  ').length,
+      );
+      index += 1;
+    }
+    const inlineSize = `calc(${Math.max(1, maximumLength)}ch + 24px)`;
+    for (let lineIndex = start; lineIndex < index; lineIndex += 1) {
+      (root.children[lineIndex] as HTMLElement | undefined)?.style.setProperty(
+        '--md-code-inline-size',
+        inlineSize,
+      );
+    }
+  }
+}
+
 function createLine(
   root: HTMLElement,
   line: HighlightedSourceLine,
@@ -22,7 +95,7 @@ function createLine(
   const element = root.ownerDocument.createElement('span');
   const gutter = root.ownerDocument.createElement('span');
   const content = root.ownerDocument.createElement('span');
-  element.className = line.code ? 'md-line md-line--code' : 'md-line';
+  element.className = sourceLineClassName(line);
   element.dataset.line = String(index + 1);
   gutter.className = 'md-line__gutter';
   gutter.dataset.mdGutter = '';
@@ -35,6 +108,7 @@ function createLine(
     (!line.code || root.dataset.spellcheckCodeBlocks === 'true');
   if (line.html) {
     content.innerHTML = line.html;
+    enableTwemojiFallback(content);
   } else {
     const placeholder = root.ownerDocument.createElement('br');
     placeholder.dataset.mdPlaceholder = '';
@@ -93,6 +167,7 @@ export function reconcileSource(root: HTMLElement, source: string): void {
     root.children[currentState?.activeLine ?? -1]?.classList.add(
       'md-line--active',
     );
+    applyCodeBlockWidths(root, model, model.change);
     return;
   }
 
@@ -146,6 +221,7 @@ export function reconcileSource(root: HTMLElement, source: string): void {
     replaceAll(root, next);
   }
 
+  applyCodeBlockWidths(root, model, model.change);
   const activeLine = currentState.activeLine;
   renderStates.set(root, { activeLine, model });
   if (activeLine >= 0) {

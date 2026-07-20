@@ -3,6 +3,7 @@ import { useEffect, useId, useReducer, useState, type FormEvent } from 'react';
 import chevronRightIcon from '../../../public/images/icons/actions/chevron-right.svg';
 import folderOpenIcon from '../../../public/images/icons/instances/folder-open-solid.svg';
 import folderIcon from '../../../public/images/icons/instances/folder-solid.svg';
+import noteIcon from '../../../public/images/icons/instances/note-solid.svg';
 import type {
   MoveProjectNodeRequest,
   ProjectResult,
@@ -10,22 +11,23 @@ import type {
 } from '../../shared/contracts';
 import { MaskedIcon } from '../components/MaskedIcon';
 import { Dialog } from '../components/dialog';
+import { TwemojiText } from '../components/twemoji';
 import type { Translate } from '../pages/page-types';
 import { projectNodeDisplayName } from './project-node-name';
 import type { ProjectTreeController } from './project-tree-controller';
 
 interface FolderBranchProps {
   controller: ProjectTreeController;
-  excludedNodeId: string;
+  excludedNodeIds: ReadonlySet<string>;
   parentId: string | null;
   selectedId: string | null | undefined;
   translate: Translate;
   onSelect: (nodeId: string) => void;
 }
 
-function FolderBranch({
+export function ProjectFolderPickerBranch({
   controller,
-  excludedNodeId,
+  excludedNodeIds,
   onSelect,
   parentId,
   selectedId,
@@ -33,7 +35,7 @@ function FolderBranch({
 }: FolderBranchProps) {
   const branch = controller.getBranch(parentId);
   const folders = branch.nodes.filter(
-    (node) => node.kind === 'folder' && node.nodeId !== excludedNodeId,
+    (node) => node.canContainChildren && !excludedNodeIds.has(node.nodeId),
   );
 
   return (
@@ -48,9 +50,14 @@ function FolderBranch({
               role="treeitem"
             >
               <button
-                aria-expanded={expanded}
-                aria-label={`${expanded ? '−' : '+'} ${projectNodeDisplayName(folder)}`}
+                aria-expanded={folder.hasChildren ? expanded : undefined}
+                aria-label={`${translate(
+                  expanded
+                    ? 'projects.collapseItem'
+                    : 'projects.expandItem',
+                )} ${projectNodeDisplayName(folder)}`}
                 className="project-folder-picker__expand"
+                disabled={!folder.hasChildren}
                 onClick={() => void controller.toggle(folder.nodeId)}
                 type="button"
               >
@@ -68,15 +75,21 @@ function FolderBranch({
               >
                 <MaskedIcon
                   className="project-tree__kind"
-                  icon={expanded ? folderOpenIcon : folderIcon}
+                  icon={
+                    folder.kind === 'folder'
+                      ? expanded
+                        ? folderOpenIcon
+                        : folderIcon
+                      : noteIcon
+                  }
                 />
-                {projectNodeDisplayName(folder)}
+                <TwemojiText text={projectNodeDisplayName(folder)} />
               </button>
             </div>
-            {expanded ? (
-              <FolderBranch
+            {folder.hasChildren && expanded ? (
+              <ProjectFolderPickerBranch
                 controller={controller}
-                excludedNodeId={excludedNodeId}
+                excludedNodeIds={excludedNodeIds}
                 onSelect={onSelect}
                 parentId={folder.nodeId}
                 selectedId={selectedId}
@@ -205,9 +218,9 @@ export function MoveProjectNodeDialog({
             <MaskedIcon className="project-tree__kind" icon={folderIcon} />
             {translate('projects.rootFolder')}
           </button>
-          <FolderBranch
+          <ProjectFolderPickerBranch
             controller={controller}
-            excludedNodeId={node.nodeId}
+            excludedNodeIds={new Set([node.nodeId])}
             onSelect={setDestination}
             parentId={null}
             selectedId={destination}

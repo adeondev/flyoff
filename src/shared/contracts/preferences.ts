@@ -1,9 +1,11 @@
+import { parse as parseTwemoji } from '@twemoji/parser';
+
 import {
   isSpellcheckCapabilities,
   type SpellcheckCapabilities,
 } from './spellcheck';
 
-export const PREFERENCES_VERSION = 5 as const;
+export const PREFERENCES_VERSION = 7 as const;
 export const PREFERENCES_MAX_BYTES = 64 * 1_024;
 
 export const GET_PREFERENCES_CHANNEL = 'flyoff:preferences:get' as const;
@@ -15,6 +17,24 @@ export const APPLY_WINDOW_THEME_CHANNEL =
 export const STARTUP_BEHAVIORS = ['ask', 'restore', 'fresh'] as const;
 export const FLYOFF_THEMES = ['flyoff', 'basalt'] as const;
 export const ACCENT_STRENGTHS = ['subtle', 'standard', 'strong'] as const;
+export const ACCENT_COLOR_PRESETS = [
+  '#8F4FC4',
+  '#7048B8',
+  '#5D4DB2',
+  '#4557A8',
+  '#3568A4',
+  '#267589',
+  '#26766E',
+  '#367746',
+  '#5D7330',
+  '#806421',
+  '#925329',
+  '#984537',
+  '#983D54',
+  '#854365',
+  '#695376',
+  '#536174',
+] as const;
 export const INTERFACE_FONTS = ['inter', 'system'] as const;
 export const INTERFACE_DENSITIES = ['compact', 'comfortable'] as const;
 export const BORDER_CONTRASTS = ['soft', 'strong'] as const;
@@ -35,6 +55,8 @@ export const PROPERTIES_DENSITIES = ['compact', 'full'] as const;
 export const ACTIVE_PANE_INDICATORS = ['off', 'subtle', 'strong'] as const;
 export const FOCUS_INDICATORS = ['standard', 'strong'] as const;
 export const SPELLCHECK_SUGGESTION_LIMITS = [3, 5, 8] as const;
+export const EMOJI_SKIN_TONES = [0, 1, 2, 3, 4, 5] as const;
+export const EMOJI_RECENT_LIMIT = 24;
 
 export const NOTE_FONT_SIZE_MIN = 12;
 export const NOTE_FONT_SIZE_MAX = 24;
@@ -66,6 +88,7 @@ export type ActivePaneIndicator = (typeof ACTIVE_PANE_INDICATORS)[number];
 export type FocusIndicator = (typeof FOCUS_INDICATORS)[number];
 export type SpellcheckSuggestionLimit =
   (typeof SPELLCHECK_SUGGESTION_LIMITS)[number];
+export type EmojiSkinTone = (typeof EMOJI_SKIN_TONES)[number];
 
 export interface FlyoffPreferences {
   version: typeof PREFERENCES_VERSION;
@@ -78,6 +101,7 @@ export interface FlyoffPreferences {
   };
   appearance: {
     theme: FlyoffTheme;
+    accentColor: string | null;
     accentStrength: AccentStrength;
     interfaceFont: InterfaceFont;
     density: InterfaceDensity;
@@ -105,6 +129,8 @@ export interface FlyoffPreferences {
     syncSplitScroll: boolean;
     highlightActiveLine: boolean;
     fontLigatures: boolean;
+    emojiRecent: readonly string[];
+    emojiSkinTone: EmojiSkinTone;
   };
   workspace: {
     showTabIcons: boolean;
@@ -197,6 +223,28 @@ function boundedNumber(
   );
 }
 
+function isSingleSupportedEmoji(value: string): boolean {
+  const entities = parseTwemoji(value, {
+    assetType: 'svg',
+    buildUrl: (codepoint) => codepoint,
+  });
+  return (
+    entities.length === 1 &&
+    entities[0]?.indices[0] === 0 &&
+    entities[0]?.indices[1] === value.length
+  );
+}
+
+export function normalizeAccentColor(value: unknown): string | null {
+  if (typeof value !== 'string' || !/^#[0-9a-f]{6}$/i.test(value)) {
+    return null;
+  }
+  const normalized = value.toUpperCase();
+  return ACCENT_COLOR_PRESETS.some((preset) => preset === normalized)
+    ? normalized
+    : null;
+}
+
 export function createDefaultFlyoffPreferences(): FlyoffPreferences {
   return {
     version: PREFERENCES_VERSION,
@@ -209,6 +257,7 @@ export function createDefaultFlyoffPreferences(): FlyoffPreferences {
     },
     appearance: {
       theme: 'flyoff',
+      accentColor: null,
       accentStrength: 'standard',
       interfaceFont: 'inter',
       density: 'comfortable',
@@ -236,6 +285,8 @@ export function createDefaultFlyoffPreferences(): FlyoffPreferences {
       syncSplitScroll: true,
       highlightActiveLine: true,
       fontLigatures: true,
+      emojiRecent: [],
+      emojiSkinTone: 0,
     },
     workspace: {
       showTabIcons: true,
@@ -282,6 +333,20 @@ export function normalizeFlyoffPreferences(value: unknown): FlyoffPreferences {
     ? value.accessibility
     : {};
   const security = isRecord(value.security) ? value.security : {};
+  const emojiRecent = Array.isArray(editor.emojiRecent)
+    ? [
+        ...new Set(
+          editor.emojiRecent.flatMap((emoji) =>
+            typeof emoji === 'string' &&
+            emoji.length > 0 &&
+            emoji.length <= 64 &&
+            isSingleSupportedEmoji(emoji)
+              ? [emoji]
+              : [],
+          ),
+        ),
+      ].slice(0, EMOJI_RECENT_LIMIT)
+    : defaults.editor.emojiRecent;
 
   return {
     version: PREFERENCES_VERSION,
@@ -312,6 +377,7 @@ export function normalizeFlyoffPreferences(value: unknown): FlyoffPreferences {
       theme: includes(FLYOFF_THEMES, appearance.theme)
         ? appearance.theme
         : defaults.appearance.theme,
+      accentColor: normalizeAccentColor(appearance.accentColor),
       accentStrength: includes(
         ACCENT_STRENGTHS,
         appearance.accentStrength,
@@ -416,6 +482,10 @@ export function normalizeFlyoffPreferences(value: unknown): FlyoffPreferences {
         typeof editor.fontLigatures === 'boolean'
           ? editor.fontLigatures
           : defaults.editor.fontLigatures,
+      emojiRecent,
+      emojiSkinTone: includes(EMOJI_SKIN_TONES, editor.emojiSkinTone)
+        ? editor.emojiSkinTone
+        : defaults.editor.emojiSkinTone,
     },
     workspace: {
       showTabIcons:

@@ -12,6 +12,7 @@ import './components/layout/layout.css';
 import './components/feedback/feedback.css';
 import './components/menu/menu.css';
 import './components/tooltip/tooltip.css';
+import './components/twemoji/twemoji.css';
 import './theme.css';
 import './components/dialog/dialog.css';
 import './styles.css';

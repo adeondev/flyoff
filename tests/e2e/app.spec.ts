@@ -296,6 +296,31 @@ test.describe('Flyoff desktop shell', () => {
     ).toBe('flyoff');
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'flyoff');
 
+    const accentOptions = page.locator(
+      '.settings-accent-picker__presets [role="radio"]',
+    );
+    await expect(accentOptions).toHaveCount(16);
+    await accentOptions.nth(5).click();
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          window.flyoff
+            .getPreferences()
+            .then(({ preferences }) => preferences.appearance.accentColor),
+        ),
+      )
+      .toBe('#267589');
+    await page.locator('.settings-accent-picker__reset').click();
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          window.flyoff
+            .getPreferences()
+            .then(({ preferences }) => preferences.appearance.accentColor),
+        ),
+      )
+      .toBeNull();
+
     const homeLabel = await page.evaluate(() =>
       document.documentElement.lang === 'en-US' ? 'Home' : 'Início',
     );
@@ -353,8 +378,11 @@ test.describe('Flyoff desktop shell', () => {
         createProjectNodeType: typeof window.flyoff.createProjectNode,
         renameProjectNodeType: typeof window.flyoff.renameProjectNode,
         moveProjectNodeType: typeof window.flyoff.moveProjectNode,
+        moveProjectNodesType: typeof window.flyoff.moveProjectNodes,
         trashProjectNodeType: typeof window.flyoff.trashProjectNode,
+        trashProjectNodesType: typeof window.flyoff.trashProjectNodes,
         copyProjectPathType: typeof window.flyoff.copyProjectPath,
+        copyProjectPathsType: typeof window.flyoff.copyProjectPaths,
         revealProjectPathType: typeof window.flyoff.revealProjectPath,
         getProjectPagePropertiesType:
           typeof window.flyoff.getProjectPageProperties,
@@ -426,8 +454,11 @@ test.describe('Flyoff desktop shell', () => {
         'createProjectNode',
         'renameProjectNode',
         'moveProjectNode',
+        'moveProjectNodes',
         'trashProjectNode',
+        'trashProjectNodes',
         'copyProjectPath',
+        'copyProjectPaths',
         'revealProjectPath',
         'getProjectPageProperties',
         'setProjectPageReadOnly',
@@ -476,8 +507,11 @@ test.describe('Flyoff desktop shell', () => {
       createProjectNodeType: 'function',
       renameProjectNodeType: 'function',
       moveProjectNodeType: 'function',
+      moveProjectNodesType: 'function',
       trashProjectNodeType: 'function',
+      trashProjectNodesType: 'function',
       copyProjectPathType: 'function',
+      copyProjectPathsType: 'function',
       revealProjectPathType: 'function',
       getProjectPagePropertiesType: 'function',
       setProjectPageReadOnlyType: 'function',
@@ -515,6 +549,7 @@ test.describe('Flyoff desktop shell', () => {
             editor: 'Markdown editor',
             graph: 'Graph',
             graphCanvas: 'Graph of connections between notes',
+            graphInTab: 'Open graph in a tab',
             home: 'Home',
             name: 'Name',
             newNote: 'New note',
@@ -536,6 +571,7 @@ test.describe('Flyoff desktop shell', () => {
             editor: 'Editor Markdown',
             graph: 'Grafo',
             graphCanvas: 'Grafo de conexões entre notas',
+            graphInTab: 'Abrir grafo em uma aba',
             home: 'Início',
             name: 'Nome',
             newNote: 'Nova nota',
@@ -650,9 +686,25 @@ test.describe('Flyoff desktop shell', () => {
     await expect(
       page.getByRole('img', { name: labels.graphCanvas }),
     ).toBeVisible();
+    await page.getByRole('button', { name: labels.graphInTab }).click();
+    await expect(
+      page.getByRole('tab', { exact: true, name: labels.graph }),
+    ).toHaveAttribute('aria-selected', 'true');
+    await expect(
+      page.getByRole('img', { name: labels.graphCanvas }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole('searchbox', { name: labels.searchProject }),
+    ).toBeVisible();
+    await page
+      .getByRole('button', {
+        name: `${labels.closePrefix}: ${labels.graph}`,
+      })
+      .click();
     await rail
       .getByRole('button', { exact: true, name: labels.projectRail })
       .click();
+    await page.getByRole('tab', { exact: true, name: noteName }).click();
     const search = page.getByRole('searchbox', {
       name: labels.searchProject,
     });
@@ -688,6 +740,72 @@ test.describe('Flyoff desktop shell', () => {
     const treeNote = tree.locator('.project-tree__item').filter({
       has: page.getByRole('button', { exact: true, name: noteName }),
     });
+    const treeFolder = tree
+      .locator('.project-tree__item')
+      .filter({
+        hasNot: page.getByRole('button', {
+          exact: true,
+          name: noteName,
+        }),
+      })
+      .first();
+    const primaryModifier = process.platform === 'darwin' ? 'Meta' : 'Control';
+    await treeNote.focus();
+    await page.keyboard.press('Escape');
+    await treeFolder
+      .locator('.project-tree__node')
+      .click({ modifiers: [primaryModifier] });
+    await treeNote
+      .getByRole('button', { exact: true, name: noteName })
+      .click({ modifiers: [primaryModifier] });
+    await expect(treeFolder).toHaveAttribute('aria-selected', 'true');
+    await expect(treeNote).toHaveAttribute('aria-selected', 'true');
+    await treeNote.focus();
+    await page.keyboard.press('Escape');
+    await expect(treeFolder).toHaveAttribute('aria-selected', 'false');
+    await expect(treeNote).toHaveAttribute('aria-selected', 'false');
+
+    const [treeBounds, folderBounds, noteBounds] = await Promise.all([
+      tree.boundingBox(),
+      treeFolder.boundingBox(),
+      treeNote.boundingBox(),
+    ]);
+    expect(treeBounds).not.toBeNull();
+    expect(folderBounds).not.toBeNull();
+    expect(noteBounds).not.toBeNull();
+    const marqueeStart = {
+      x: treeBounds!.x + treeBounds!.width - 24,
+      y: Math.min(
+        treeBounds!.y + treeBounds!.height - 5,
+        Math.max(
+          folderBounds!.y + folderBounds!.height,
+          noteBounds!.y + noteBounds!.height,
+        ) + 20,
+      ),
+    };
+    const marqueeEnd = {
+      x: treeBounds!.x + 4,
+      y: Math.max(
+        treeBounds!.y + 2,
+        Math.min(folderBounds!.y, noteBounds!.y) - 2,
+      ),
+    };
+    await page.mouse.move(marqueeStart.x, marqueeStart.y);
+    await page.mouse.down();
+    try {
+      await page.mouse.move(marqueeEnd.x, marqueeEnd.y, { steps: 4 });
+      await expect(page.locator('.project-tree__marquee')).toBeVisible();
+    } finally {
+      await page.mouse.up();
+    }
+    await expect(page.locator('.project-tree__marquee')).toHaveCount(0);
+    await expect(treeFolder).toHaveAttribute('aria-selected', 'true');
+    await expect(treeNote).toHaveAttribute('aria-selected', 'true');
+
+    await page.getByRole('textbox', { name: labels.editor }).click();
+    await expect(treeFolder).toHaveAttribute('aria-selected', 'false');
+    await expect(treeNote).toHaveAttribute('aria-selected', 'false');
+
     await page
       .getByRole('button', {
         name: `${labels.closePrefix}: ${noteName}`,
@@ -840,6 +958,10 @@ test.describe('Flyoff desktop shell', () => {
     await expect(page.getByRole('tab', { name: noteName })).toHaveCount(0);
     await expect(page.locator('.workspace-pane')).toHaveCount(2);
     await page
+      .locator('.workspace-pane--active .page-tab__close')
+      .click();
+    await expect(page.locator('.workspace-pane')).toHaveCount(1);
+    await page
       .locator('.workspace-pane--active')
       .getByRole('button', { name: labels.paneMenu })
       .click();
@@ -871,6 +993,15 @@ test.describe('Flyoff desktop shell', () => {
     await expect(
       page.getByRole('option', { name: new RegExp(recentNoteName) }),
     ).toBeVisible();
+    await page
+      .getByRole('option', { name: new RegExp(recentNoteName) })
+      .click();
+    await expect(
+      page.getByRole('tab', { name: labels.newTab }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole('tab', { name: recentNoteName }),
+    ).toHaveAttribute('aria-selected', 'true');
     await page
       .getByRole('button', { name: labels.closeProject })
       .click();
@@ -913,6 +1044,197 @@ test.describe('Flyoff desktop shell', () => {
         ok: false,
         error: { code: 'invalid-operation' },
       });
+  });
+
+  test('opens and searches the virtualized offline emoji picker without blocking', async () => {
+    const labels = await page.evaluate(() =>
+      document.documentElement.lang === 'en-US'
+        ? {
+            category: 'people & body',
+            closeProject: 'Close den',
+            editorModeMenu: 'Note options',
+            picker: 'Choose emoji',
+            reading: 'Reading',
+            search: 'Search emoji',
+            openProject: 'Open den',
+          }
+        : {
+            category: 'pessoas e corpo',
+            closeProject: 'Fechar toca',
+            editorModeMenu: 'Opções da nota',
+            picker: 'Escolher emoji',
+            reading: 'Leitura',
+            search: 'Pesquisar emojis',
+            openProject: 'Abrir toca',
+          },
+    );
+
+    await page.getByRole('button', { name: labels.openProject }).click();
+    await page
+      .getByRole('button', { name: 'Nota recente', exact: true })
+      .click();
+    await expect(page.getByRole('button', { name: 'Emoji' })).toBeVisible();
+    const opening = await page.evaluate(async () => {
+      const longTasks: number[] = [];
+      const observer = new PerformanceObserver((list) => {
+        longTasks.push(...list.getEntries().map(({ duration }) => duration));
+      });
+      observer.observe({ entryTypes: ['longtask'] });
+      const startedAt = performance.now();
+      document
+        .querySelector<HTMLButtonElement>(
+          '.markdown-toolbar__button[aria-label="Emoji"]',
+        )
+        ?.click();
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      );
+      const interactionDuration = performance.now() - startedAt;
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      observer.disconnect();
+      return { interactionDuration, longTasks };
+    });
+    await expect(
+      page.getByRole('dialog', { name: labels.picker }),
+    ).toBeVisible();
+    const grid = page.getByRole('grid');
+    const mountedAtOpen = await grid.getByRole('gridcell').count();
+    expect(mountedAtOpen).toBeGreaterThan(0);
+    expect(mountedAtOpen).toBeLessThan(120);
+    const categorySwitch = await page.evaluate(async (category) => {
+      const longTasks: number[] = [];
+      const observer = new PerformanceObserver((list) => {
+        longTasks.push(...list.getEntries().map(({ duration }) => duration));
+      });
+      observer.observe({ entryTypes: ['longtask'] });
+      const startedAt = performance.now();
+      Array.from(
+        document.querySelectorAll<HTMLButtonElement>(
+          '.emoji-picker__categories button',
+        ),
+      )
+        .find((button) => button.textContent === category)
+        ?.click();
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      );
+      const interactionDuration = performance.now() - startedAt;
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      observer.disconnect();
+      return { interactionDuration, longTasks };
+    }, labels.category);
+    expect(await grid.getByRole('gridcell').count()).toBeLessThan(120);
+    const search = await page.evaluate(async () => {
+      const longTasks: number[] = [];
+      const observer = new PerformanceObserver((list) => {
+        longTasks.push(...list.getEntries().map(({ duration }) => duration));
+      });
+      observer.observe({ entryTypes: ['longtask'] });
+      const input = document.querySelector<HTMLInputElement>(
+        '.emoji-picker__search',
+      )!;
+      const setValue = Object.getOwnPropertyDescriptor(
+        HTMLInputElement.prototype,
+        'value',
+      )!.set!;
+      const startedAt = performance.now();
+      setValue.call(input, 'rocket');
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      );
+      const interactionDuration = performance.now() - startedAt;
+      await new Promise((resolve) => setTimeout(resolve, 120));
+      observer.disconnect();
+      return { interactionDuration, longTasks };
+    });
+    await expect(
+      grid.getByRole('gridcell', { name: /rocket|foguete/i }).first(),
+    ).toBeVisible();
+    await expect(
+      grid.locator('img[src^="flyoff-asset://app/twemoji/"]').first(),
+    ).toBeVisible();
+    await grid
+      .getByRole('gridcell', { name: /rocket|foguete/i })
+      .first()
+      .click();
+    await page.keyboard.press('Escape');
+    await expect(
+      page.getByRole('dialog', { name: labels.picker }),
+    ).toHaveCount(0);
+    const measurements = [opening, categorySwitch, search];
+    const longTasks = measurements.flatMap((measurement) =>
+      measurement.longTasks,
+    );
+    expect(
+      Math.max(...measurements.map(({ interactionDuration }) => interactionDuration)),
+    ).toBeLessThan(500);
+    expect(
+      longTasks.filter((duration) => duration > 100),
+      JSON.stringify(measurements),
+    ).toEqual([]);
+
+    const sourceEmoji = page
+      .locator('.markdown-source__editor .twemoji--source')
+      .first();
+    await expect(sourceEmoji).toBeVisible();
+    const sourceEmojiBounds = await sourceEmoji.boundingBox();
+    expect(sourceEmojiBounds).not.toBeNull();
+    await page.mouse.click(
+      sourceEmojiBounds!.x + 1,
+      sourceEmojiBounds!.y + sourceEmojiBounds!.height / 2,
+    );
+    const sourceLayers = await sourceEmoji.evaluate((wrapper) => {
+      const unicode = wrapper.querySelector<HTMLElement>('.twemoji__unicode')!;
+      const glyph = wrapper.querySelector<HTMLElement>('.twemoji__glyph')!;
+      const selection = document.getSelection()!;
+      return {
+        anchorOffset: selection.anchorOffset,
+        anchorInUnicode: selection.anchorNode === unicode.firstChild,
+        caretColor: getComputedStyle(unicode).caretColor,
+        glyphLayer: Number(getComputedStyle(glyph).zIndex),
+        overflow: getComputedStyle(unicode).overflow,
+        unicodeLayer: Number(getComputedStyle(unicode).zIndex),
+      };
+    });
+    expect(sourceLayers).toMatchObject({
+      anchorInUnicode: true,
+      anchorOffset: 0,
+      overflow: 'visible',
+    });
+    expect(sourceLayers.caretColor).not.toBe('rgba(0, 0, 0, 0)');
+    expect(sourceLayers.unicodeLayer).toBeGreaterThan(sourceLayers.glyphLayer);
+
+    await page
+      .getByRole('button', { name: labels.editorModeMenu })
+      .click();
+    await page
+      .getByRole('menuitemcheckbox', { name: labels.reading })
+      .click();
+    const readingEmoji = page
+      .getByRole('document', { name: labels.reading })
+      .locator('.twemoji')
+      .first();
+    await expect(readingEmoji).toBeVisible();
+    const readingLayers = await readingEmoji.evaluate((wrapper) => {
+      const unicode = wrapper.querySelector<HTMLElement>('.twemoji__unicode')!;
+      const glyph = wrapper.querySelector<HTMLElement>('.twemoji__glyph')!;
+      const selection = document.getSelection()!;
+      const range = document.createRange();
+      range.selectNodeContents(unicode);
+      selection.removeAllRanges();
+      selection.addRange(range);
+      return {
+        glyphLayer: Number(getComputedStyle(glyph).zIndex),
+        selectionColor: getComputedStyle(unicode, '::selection').color,
+      };
+    });
+    expect(readingLayers.glyphLayer).toBeGreaterThan(0);
+    expect(readingLayers.selectionColor).toMatch(
+      /^(transparent|rgba\(0, 0, 0, 0\))$/,
+    );
+
+    await page.getByRole('button', { name: labels.closeProject }).click();
   });
 
   test('opens a Flyoff-styled titlebar dropdown instead of a native popup', async () => {
@@ -1074,6 +1396,10 @@ test.describe('Flyoff desktop shell', () => {
             reveal: Number(
               getComputedStyle(tab).getPropertyValue('--page-tab-reveal'),
             ),
+            selectedTab:
+              document.querySelector<HTMLElement>(
+                '[role="tab"][aria-selected="true"]',
+              )?.textContent ?? '',
             zIndex: getComputedStyle(tab).zIndex,
           });
           animation?.play();
@@ -1097,6 +1423,7 @@ test.describe('Flyoff desktop shell', () => {
     expect(closingTabComposition.busy).toBe('true');
     expect(closingTabComposition.duration).toBe(120);
     expect(closingTabComposition.contentOverflow).toBe('hidden');
+    expect(closingTabComposition.selectedTab).toContain(labels.help);
     expect(closingTabComposition.footScale).toBeLessThan(0.4);
     expect(
       Math.abs(
@@ -1125,6 +1452,25 @@ test.describe('Flyoff desktop shell', () => {
     });
     await expect(page.getByRole('tab').first()).toHaveText(labels.help);
 
+    await page.evaluate(() => {
+      const observer = new MutationObserver(() => {
+        const closing = document.querySelector<HTMLElement>(
+          '.page-tab--closing',
+        );
+        if (!closing) {
+          return;
+        }
+        closing.getAnimations().forEach((animation) => animation.pause());
+        document.documentElement.dataset.testShortcutTabExit =
+          closing.textContent ?? '';
+        observer.disconnect();
+      });
+      observer.observe(document.body, {
+        attributeFilter: ['class'],
+        attributes: true,
+        subtree: true,
+      });
+    });
     await electronApp.evaluate(({ BrowserWindow }, platform) => {
       const window = BrowserWindow.getAllWindows()[0];
       const modifiers: ('control' | 'meta')[] =
@@ -1142,39 +1488,43 @@ test.describe('Flyoff desktop shell', () => {
         modifiers,
       });
     }, process.platform);
+    await expect(page.locator('html')).toHaveAttribute(
+      'data-test-shortcut-tab-exit',
+      new RegExp(labels.help),
+    );
+    await expect(
+      page.getByRole('tab', { name: labels.settings }),
+    ).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('tab', { name: labels.help })).toHaveCount(1);
+    await page
+      .locator('.page-tab--closing')
+      .evaluate((tab) =>
+        tab.getAnimations().forEach((animation) => animation.play()),
+      );
     await expect(page.getByRole('tab', { name: labels.help })).toHaveCount(0);
     await expect(page.getByRole('tab', { name: labels.settings })).toHaveCount(1);
-
-    const newTabButton = page.locator('.pages-bar__new-tab');
-    await newTabButton.click();
-    await newTabButton.click();
-    await newTabButton.click();
-    await expect(page.getByRole('tab', { name: labels.newTab })).toHaveCount(3);
-    for (let remaining = 3; remaining > 0; remaining -= 1) {
-      await page
-        .locator('.page-tab')
-        .filter({
-          has: page.getByRole('tab', { name: labels.newTab }),
-        })
-        .last()
-        .locator('.page-tab__close')
-        .click();
-      await expect(page.getByRole('tab', { name: labels.newTab })).toHaveCount(
-        remaining - 1,
-      );
-    }
+    await expect(page.locator('.pages-bar__new-tab')).toHaveCount(0);
   });
 
   test('splits, resizes, limits and closes workspace panes', async () => {
+    await electronApp.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0]?.setSize(1600, 1000);
+    });
     const labels = await page.evaluate(() =>
       document.documentElement.lang === 'en-US'
         ? {
+            closeProject: 'Close den',
+            home: 'Home',
             newTab: 'New tab',
+            openProject: 'Open den',
             openInPane: 'Open in this pane',
             paneMenu: 'Pane actions',
           }
         : {
+            closeProject: 'Fechar toca',
+            home: 'InÃ­cio',
             newTab: 'Nova aba',
+            openProject: 'Abrir toca',
             openInPane: 'Abrir neste painel',
             paneMenu: 'Ações do painel',
           },
@@ -1194,51 +1544,33 @@ test.describe('Flyoff desktop shell', () => {
     await expect(
       page.locator('.workspace-split[data-split-entry="row-end"]'),
     ).toHaveCount(1);
-    await expect
-      .poll(() =>
-        page
-          .locator('.workspace-split')
-          .first()
-          .evaluate((split) =>
-            split
-              .getAnimations()
-              .some(
-                (animation) =>
-                  (animation as CSSAnimation).animationName ===
-                    'workspace-split-enter-row-end' &&
-                  animation.effect?.getTiming().duration === 120,
-              ),
-          ),
-      )
-      .toBe(true);
-    const splitMotion = await page
-      .locator('.workspace-split[data-split-entry="row-end"]')
-      .evaluate((split) => {
-        const animation = split
-          .getAnimations()
-          .find(
-            (candidate) =>
-              (candidate as CSSAnimation).animationName ===
-              'workspace-split-enter-row-end',
-          );
-        if (!animation) {
-          return undefined;
-        }
-        const widthsAt = (time: number) => {
-          animation.currentTime = time;
-          return {
-            first: split.children[0]?.getBoundingClientRect().width ?? 0,
-            second: split.children[2]?.getBoundingClientRect().width ?? 0,
-          };
+    const splitMotionHandle = await page.waitForFunction(() => {
+      const split = document.querySelector('.workspace-split');
+      const animation = split?.getAnimations().find(
+        (candidate) =>
+          (candidate as CSSAnimation).animationName ===
+            'workspace-split-enter-row-end' &&
+          candidate.effect?.getTiming().duration === 120,
+      );
+      if (!split || !animation) {
+        return null;
+      }
+      const widthsAt = (time: number) => {
+        animation.currentTime = time;
+        return {
+          first: split.children[0]?.getBoundingClientRect().width ?? 0,
+          second: split.children[2]?.getBoundingClientRect().width ?? 0,
         };
-        animation.pause();
-        const start = widthsAt(0);
-        const middle = widthsAt(60);
-        const end = widthsAt(120);
-        animation.play();
-        return { end, middle, start };
-      });
-    expect(splitMotion).toBeDefined();
+      };
+      animation.pause();
+      const start = widthsAt(0);
+      const middle = widthsAt(60);
+      const end = widthsAt(120);
+      animation.play();
+      return { end, middle, start };
+    });
+    const splitMotion = await splitMotionHandle.jsonValue();
+    await splitMotionHandle.dispose();
     expect(splitMotion!.start.first).toBeGreaterThan(splitMotion!.middle.first);
     expect(splitMotion!.middle.first).toBeGreaterThan(splitMotion!.end.first);
     expect(splitMotion!.start.second).toBeLessThan(splitMotion!.middle.second);
@@ -1264,6 +1596,9 @@ test.describe('Flyoff desktop shell', () => {
           return;
         }
         requestAnimationFrame(() => {
+          const closingPane = split.querySelector<HTMLElement>(
+            '.workspace-pane[data-pane-exiting="true"]',
+          );
           const animation = split
             .getAnimations()
             .find(
@@ -1281,6 +1616,14 @@ test.describe('Flyoff desktop shell', () => {
           };
           const widths = [0, 20, 60, 80].map(widthAt);
           document.documentElement.dataset.testPaneExit = JSON.stringify({
+            closingTabMounted: Boolean(
+              closingPane?.querySelector('.page-tab--closing'),
+            ),
+            contentDisplay: closingPane
+              ? getComputedStyle(
+                  closingPane.querySelector('.page-host')!,
+                ).display
+              : '',
             direction: animation?.effect?.getTiming().direction,
             duration: animation?.effect?.getTiming().duration,
             easing: getComputedStyle(split).animationTimingFunction,
@@ -1308,6 +1651,8 @@ test.describe('Flyoff desktop shell', () => {
       JSON.parse(root.dataset.testPaneExit ?? '{}'),
     );
     expect(closingSplitMotion).toMatchObject({
+      closingTabMounted: true,
+      contentDisplay: 'none',
       direction: 'reverse',
       duration: 80,
       easing: 'cubic-bezier(0.7, 0, 0.84, 0)',
@@ -1422,6 +1767,12 @@ test.describe('Flyoff desktop shell', () => {
     await activePaneMenu().click();
     await menuItem('split-right').click();
 
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+        }),
+    );
     const divider = page
       .locator('.workspace-pane-host:visible .workspace-split__divider')
       .first();
@@ -1442,10 +1793,6 @@ test.describe('Flyoff desktop shell', () => {
     await menuItem('split-right').click();
     await expect(page.locator('.workspace-pane')).toHaveCount(4);
 
-    await page
-      .locator('.workspace-pane--active')
-      .getByRole('button', { exact: true, name: labels.newTab })
-      .click();
     const edgeSource = page.locator(
       '.workspace-pane--active .page-tab--active',
     );
@@ -1482,6 +1829,7 @@ test.describe('Flyoff desktop shell', () => {
     await expect(page.getByText(labels.openInPane, { exact: true })).toHaveCount(
       0,
     );
+    await page.locator('.workspace-pane').first().dispatchEvent('click');
     await activePaneMenu().click();
     await menuItem('split-right').click();
     await expect(page.locator('.workspace-pane')).toHaveCount(5);
@@ -1501,6 +1849,9 @@ test.describe('Flyoff desktop shell', () => {
       await menuItem('close-pane').click();
       await expect(page.locator('.workspace-pane')).toHaveCount(paneCount);
     }
+    await electronApp.evaluate(({ BrowserWindow }) => {
+      BrowserWindow.getAllWindows()[0]?.setSize(1200, 760);
+    });
   });
 
   test('cancels a guarded close without closing the window', async () => {
@@ -1535,6 +1886,30 @@ test.describe('Flyoff desktop shell', () => {
     await page.keyboard.press('Escape');
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await expect(page.locator('.app-shell')).toBeVisible();
+
+    const originalViewport = page.viewportSize();
+    await page.setViewportSize({ width: 420, height: 640 });
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const settings = document.querySelector<HTMLElement>(
+            '.settings-page',
+          );
+          const content = document.querySelector<HTMLElement>(
+            '.settings-page__content',
+          );
+          return Boolean(
+            settings &&
+              content &&
+              settings.scrollWidth <= settings.clientWidth + 1 &&
+              content.scrollWidth <= content.clientWidth + 1,
+          );
+        }),
+      )
+      .toBe(true);
+    if (originalViewport) {
+      await page.setViewportSize(originalViewport);
+    }
   });
 
   test('closes the window from the native window control', async () => {

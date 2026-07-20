@@ -25,6 +25,7 @@ import {
 } from '../../shared/project-search';
 import { MaskedIcon } from '../components/MaskedIcon';
 import { ContextMenu, DropdownMenu, type MenuItem } from '../components/menu';
+import { TwemojiText } from '../components/twemoji';
 import {
   beginWorkspaceProjectNodePointerDrag,
   setWorkspaceDragActive,
@@ -35,6 +36,17 @@ import { useFlyoffPreferences } from '../preferences';
 import { getProjectPageTypeDefinition } from './project-page-type-registry';
 import { projectNodeDisplayName } from './project-node-name';
 import type { ProjectTreeController } from './project-tree-controller';
+import { useProjectTreeMarquee } from './use-project-tree-marquee';
+import {
+  emptyProjectTreeSelection,
+  normalizeProjectTreeSelectionRoots,
+  pruneProjectTreeSelection,
+  selectAllVisibleProjectTreeNodes,
+  selectProjectTreeNode,
+  selectProjectTreeRange,
+  toggleProjectTreeNode,
+  type ProjectTreeSelection,
+} from './project-tree-selection';
 
 const PROJECT_TREE_NODE_DRAG_TYPE =
   'application/x-flyoff-project-tree-node';
@@ -60,6 +72,7 @@ export interface ProjectTreeProps {
   operationPending?: boolean;
   onCancelEdit: () => void;
   onOpenNode: (node: ProjectTreeNode) => void;
+  onOpenNodes: (nodes: readonly ProjectPageNode[]) => void;
   onRequestAddInstance: (
     parentId: string | null,
     position: { x: number; y: number },
@@ -70,16 +83,27 @@ export interface ProjectTreeProps {
     position: { x: number; y: number },
     restoreFocus?: HTMLElement | null,
   ) => void;
+  onRequestCopySelection: (nodes: readonly ProjectTreeNode[]) => void;
   onRequestMove: (node: ProjectTreeNode) => void;
+  onRequestMoveSelection: (nodes: readonly ProjectTreeNode[]) => void;
   onRequestProperties?: (node: ProjectPageNode) => void;
   onRequestRename: (node: ProjectTreeNode) => void;
   onRequestTrash: (node: ProjectTreeNode) => void;
+  onRequestTrashSelection: (nodes: readonly ProjectTreeNode[]) => void;
+  onSelectionChange: (selection: ProjectTreeSelection) => void;
+  onSelectionLimitReached?: () => void;
   onSubmitEdit: (name: string) => void;
   onMoveNode: (
     node: ProjectTreeNode,
     parentId: string | null,
     beforeNodeId?: string | null,
   ) => void;
+  onMoveNodes: (
+    nodes: readonly ProjectTreeNode[],
+    parentId: string | null,
+    beforeNodeId?: string | null,
+  ) => void;
+  selection: ProjectTreeSelection;
 }
 
 interface ProjectTreeDropTarget {
@@ -104,7 +128,7 @@ function collectVisibleNodes(
   const normalizedQuery = normalizeSearchQuery(searchQuery);
   for (const node of controller.getBranch(parentId).nodes) {
     const descendantNodes =
-      node.kind === 'folder'
+      node.canContainChildren && node.hasChildren
         ? collectVisibleNodes(
             controller,
             searchQuery,
@@ -127,7 +151,8 @@ function collectVisibleNodes(
     }
     result.push({ node, depth, parentId });
     if (
-      node.kind === 'folder' &&
+      node.canContainChildren &&
+      node.hasChildren &&
       (normalizedQuery || controller.isExpanded(node.nodeId))
     ) {
       result.push(...descendantNodes);
@@ -220,24 +245,31 @@ function SearchPreviewExcerpt({
 }) {
   const ranges = searchHighlightRanges(excerpt, terms);
   if (ranges.length === 0) {
-    return excerpt;
+    return <TwemojiText text={excerpt} />;
   }
 
   const parts: React.ReactNode[] = [];
   let offset = 0;
   for (const range of ranges) {
     if (range.start > offset) {
-      parts.push(excerpt.slice(offset, range.start));
+      parts.push(
+        <TwemojiText
+          key={`plain-${offset}`}
+          text={excerpt.slice(offset, range.start)}
+        />,
+      );
     }
     parts.push(
       <mark className="project-tree__preview-match" key={range.start}>
-        {excerpt.slice(range.start, range.end)}
+        <TwemojiText text={excerpt.slice(range.start, range.end)} />
       </mark>,
     );
     offset = range.end;
   }
   if (offset < excerpt.length) {
-    parts.push(excerpt.slice(offset));
+    parts.push(
+      <TwemojiText key={`plain-${offset}`} text={excerpt.slice(offset)} />,
+    );
   }
   return parts;
 }
@@ -251,7 +283,7 @@ function branchMatches(
   const matches = new Set<string>();
   for (const node of controller.getBranch(parentId).nodes) {
     const descendants =
-      node.kind === 'folder'
+      node.canContainChildren && node.hasChildren
         ? branchMatches(
             controller,
             node.nodeId,
@@ -282,7 +314,7 @@ function nodeMenuItems(
   propertiesAvailable: boolean,
 ): readonly MenuItem[] {
   return [
-    ...(node.kind === 'folder'
+    ...(node.canContainChildren
       ? ([
           {
             id: 'add-instance',
@@ -326,20 +358,73 @@ function nodeMenuItems(
   ];
 }
 
+function selectionMenuItems(
+  translate: Translate,
+  hasPages: boolean,
+): readonly MenuItem[] {
+  return [
+    {
+      id: 'open-selected',
+      kind: 'action',
+      label: translate('projects.openSelected'),
+      disabled: !hasPages,
+    },
+    {
+      id: 'move-selected',
+      kind: 'action',
+      label: translate('projects.moveSelected'),
+    },
+    {
+      id: 'copy-selected-paths',
+      kind: 'action',
+      label: translate('projects.copySelectedPaths'),
+    },
+    { id: 'selection-separator', kind: 'separator' },
+    {
+      id: 'trash-selected',
+      kind: 'action',
+      label: translate('projects.trashSelected'),
+      tone: 'danger',
+    },
+  ];
+}
+
 function ProjectTreeChevron({
   expanded,
-  kind,
+  label,
+  onToggle,
+  visible,
 }: {
   expanded?: boolean;
-  kind: ProjectTreeNode['kind'];
+  label?: string;
+  onToggle?: () => void;
+  visible: boolean;
 }) {
-  return (
+  const icon = (
     <MaskedIcon
       className={`project-tree__chevron${
-        kind === 'folder' ? '' : ' project-tree__chevron--empty'
+        visible ? '' : ' project-tree__chevron--empty'
       }${expanded ? ' project-tree__chevron--expanded' : ''}`}
       icon={chevronRightIcon}
     />
+  );
+  if (!visible || !onToggle) {
+    return icon;
+  }
+  return (
+    <button
+      aria-label={label}
+      className="project-tree__chevron-button"
+      onClick={(event) => {
+        event.stopPropagation();
+        onToggle();
+      }}
+      onPointerDown={(event) => event.stopPropagation()}
+      tabIndex={-1}
+      type="button"
+    >
+      {icon}
+    </button>
   );
 }
 
@@ -440,25 +525,34 @@ export function ProjectTree({
   edit,
   onCancelEdit,
   onMoveNode,
+  onMoveNodes,
   onOpenNode,
+  onOpenNodes,
   onRequestAddInstance,
   onRequestBranchMenu,
+  onRequestCopySelection,
   onRequestMove,
+  onRequestMoveSelection,
   onRequestProperties,
   onRequestRename,
   onRequestTrash,
+  onRequestTrashSelection,
+  onSelectionChange,
+  onSelectionLimitReached,
   onSubmitEdit,
   operationPending = false,
   projectId,
   searchNodeIds,
   searchPreviews,
   searchQuery = '',
+  selection,
   translate,
 }: ProjectTreeProps) {
   const { preferences } = useFlyoffPreferences();
   const [, renderVersion] = useReducer((version: number) => version + 1, 0);
   const [focusedNodeId, setFocusedNodeId] = useState<string>();
-  const [draggedNodeId, setDraggedNodeId] = useState<string>();
+  const [draggedNodeIds, setDraggedNodeIds] =
+    useState<readonly string[]>([]);
   const [dropTarget, setDropTarget] = useState<ProjectTreeDropTarget>();
   const [contextMenu, setContextMenu] = useState<{
     node: ProjectTreeNode;
@@ -507,15 +601,43 @@ export function ProjectTree({
     [],
     searchMatches,
   );
-  const visibleNodeIds = new Set(
-    visibleNodes.map(({ node }) => node.nodeId),
+  const visibleNodeIdList = visibleNodes.map(({ node }) => node.nodeId);
+  const visibleNodeIdsKey = visibleNodeIdList.join('\u0000');
+  const visibleNodeIds = new Set(visibleNodeIdList);
+  const visiblePages = visibleNodes.flatMap(({ node }) =>
+    node.kind === 'page' ? [node] : [],
   );
+  const selectedVisibleNodes = visibleNodes.flatMap(({ node }) =>
+    selection.selectedIds.has(node.nodeId) ? [node] : [],
+  );
+  const selectedVisiblePages = visiblePages.filter(({ nodeId }) =>
+    selection.selectedIds.has(nodeId),
+  );
+  const parentByNodeId = new Map(
+    visibleNodes.map(({ node, parentId }) => [node.nodeId, parentId] as const),
+  );
+  const selectedRootIds = normalizeProjectTreeSelectionRoots(
+    selectedVisibleNodes.map(({ nodeId }) => nodeId),
+    parentByNodeId,
+  );
+  const selectedRootNodes = selectedRootIds.flatMap((nodeId) => {
+    const node = controller.findNode(nodeId);
+    return node ? [node] : [];
+  });
   const effectiveFocusId =
     (focusedNodeId && visibleNodeIds.has(focusedNodeId)
       ? focusedNodeId
       : activeNodeId && visibleNodeIds.has(activeNodeId)
         ? activeNodeId
         : visibleNodes[0]?.node.nodeId) ?? undefined;
+  const marquee = useProjectTreeMarquee({
+    disabled: operationPending || Boolean(edit),
+    itemRefs,
+    onSelectionChange,
+    onSelectionLimitReached,
+    selection,
+    visibleNodeIds: visibleNodeIdList,
+  });
 
   function focusNode(nodeId: string | undefined): void {
     if (!nodeId) {
@@ -524,6 +646,23 @@ export function ProjectTree({
     setFocusedNodeId(nodeId);
     requestAnimationFrame(() => itemRefs.current.get(nodeId)?.focus());
   }
+
+  useEffect(() => {
+    const next = pruneProjectTreeSelection(
+      selection,
+      new Set(visibleNodeIdsKey ? visibleNodeIdsKey.split('\u0000') : []),
+    );
+    if (
+      next.anchorId !== selection.anchorId ||
+      next.selectedIds.size !== selection.selectedIds.size
+    ) {
+      onSelectionChange(next);
+    }
+  }, [
+    onSelectionChange,
+    selection,
+    visibleNodeIdsKey,
+  ]);
 
   function handleNodeKeyDown(
     event: KeyboardEvent<HTMLDivElement>,
@@ -536,23 +675,68 @@ export function ProjectTree({
     const index = visibleNodes.findIndex(
       ({ node }) => node.nodeId === visible.node.nodeId,
     );
+    const primaryModifier = event.ctrlKey || event.metaKey;
+
+    if (primaryModifier && event.key.toLocaleLowerCase() === 'a') {
+      event.preventDefault();
+      const next = selectAllVisibleProjectTreeNodes(visibleNodeIdList);
+      onSelectionChange(next);
+      if (next.truncated) {
+        onSelectionLimitReached?.();
+      }
+      return;
+    }
+
+    if (
+      primaryModifier &&
+      event.key === ' '
+    ) {
+      event.preventDefault();
+      onSelectionChange(toggleProjectTreeNode(selection, visible.node.nodeId));
+      return;
+    }
+
+    if (
+      event.key === 'Escape' &&
+      selection.selectedIds.size > 0
+    ) {
+      event.preventDefault();
+      onSelectionChange(emptyProjectTreeSelection());
+      return;
+    }
 
     if (event.altKey && (event.key === 'ArrowUp' || event.key === 'ArrowDown')) {
       const siblings = controller.getBranch(visible.parentId).nodes;
       const siblingIndex = siblings.findIndex(
         ({ nodeId }) => nodeId === visible.node.nodeId,
       );
+      const movableSelection =
+        selection.selectedIds.has(visible.node.nodeId) &&
+        selectedRootNodes.length > 1 &&
+        selectedRootNodes.every((node) => node.parentId === visible.parentId)
+          ? selectedRootNodes
+          : [visible.node];
+      const movableIds = new Set(movableSelection.map(({ nodeId }) => nodeId));
+      const selectedSiblingIndexes = siblings.flatMap((node, currentIndex) =>
+        movableIds.has(node.nodeId) ? [currentIndex] : [],
+      );
+      const firstIndex = selectedSiblingIndexes[0] ?? siblingIndex;
+      const lastIndex = selectedSiblingIndexes.at(-1) ?? siblingIndex;
       const beforeNodeId =
         event.key === 'ArrowUp'
-          ? siblings[siblingIndex - 1]?.nodeId
-          : siblings[siblingIndex + 2]?.nodeId ?? null;
+          ? siblings[firstIndex - 1]?.nodeId
+          : siblings[lastIndex + 2]?.nodeId ?? null;
       if (
         siblingIndex >= 0 &&
-        ((event.key === 'ArrowUp' && siblingIndex > 0) ||
-          (event.key === 'ArrowDown' && siblingIndex < siblings.length - 1))
+        ((event.key === 'ArrowUp' && firstIndex > 0) ||
+          (event.key === 'ArrowDown' && lastIndex < siblings.length - 1))
       ) {
         event.preventDefault();
-        onMoveNode(visible.node, visible.parentId, beforeNodeId);
+        if (movableSelection.length > 1) {
+          onMoveNodes(movableSelection, visible.parentId, beforeNodeId);
+        } else {
+          onMoveNode(visible.node, visible.parentId, beforeNodeId);
+        }
       }
       return;
     }
@@ -572,11 +756,45 @@ export function ProjectTree({
     switch (event.key) {
       case 'ArrowDown':
         event.preventDefault();
-        focusNode(visibleNodes[index + 1]?.node.nodeId);
+        {
+          const next = visibleNodes[index + 1]?.node;
+          focusNode(next?.nodeId);
+          if (event.shiftKey && next) {
+            const result = selectProjectTreeRange(
+              selection.selectedIds.size > 0
+                ? selection
+                : selectProjectTreeNode(visible.node.nodeId),
+              visibleNodeIdList,
+              next.nodeId,
+              false,
+            );
+            onSelectionChange(result);
+            if (result.truncated) {
+              onSelectionLimitReached?.();
+            }
+          }
+        }
         return;
       case 'ArrowUp':
         event.preventDefault();
-        focusNode(visibleNodes[index - 1]?.node.nodeId);
+        {
+          const next = visibleNodes[index - 1]?.node;
+          focusNode(next?.nodeId);
+          if (event.shiftKey && next) {
+            const result = selectProjectTreeRange(
+              selection.selectedIds.size > 0
+                ? selection
+                : selectProjectTreeNode(visible.node.nodeId),
+              visibleNodeIdList,
+              next.nodeId,
+              false,
+            );
+            onSelectionChange(result);
+            if (result.truncated) {
+              onSelectionLimitReached?.();
+            }
+          }
+        }
         return;
       case 'Home':
         event.preventDefault();
@@ -587,7 +805,7 @@ export function ProjectTree({
         focusNode(visibleNodes.at(-1)?.node.nodeId);
         return;
       case 'ArrowRight':
-        if (visible.node.kind !== 'folder') {
+        if (!visible.node.canContainChildren || !visible.node.hasChildren) {
           return;
         }
         event.preventDefault();
@@ -608,7 +826,8 @@ export function ProjectTree({
           return;
         }
         if (
-          visible.node.kind === 'folder' &&
+          visible.node.canContainChildren &&
+          visible.node.hasChildren &&
           controller.isExpanded(visible.node.nodeId)
         ) {
           void controller.setExpanded(visible.node.nodeId, false);
@@ -624,16 +843,37 @@ export function ProjectTree({
             void controller.toggle(visible.node.nodeId);
           }
         } else {
-          onOpenNode(visible.node);
+          if (
+            event.key === 'Enter' &&
+            selection.selectedIds.has(visible.node.nodeId) &&
+            selectedVisiblePages.length > 0
+          ) {
+            onOpenNodes(selectedVisiblePages);
+          } else {
+            onSelectionChange(selectProjectTreeNode(visible.node.nodeId));
+            onOpenNode(visible.node);
+          }
         }
         return;
       case 'F2':
         event.preventDefault();
-        onRequestRename(visible.node);
+        if (
+          selection.selectedIds.size === 1 &&
+          selection.selectedIds.has(visible.node.nodeId)
+        ) {
+          onRequestRename(visible.node);
+        }
         return;
       case 'Delete':
         event.preventDefault();
-        onRequestTrash(visible.node);
+        if (
+          selection.selectedIds.has(visible.node.nodeId) &&
+          selectedRootNodes.length > 0
+        ) {
+          onRequestTrashSelection(selectedRootNodes);
+        } else {
+          onRequestTrash(visible.node);
+        }
         return;
       case 'F10':
         if (event.shiftKey) {
@@ -690,6 +930,25 @@ export function ProjectTree({
     }
   }
 
+  function handleSelectionMenuAction(action: string): void {
+    switch (action) {
+      case 'open-selected':
+        onOpenNodes(selectedVisiblePages);
+        return;
+      case 'move-selected':
+        onRequestMoveSelection(selectedRootNodes);
+        return;
+      case 'copy-selected-paths':
+        onRequestCopySelection(selectedRootNodes);
+        return;
+      case 'trash-selected':
+        onRequestTrashSelection(selectedRootNodes);
+        return;
+      default:
+        return;
+    }
+  }
+
   function finishDrag(event?: DragEvent<HTMLElement>): void {
     event?.preventDefault();
     setWorkspaceDragActive(false);
@@ -697,7 +956,7 @@ export function ProjectTree({
       window.clearTimeout(expandTimerRef.current);
       expandTimerRef.current = undefined;
     }
-    setDraggedNodeId(undefined);
+    setDraggedNodeIds([]);
     dropTargetRef.current = undefined;
     setDropTarget(undefined);
   }
@@ -706,11 +965,14 @@ export function ProjectTree({
     parentId: string | null,
     beforeNodeId?: string | null,
   ): void {
-    const dragged = draggedNodeId
-      ? controller.findNode(draggedNodeId)
-      : undefined;
-    if (dragged && dragged.nodeId !== parentId) {
-      onMoveNode(dragged, parentId, beforeNodeId);
+    const dragged = draggedNodeIds.flatMap((nodeId) => {
+      const node = controller.findNode(nodeId);
+      return node ? [node] : [];
+    });
+    if (dragged.length > 1) {
+      onMoveNodes(dragged, parentId, beforeNodeId);
+    } else if (dragged[0] && dragged[0].nodeId !== parentId) {
+      onMoveNode(dragged[0], parentId, beforeNodeId);
     }
     finishDrag();
   }
@@ -733,7 +995,7 @@ export function ProjectTree({
     }
     if (
       next.edge === 'inside' &&
-      folder?.kind === 'folder' &&
+      folder?.canContainChildren &&
       !controller.isExpanded(folder.nodeId)
     ) {
       expandTimerRef.current = window.setTimeout(() => {
@@ -756,7 +1018,7 @@ export function ProjectTree({
         {renderedNodes.map((node, siblingIndex) => {
           const preview = searchPreviews?.get(node.nodeId);
           const expanded =
-            node.kind === 'folder'
+            node.canContainChildren && node.hasChildren
               ? Boolean(searchMatches) || controller.isExpanded(node.nodeId)
               : undefined;
           const renameEdit =
@@ -770,10 +1032,14 @@ export function ProjectTree({
                 aria-expanded={expanded}
                 aria-level={depth}
                 aria-posinset={siblingIndex + 1}
-                aria-selected={activeNodeId === node.nodeId}
+                aria-selected={selection.selectedIds.has(node.nodeId)}
                 aria-setsize={renderedNodes.length}
                 className={`project-tree__item${
                   activeNodeId === node.nodeId ? ' project-tree__item--active' : ''
+                }${
+                  selection.selectedIds.has(node.nodeId)
+                    ? ' project-tree__item--selected'
+                    : ''
                 }${
                   preview ? ' project-tree__item--search-preview' : ''
                 }${
@@ -790,7 +1056,10 @@ export function ProjectTree({
                 }
                 onDragEnd={() => finishDrag()}
                 onDragOver={(event) => {
-                  if (!draggedNodeId || draggedNodeId === node.nodeId) {
+                  if (
+                    draggedNodeIds.length === 0 ||
+                    draggedNodeIds.includes(node.nodeId)
+                  ) {
                     return;
                   }
                   event.preventDefault();
@@ -801,7 +1070,7 @@ export function ProjectTree({
                     ? (event.clientY - bounds.top) / bounds.height
                     : 0.5;
                   const edge =
-                    node.kind === 'folder' && ratio >= 0.28 && ratio <= 0.72
+                    node.canContainChildren && ratio >= 0.28 && ratio <= 0.72
                       ? 'inside'
                       : ratio < 0.5
                         ? 'before'
@@ -809,22 +1078,37 @@ export function ProjectTree({
                   updateDropTarget({ nodeId: node.nodeId, edge }, node);
                 }}
                 onDragStart={(event) => {
+                  const dragNodes =
+                    selection.selectedIds.has(node.nodeId) &&
+                    selectedRootNodes.length > 1
+                      ? selectedRootNodes
+                      : [node];
+                  const dragTargets = dragNodes.flatMap((dragNode) =>
+                    dragNode.kind === 'page' && projectId
+                      ? [{
+                          type: 'project-content' as const,
+                          projectId,
+                          nodeId: dragNode.nodeId,
+                          pageType: dragNode.pageType,
+                        }]
+                      : [],
+                  );
                   event.dataTransfer.effectAllowed =
-                    node.kind === 'page' && projectId ? 'copyMove' : 'move';
+                    dragTargets.length > 0 ? 'copyMove' : 'move';
                   event.dataTransfer.setData(
                     PROJECT_TREE_NODE_DRAG_TYPE,
-                    node.nodeId,
+                    JSON.stringify(dragNodes.map(({ nodeId }) => nodeId)),
                   );
-                  if (node.kind === 'page' && projectId) {
-                    writeWorkspaceProjectNodeDrag(event.dataTransfer, {
-                      type: 'project-content',
-                      projectId,
-                      nodeId: node.nodeId,
-                      pageType: node.pageType,
-                    });
+                  if (dragTargets.length > 0) {
+                    writeWorkspaceProjectNodeDrag(
+                      event.dataTransfer,
+                      dragTargets,
+                    );
                   }
                   setWorkspaceDragActive(true);
-                  setDraggedNodeId(node.nodeId);
+                  setDraggedNodeIds(
+                    dragNodes.map(({ nodeId }) => nodeId),
+                  );
                 }}
                 onPointerDown={(event) => {
                   if (
@@ -835,17 +1119,30 @@ export function ProjectTree({
                     operationPending ||
                     normalizedSearchQuery ||
                     (event.target instanceof Element &&
-                      event.target.closest('.project-tree__menu-trigger'))
+                      event.target.closest(
+                        '.project-tree__menu-trigger, .project-tree__chevron-button',
+                      ))
                   ) {
                     return;
                   }
+                  const dragNodes =
+                    selection.selectedIds.has(node.nodeId) &&
+                    selectedRootNodes.length > 1
+                      ? selectedRootNodes.filter(
+                          (dragNode): dragNode is ProjectPageNode =>
+                            dragNode.kind === 'page',
+                        )
+                      : [node];
+                  if (dragNodes.length === 0) {
+                    return;
+                  }
                   beginWorkspaceProjectNodePointerDrag(
-                    {
+                    dragNodes.map((dragNode) => ({
                       type: 'project-content',
                       projectId,
-                      nodeId: node.nodeId,
-                      pageType: node.pageType,
-                    },
+                      nodeId: dragNode.nodeId,
+                      pageType: dragNode.pageType,
+                    })),
                     event.pointerId,
                     event.clientX,
                     event.clientY,
@@ -857,13 +1154,15 @@ export function ProjectTree({
                   }
                   event.preventDefault();
                   event.stopPropagation();
-                  if (dropTarget.edge === 'inside' && node.kind === 'folder') {
+                  if (dropTarget.edge === 'inside' && node.canContainChildren) {
                     dropOn(node.nodeId);
                     return;
                   }
                   const siblings = controller
                     .getBranch(parentId)
-                    .nodes.filter(({ nodeId }) => nodeId !== draggedNodeId);
+                    .nodes.filter(
+                      ({ nodeId }) => !draggedNodeIds.includes(nodeId),
+                    );
                   const siblingIndex = siblings.findIndex(
                     ({ nodeId }) => nodeId === node.nodeId,
                   );
@@ -879,6 +1178,11 @@ export function ProjectTree({
                   }
                   event.preventDefault();
                   setFocusedNodeId(node.nodeId);
+                  if (
+                    !selection.selectedIds.has(node.nodeId)
+                  ) {
+                    onSelectionChange(selectProjectTreeNode(node.nodeId));
+                  }
                   setContextMenu({
                     node,
                     x: event.clientX,
@@ -902,7 +1206,7 @@ export function ProjectTree({
               >
                 {renameEdit ? (
                   <div className="project-tree__node">
-                    <ProjectTreeChevron expanded={expanded} kind={node.kind} />
+                    <ProjectTreeChevron expanded={expanded} visible={false} />
                     <ProjectTreeKindIcon
                       expanded={expanded}
                       kind={node.kind}
@@ -918,6 +1222,21 @@ export function ProjectTree({
                     />
                   </div>
                 ) : (
+                  <>
+                  <ProjectTreeChevron
+                    expanded={expanded}
+                    label={translate(
+                      expanded
+                        ? 'projects.collapseItem'
+                        : 'projects.expandItem',
+                    )}
+                    onToggle={() => {
+                      if (!normalizedSearchQuery) {
+                        void controller.toggle(node.nodeId);
+                      }
+                    }}
+                    visible={node.canContainChildren && node.hasChildren}
+                  />
                   <button
                     aria-describedby={
                       preview
@@ -926,7 +1245,27 @@ export function ProjectTree({
                     }
                     aria-label={displayNodeName(node)}
                     className="project-tree__node"
-                    onClick={() => {
+                    onClick={(event) => {
+                      if (event.shiftKey) {
+                        const result = selectProjectTreeRange(
+                          selection,
+                          visibleNodeIdList,
+                          node.nodeId,
+                          event.ctrlKey || event.metaKey,
+                        );
+                        onSelectionChange(result);
+                        if (result.truncated) {
+                          onSelectionLimitReached?.();
+                        }
+                        return;
+                      }
+                      if (event.ctrlKey || event.metaKey) {
+                        onSelectionChange(
+                          toggleProjectTreeNode(selection, node.nodeId),
+                        );
+                        return;
+                      }
+                      onSelectionChange(selectProjectTreeNode(node.nodeId));
                       if (node.kind === 'folder') {
                         if (!normalizedSearchQuery) {
                           void controller.toggle(node.nodeId);
@@ -938,7 +1277,6 @@ export function ProjectTree({
                     tabIndex={-1}
                     type="button"
                   >
-                  <ProjectTreeChevron expanded={expanded} kind={node.kind} />
                   <ProjectTreeKindIcon
                     expanded={expanded}
                     kind={node.kind}
@@ -946,7 +1284,7 @@ export function ProjectTree({
                   />
                     <span className="project-tree__text">
                       <span className="project-tree__label">
-                        {displayNodeName(node)}
+                        <TwemojiText text={displayNodeName(node)} />
                       </span>
                       {preview ? (
                         <span
@@ -967,15 +1305,33 @@ export function ProjectTree({
                       ) : null}
                     </span>
                   </button>
+                  </>
                 )}
                 {!renameEdit ? (
                   <DropdownMenu
-                    items={nodeMenuItems(
-                      node,
-                      translate,
-                      Boolean(onRequestProperties),
-                    )}
-                    onAction={(action) => handleMenuAction(node, action)}
+                    items={
+                      selection.selectedIds.has(node.nodeId) &&
+                      selection.selectedIds.size > 1
+                        ? selectionMenuItems(
+                            translate,
+                            selectedVisiblePages.length > 0,
+                          )
+                        : nodeMenuItems(
+                            node,
+                            translate,
+                            Boolean(onRequestProperties),
+                          )
+                    }
+                    onAction={(action) => {
+                      if (
+                        selection.selectedIds.has(node.nodeId) &&
+                        selection.selectedIds.size > 1
+                      ) {
+                        handleSelectionMenuAction(action);
+                      } else {
+                        handleMenuAction(node, action);
+                      }
+                    }}
                     trigger={(props) => (
                       <button
                         {...props}
@@ -1001,7 +1357,7 @@ export function ProjectTree({
                   />
                 ) : null}
               </div>
-              {node.kind === 'folder' && expanded ? (
+              {node.canContainChildren && node.hasChildren && expanded ? (
                 <div
                   aria-busy={
                     controller.getBranch(node.nodeId).status === 'loading'
@@ -1010,14 +1366,20 @@ export function ProjectTree({
                   }
                   data-project-parent-id={node.nodeId}
                   onDragOver={(event) => {
-                    if (event.target === event.currentTarget && draggedNodeId) {
+                    if (
+                      event.target === event.currentTarget &&
+                      draggedNodeIds.length > 0
+                    ) {
                       event.preventDefault();
                       event.stopPropagation();
                       updateDropTarget({ nodeId: node.nodeId, edge: 'inside' }, node);
                     }
                   }}
                   onDrop={(event) => {
-                    if (event.target === event.currentTarget && draggedNodeId) {
+                    if (
+                      event.target === event.currentTarget &&
+                      draggedNodeIds.length > 0
+                    ) {
                       event.preventDefault();
                       event.stopPropagation();
                       dropOn(node.nodeId, null);
@@ -1037,7 +1399,7 @@ export function ProjectTree({
             role="treeitem"
             style={{ '--project-tree-depth': depth } as React.CSSProperties}
           >
-            <ProjectTreeChevron kind={createEdit.kind} />
+            <ProjectTreeChevron visible={false} />
             <ProjectTreeKindIcon
               kind={createEdit.kind}
               pageType={createEdit.pageType}
@@ -1085,7 +1447,9 @@ export function ProjectTree({
         controller.getBranch(null).status === 'loading' ? true : undefined
       }
       aria-label={translate('projects.navigation')}
-      className={`project-tree${dropTarget?.nodeId === null ? ' project-tree--drop-root' : ''}`}
+      className={`project-tree${dropTarget?.nodeId === null ? ' project-tree--drop-root' : ''}${
+        marquee.selecting ? ' project-tree--marquee-selecting' : ''
+      }`}
       onDragLeave={(event) => {
         if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
           setDropTarget(undefined);
@@ -1104,6 +1468,11 @@ export function ProjectTree({
           dropOn(null, null);
         }
       }}
+      onLostPointerCapture={marquee.handleLostPointerCapture}
+      onPointerCancel={marquee.handlePointerCancel}
+      onPointerDown={marquee.handlePointerDown}
+      onPointerMove={marquee.handlePointerMove}
+      onPointerUp={marquee.handlePointerUp}
       onContextMenu={(event) => {
         if ((event.target as Element).closest('.project-tree__item')) {
           return;
@@ -1120,23 +1489,46 @@ export function ProjectTree({
       }}
       data-project-parent-id=""
       role="tree"
+      tabIndex={-1}
     >
       {renderBranch(null, 1)}
+      {marquee.boxStyle ? (
+        <div
+          aria-hidden="true"
+          className="project-tree__marquee"
+          style={marquee.boxStyle}
+        />
+      ) : null}
       {contextMenu ? (
         <ContextMenu
           ariaLabel={`${translate('projects.moreActions')}: ${displayNodeName(
             contextMenu.node,
           )}`}
-          items={nodeMenuItems(
-            contextMenu.node,
-            translate,
-            Boolean(onRequestProperties),
-          )}
+          items={
+            selection.selectedIds.has(contextMenu.node.nodeId) &&
+            selection.selectedIds.size > 1
+              ? selectionMenuItems(
+                  translate,
+                  selectedVisiblePages.length > 0,
+                )
+              : nodeMenuItems(
+                  contextMenu.node,
+                  translate,
+                  Boolean(onRequestProperties),
+                )
+          }
           onAction={(action) => {
-            handleMenuAction(contextMenu.node, action, {
-              x: contextMenu.x,
-              y: contextMenu.y,
-            });
+            if (
+              selection.selectedIds.has(contextMenu.node.nodeId) &&
+              selection.selectedIds.size > 1
+            ) {
+              handleSelectionMenuAction(action);
+            } else {
+              handleMenuAction(contextMenu.node, action, {
+                x: contextMenu.x,
+                y: contextMenu.y,
+              });
+            }
             setContextMenu(null);
           }}
           onClose={() => setContextMenu(null)}

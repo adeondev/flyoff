@@ -401,7 +401,7 @@ describe('ProjectRepository protected Markdown pages', () => {
       formatVersion: number;
       entries: Array<Record<string, unknown>>;
     };
-    expect(migratedIndex.formatVersion).toBe(3);
+    expect(migratedIndex.formatVersion).toBe(4);
     expect(
       migratedIndex.entries.find((entry) => entry.nodeId === note.nodeId),
     ).toMatchObject({ attributes: { readOnly: true } });

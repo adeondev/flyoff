@@ -491,6 +491,29 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
       app!.evaluate(({ clipboard }) => clipboard.readText()),
     ).toBe(commandContent);
 
+    const familyEmoji = '👨‍👩‍👧‍👦';
+    await app.evaluate(
+      ({ clipboard }, text) => clipboard.writeText(text),
+      `a${familyEmoji}b`,
+    );
+    await editor.selectText();
+    await page.keyboard.press(`${primary}+V`);
+    await page.keyboard.press(documentStart);
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('Shift+ArrowLeft');
+    await page.keyboard.press(`${primary}+C`);
+    await expect.poll(() =>
+      app!.evaluate(({ clipboard }) => clipboard.readText()),
+    ).toBe(familyEmoji);
+
+    await app.evaluate(
+      ({ clipboard }, text) => clipboard.writeText(text),
+      commandContent,
+    );
+    await editor.selectText();
+    await page.keyboard.press(`${primary}+V`);
+
     await page.keyboard.press(documentStart);
     await page.keyboard.press('Shift+ArrowRight');
     await page.keyboard.press(`${primary}+C`);
@@ -715,6 +738,24 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
     await expect
       .poll(() => editor.evaluate((root) => root.scrollTop))
       .toBeGreaterThan(0);
+    const scrollFrameDurations = await editor.evaluate(async (root) => {
+      const durations: number[] = [];
+      const range = Math.max(1, root.scrollHeight - root.clientHeight);
+      let previous = performance.now();
+      for (let index = 1; index <= 24; index += 1) {
+        root.scrollTop = (range * index) / 24;
+        root.dispatchEvent(new Event('scroll', { bubbles: true }));
+        await new Promise<void>((resolve) =>
+          requestAnimationFrame(() => resolve()),
+        );
+        const current = performance.now();
+        durations.push(current - previous);
+        previous = current;
+      }
+      root.dispatchEvent(new Event('scrollend', { bubbles: true }));
+      return durations;
+    });
+    expect(Math.max(...scrollFrameDurations)).toBeLessThan(100);
     await page.keyboard.press(documentStart);
     await expect.poll(() => editor.evaluate((root) => root.scrollTop)).toBe(0);
     await page.keyboard.press('PageDown');

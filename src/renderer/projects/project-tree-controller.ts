@@ -115,7 +115,7 @@ export class ProjectTreeController {
     if (parentId === null) {
       await this.load(null);
       for (const node of this.getBranch(null).nodes) {
-        if (node.kind === 'folder') {
+        if (node.canContainChildren && node.hasChildren) {
           enqueue(node.nodeId);
         }
       }
@@ -147,7 +147,7 @@ export class ProjectTreeController {
       await Promise.all(batch.map((nodeId) => this.load(nodeId)));
       for (const nodeId of batch) {
         for (const node of this.getBranch(nodeId).nodes) {
-          if (node.kind === 'folder') {
+          if (node.canContainChildren && node.hasChildren) {
             enqueue(node.nodeId);
           }
         }
@@ -245,7 +245,7 @@ export class ProjectTreeController {
         return false;
       }
       for (const node of this.getBranch(parentId).nodes) {
-        if (node.kind === 'folder') {
+        if (node.canContainChildren && node.hasChildren) {
           queue.push(node.nodeId);
         }
       }
@@ -286,6 +286,9 @@ export class ProjectTreeController {
         status: 'loaded',
         nodes: result.value,
       });
+      if (parentId !== null && result.value.length > 0) {
+        this.updateNodeChildState(parentId, true);
+      }
     } else {
       this.onError?.(result.error.message);
       this.branches.set(key, {
@@ -304,6 +307,18 @@ export class ProjectTreeController {
     }
   }
 
+  private updateNodeChildState(nodeId: string, hasChildren: boolean): void {
+    for (const [key, branch] of this.branches) {
+      const index = branch.nodes.findIndex((node) => node.nodeId === nodeId);
+      if (index < 0 || branch.nodes[index]?.hasChildren === hasChildren) {
+        continue;
+      }
+      const nodes = [...branch.nodes];
+      nodes[index] = { ...nodes[index]!, hasChildren };
+      this.branches.set(key, { ...branch, nodes });
+    }
+  }
+
   private branchFolderIds(
     parentId: string | null,
     includeParent = false,
@@ -312,7 +327,13 @@ export class ProjectTreeController {
     const visited = new Set<string>();
     const visit = (branchParentId: string | null): void => {
       for (const node of this.getBranch(branchParentId).nodes) {
-        if (node.kind !== 'folder' || visited.has(node.nodeId)) {
+        if (
+          !node.canContainChildren ||
+          visited.has(node.nodeId)
+        ) {
+          continue;
+        }
+        if (!node.hasChildren && !this.expanded.has(node.nodeId)) {
           continue;
         }
         visited.add(node.nodeId);

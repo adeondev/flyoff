@@ -14,6 +14,7 @@ import type {
   ProjectLinkTarget,
 } from '../../shared/contracts';
 import { Dialog } from '../components/dialog';
+import { TwemojiText } from '../components/twemoji';
 import type { Translate } from '../pages/page-types';
 import { renderMarkdownInto } from './markdown-render';
 
@@ -152,7 +153,7 @@ function InternalLinkPreview({
       style={style}
     >
       <header>
-        <strong>{preview.target.name}</strong>
+        <strong><TwemojiText text={preview.target.name} /></strong>
         <span>/{preview.target.path}</span>
       </header>
       <div className="internal-link-preview__body">
@@ -231,7 +232,7 @@ export function MarkdownInternalLinkOverlays({
                 onClick={() => onChooseCandidate(target)}
                 type="button"
               >
-                <strong>{target.name}</strong>
+                <strong><TwemojiText text={target.name} /></strong>
                 <span>/{target.path}</span>
               </button>
             ))}
@@ -268,7 +269,9 @@ export function MarkdownInternalLinkOverlays({
                 <span>
                   /{reference.sourcePath}:{reference.line}:{reference.column}
                 </span>
-                <strong>{reference.excerpt}</strong>
+                <strong>
+                  <TwemojiText text={reference.excerpt} />
+                </strong>
               </button>
             ))}
             {(references.outcome?.skippedLockedNodeIds.length ?? 0) > 0 ? (
@@ -359,7 +362,7 @@ export function MarkdownInternalLinkOverlays({
                     onClick={() => onReplaceTarget(target)}
                     type="button"
                   >
-                    <strong>{target.name}</strong>
+                    <strong><TwemojiText text={target.name} /></strong>
                     <span>/{target.path}</span>
                   </button>
                 ))}

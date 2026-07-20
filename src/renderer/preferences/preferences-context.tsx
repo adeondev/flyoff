@@ -69,6 +69,16 @@ function applyDocumentPreferences(preferences: FlyoffPreferences): void {
   const root = document.documentElement;
   root.dataset.theme = preferences.appearance.theme;
   root.dataset.accent = preferences.appearance.accentStrength;
+  if (preferences.appearance.accentColor) {
+    root.dataset.customAccent = 'true';
+    root.style.setProperty(
+      '--preference-accent-color',
+      preferences.appearance.accentColor,
+    );
+  } else {
+    delete root.dataset.customAccent;
+    root.style.removeProperty('--preference-accent-color');
+  }
   root.dataset.interfaceFont = preferences.appearance.interfaceFont;
   root.dataset.density = preferences.appearance.density;
   root.dataset.borderContrast = preferences.appearance.borderContrast;

@@ -30,6 +30,10 @@ const contentTarget: TabTarget = {
   nodeId: NODE_ID,
   pageType: 'markdown',
 };
+const graphTarget: TabTarget = {
+  type: 'project-graph',
+  projectId: PROJECT_ID,
+};
 
 function openProject(): WorkspaceState {
   return workspaceReducer(createInitialWorkspaceState(), {
@@ -81,6 +85,33 @@ describe('workspace reducer', () => {
     expect(selectActiveContext(closed)).toBe('project');
   });
 
+  it('keeps one graph tab across project panes and focuses the existing tab', () => {
+    const opened = workspaceReducer(openProject(), {
+      type: 'open-target',
+      target: graphTarget,
+    });
+    const firstPaneId = selectActiveTabs(opened).paneId;
+    const split = workspaceReducer(opened, {
+      type: 'split-pane',
+      paneId: firstPaneId,
+      direction: 'row',
+    });
+    const reopened = workspaceReducer(split, {
+      type: 'open-target',
+      paneId: split.project!.activePaneId,
+      target: graphTarget,
+    });
+    const graphTabs = collectPanes(reopened.project!.root).flatMap(({ tabs }) =>
+      tabs.filter(({ target }) => target.type === 'project-graph'),
+    );
+
+    expect(graphTabs).toHaveLength(1);
+    expect(reopened.project?.activePaneId).toBe(firstPaneId);
+    expect(selectActiveTabs(reopened).activeTabId).toBe(
+      `project:${PROJECT_ID}:graph`,
+    );
+  });
+
   it('keeps New tab independent when opening a note', () => {
     const withNewTab = workspaceReducer(openProject(), {
       type: 'open-target',
@@ -101,6 +132,87 @@ describe('workspace reducer', () => {
     expect(selectActiveTabs(opened).activeTabId).toBe(
       `project:${PROJECT_ID}:node:${NODE_ID}`,
     );
+  });
+
+  it('reuses the active New tab when opening project content explicitly', () => {
+    const withNewTab = workspaceReducer(openProject(), {
+      type: 'open-target',
+      target: {
+        type: 'internal',
+        pageId: INTERNAL_PAGE_IDS.newTab,
+        instanceKey: 'reusable',
+      },
+    });
+    const placeholder = selectActiveTabs(withNewTab).tabs.at(-1)!;
+    const opened = workspaceReducer(withNewTab, {
+      type: 'open-target-reusing-new-tab',
+      target: contentTarget,
+    });
+    const active = selectActiveTabs(opened);
+
+    expect(active.tabs).toHaveLength(2);
+    expect(active.activeTabId).toBe(placeholder.tabId);
+    expect(active.tabs.at(-1)).toMatchObject({
+      tabId: placeholder.tabId,
+      target: contentTarget,
+    });
+  });
+
+  it('consumes the active New tab and focuses content already open', () => {
+    const opened = workspaceReducer(openProject(), {
+      type: 'open-target',
+      target: contentTarget,
+    });
+    const withNewTab = workspaceReducer(opened, {
+      type: 'open-target',
+      target: {
+        type: 'internal',
+        pageId: INTERNAL_PAGE_IDS.newTab,
+        instanceKey: 'consumed',
+      },
+    });
+    const next = workspaceReducer(withNewTab, {
+      type: 'open-target-reusing-new-tab',
+      target: contentTarget,
+    });
+    const active = selectActiveTabs(next);
+
+    expect(active.tabs).toHaveLength(2);
+    expect(active.tabs.some(({ target }) =>
+      target.type === 'internal' &&
+      target.pageId === INTERNAL_PAGE_IDS.newTab,
+    )).toBe(false);
+    expect(active.activeTabId).toBe(`project:${PROJECT_ID}:node:${NODE_ID}`);
+  });
+
+  it('moves existing content into a destination New tab without duplicating it', () => {
+    const opened = workspaceReducer(openProject(), {
+      type: 'open-target',
+      target: contentTarget,
+    });
+    const sourcePaneId = selectActiveTabs(opened).paneId;
+    const split = workspaceReducer(opened, {
+      type: 'split-pane',
+      paneId: sourcePaneId,
+      direction: 'row',
+    });
+    const destinationPaneId = split.project!.activePaneId;
+    const next = workspaceReducer(split, {
+      type: 'move-or-open-target-reusing-new-tab',
+      paneId: destinationPaneId,
+      target: contentTarget,
+    });
+    const panes = collectPanes(next.project!.root);
+    const destination = findPane(next.project!.root, destinationPaneId);
+
+    expect(
+      panes.flatMap(({ tabs }) => tabs).filter(
+        ({ target }) =>
+          target.type === 'project-content' && target.nodeId === NODE_ID,
+      ),
+    ).toHaveLength(1);
+    expect(destination?.tabs).toHaveLength(1);
+    expect(destination?.tabs[0]?.target).toEqual(contentTarget);
   });
 
   it('opens each New tab instance independently in the active pane', () => {

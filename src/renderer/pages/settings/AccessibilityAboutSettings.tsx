@@ -127,6 +127,15 @@ export function AboutSettings({
       >
         <output>{translate('settings.aboutLicensePrivate')}</output>
       </SettingRow>
+      <SettingRow
+        description=""
+        query={query}
+        title={translate('settings.aboutEmojiAssets')}
+      >
+        <output>
+          Twemoji 17.0.3 (CC-BY 4.0) · Emojibase 17
+        </output>
+      </SettingRow>
     </SettingsSection>
   );
 }

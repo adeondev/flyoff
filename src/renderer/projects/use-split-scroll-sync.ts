@@ -9,6 +9,11 @@ import type { EditorMode } from './editor-mode';
 
 type ScrollDriver = 'reading' | 'source';
 
+interface ScrollRanges {
+  source: number;
+  target: number;
+}
+
 interface UseSplitScrollSyncOptions {
   content: string;
   enabled?: boolean;
@@ -43,6 +48,8 @@ export function useSplitScrollSync({
 }: UseSplitScrollSyncOptions) {
   const driverRef = useRef<ScrollDriver>('source');
   const frameRef = useRef<number | undefined>(undefined);
+  const measurePendingRef = useRef(true);
+  const rangesRef = useRef<ScrollRanges | undefined>(undefined);
 
   const syncFromSource = useCallback((): void => {
     if (
@@ -59,10 +66,31 @@ export function useSplitScrollSync({
       return;
     }
 
-    reading.scrollTop = proportionalScrollTop(source, reading);
+    if (measurePendingRef.current || !rangesRef.current) {
+      rangesRef.current = {
+        source: Math.max(0, source.scrollHeight - source.clientHeight),
+        target: Math.max(0, reading.scrollHeight - reading.clientHeight),
+      };
+      measurePendingRef.current = false;
+    }
+
+    const ranges = rangesRef.current;
+    const nextScrollTop =
+      ranges.source === 0 || ranges.target === 0
+        ? 0
+        : Math.min(
+            ranges.target,
+            Math.max(0, (source.scrollTop / ranges.source) * ranges.target),
+          );
+    if (Math.abs(reading.scrollTop - nextScrollTop) >= 0.5) {
+      reading.scrollTop = nextScrollTop;
+    }
   }, [enabled, mode, readingRef, sourceRef]);
 
-  const scheduleSync = useCallback((): void => {
+  const scheduleSync = useCallback((measure = false): void => {
+    if (measure) {
+      measurePendingRef.current = true;
+    }
     if (frameRef.current !== undefined) {
       return;
     }
@@ -93,7 +121,7 @@ export function useSplitScrollSync({
     }
 
     driverRef.current = 'source';
-    scheduleSync();
+    scheduleSync(true);
   }, [enabled, mode, scheduleSync]);
 
   useEffect(() => {
@@ -102,7 +130,7 @@ export function useSplitScrollSync({
       mode === 'split' &&
       driverRef.current === 'source'
     ) {
-      scheduleSync();
+      scheduleSync(true);
     }
   }, [content, enabled, mode, scheduleSync]);
 
@@ -117,7 +145,7 @@ export function useSplitScrollSync({
 
     const observer = new ResizeObserver(() => {
       if (driverRef.current === 'source') {
-        scheduleSync();
+        scheduleSync(true);
       }
     });
     const source = sourceRef.current;
@@ -137,6 +165,7 @@ export function useSplitScrollSync({
       if (frameRef.current !== undefined) {
         cancelAnimationFrame(frameRef.current);
       }
+      rangesRef.current = undefined;
     },
     [],
   );

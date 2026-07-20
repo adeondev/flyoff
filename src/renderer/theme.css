@@ -6,6 +6,8 @@
   --color-surface-hover: #323238;
   --color-surface-active: #3b3a43;
   --color-surface-context: #343239;
+  --color-code-surface: #19191d;
+  --color-code-text: #e8e4ec;
   --color-border: #424149;
   --color-scrollbar-thumb: #605e67;
   --color-scrollbar-thumb-hover: #76737e;
@@ -57,6 +59,8 @@
   --color-surface-hover: #18141b;
   --color-surface-active: #272129;
   --color-surface-context: #211923;
+  --color-code-surface: #1b171c;
+  --color-code-text: #eee8f1;
   --color-border: #221c22;
   --color-scrollbar-thumb: #463a48;
   --color-scrollbar-thumb-hover: #5e4d61;
@@ -82,6 +86,71 @@
   --color-accent-hover: #982fd4;
   --color-accent-bright: #c064ec;
   --color-focus-ring: #ae4ee0;
+}
+
+:root[data-custom-accent='true'] {
+  --color-accent: var(--preference-accent-color);
+  --color-accent-hover: color-mix(
+    in srgb,
+    var(--preference-accent-color) 82%,
+    black
+  );
+  --color-accent-bright: color-mix(
+    in srgb,
+    var(--preference-accent-color) 76%,
+    white
+  );
+  --color-focus-ring: color-mix(
+    in srgb,
+    var(--preference-accent-color) 86%,
+    white
+  );
+}
+
+:root[data-custom-accent='true'][data-accent='subtle'] {
+  --color-accent: color-mix(
+    in srgb,
+    var(--preference-accent-color) 66%,
+    var(--color-text-muted)
+  );
+  --color-accent-hover: color-mix(
+    in srgb,
+    var(--preference-accent-color) 72%,
+    var(--color-background)
+  );
+  --color-accent-bright: color-mix(
+    in srgb,
+    var(--preference-accent-color) 58%,
+    white
+  );
+  --color-focus-ring: color-mix(
+    in srgb,
+    var(--preference-accent-color) 68%,
+    white
+  );
+}
+
+:root[data-custom-accent='true'][data-accent='strong'] {
+  --color-accent: color-mix(
+    in srgb,
+    var(--preference-accent-color) 88%,
+    white
+  );
+  --color-accent-hover: color-mix(
+    in srgb,
+    var(--preference-accent-color) 86%,
+    black
+  );
+  --color-accent-bright: color-mix(
+    in srgb,
+    var(--preference-accent-color) 68%,
+    white
+  );
+  --color-focus-ring: color-mix(
+    in srgb,
+    var(--preference-accent-color) 90%,
+    white
+  );
 }
 
 :root[data-interface-font='system'] {

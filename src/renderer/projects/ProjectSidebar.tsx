@@ -4,6 +4,7 @@ import {
   useEffect,
   useImperativeHandle,
   useMemo,
+  useRef,
   useState,
 } from 'react';
 
@@ -23,6 +24,7 @@ import type {
   FlyoffPlatform,
   ListProjectChildrenRequest,
   MoveProjectNodeRequest,
+  MoveProjectNodesRequest,
   ProjectResult,
   ProjectSearchOutcome,
   ProjectSearchPreview,
@@ -31,11 +33,14 @@ import type {
   ProjectTreeNode,
   ProjectPathRequest,
   ProjectPageNode,
+  ProjectNodesMutationOutcome,
   RenameProjectNodeRequest,
   TrashProjectNodeRequest,
+  TrashProjectNodesRequest,
   TrashProjectNodeOutcome,
 } from '../../shared/contracts';
 import { MaskedIcon } from '../components/MaskedIcon';
+import { TwemojiText } from '../components/twemoji';
 import { ContextMenu, type MenuItem } from '../components/menu';
 import { getTooltipTargetProps } from '../components/tooltip';
 import type { Translate } from '../pages/page-types';
@@ -44,14 +49,20 @@ import {
   type AddInstanceChoice,
 } from './AddInstancePopover';
 import { MoveProjectNodeDialog } from './MoveProjectNodeDialog';
+import { MoveProjectNodesDialog } from './MoveProjectNodesDialog';
 import { projectNodeInputName } from './project-node-name';
 import { ProjectSearchInput } from './ProjectSearchInput';
 import { ProjectTree, type ProjectTreeInlineEdit } from './ProjectTree';
+import {
+  emptyProjectTreeSelection,
+  type ProjectTreeSelection,
+} from './project-tree-selection';
 import {
   ProjectTreeController,
   type ProjectChildrenLoader,
 } from './project-tree-controller';
 import { TrashProjectNodeDialog } from './TrashProjectNodeDialog';
+import { TrashProjectNodesDialog } from './TrashProjectNodesDialog';
 
 function createTreeController(
   projectId: string,
@@ -102,11 +113,20 @@ export interface ProjectSidebarProps {
   onMoveNode: (
     request: MoveProjectNodeRequest,
   ) => Promise<ProjectResult<ProjectTreeNode>>;
+  onMoveNodes: (
+    request: MoveProjectNodesRequest,
+  ) => Promise<ProjectResult<ProjectNodesMutationOutcome>>;
   onTrashNode: (
     request: TrashProjectNodeRequest,
   ) => Promise<ProjectResult<TrashProjectNodeOutcome>>;
+  onTrashNodes: (
+    request: TrashProjectNodesRequest,
+  ) => Promise<ProjectResult<TrashProjectNodeOutcome>>;
   onCopyPath?: (
     request: ProjectPathRequest,
+  ) => Promise<ProjectResult<null>>;
+  onCopyPaths?: (
+    request: { nodeIds: readonly string[] },
   ) => Promise<ProjectResult<null>>;
   onRevealPath?: (
     request: ProjectPathRequest,
@@ -116,8 +136,12 @@ export interface ProjectSidebarProps {
   onOpenSettings?: () => void;
   onCloseProject?: () => void;
   onOpenNode: (node: ProjectTreeNode) => void;
+  onOpenNodes: (nodes: readonly ProjectPageNode[]) => void;
   onRequestProperties?: (node: ProjectPageNode) => void;
   onBeforeNodeChange?: (node: ProjectTreeNode) => Promise<boolean>;
+  onBeforeNodesChange?: (
+    nodes: readonly ProjectTreeNode[],
+  ) => Promise<boolean>;
   onCreateRequestHandled?: (id: number | string) => void;
   onNodeChanged?: (node: ProjectTreeNode) => void;
   onNodeTrashed?: (node: ProjectTreeNode) => void;
@@ -147,16 +171,20 @@ export const ProjectSidebar = forwardRef<
   hidden = false,
   loadChildren,
   onBeforeNodeChange,
+  onBeforeNodesChange,
   onCopyPath,
+  onCopyPaths,
   onCreateRequestHandled,
   onCreateNode,
   onError,
   onMoveNode,
+  onMoveNodes,
   onNodeChanged,
   onNodeTrashed,
   onCloseProject,
   onOpenAbout,
   onOpenNode,
+  onOpenNodes,
   onOpenOverview,
   onOpenSettings,
   onRequestProperties,
@@ -164,6 +192,7 @@ export const ProjectSidebar = forwardRef<
   onRenameNode,
   onSearch,
   onTrashNode,
+  onTrashNodes,
   onNotice,
   overviewActive = false,
   platform,
@@ -177,7 +206,15 @@ export const ProjectSidebar = forwardRef<
   );
   const [edit, setEdit] = useState<ProjectTreeInlineEdit>();
   const [movingNode, setMovingNode] = useState<ProjectTreeNode>();
+  const [movingNodes, setMovingNodes] =
+    useState<readonly ProjectTreeNode[]>();
   const [trashingNode, setTrashingNode] = useState<ProjectTreeNode>();
+  const [trashingNodes, setTrashingNodes] =
+    useState<readonly ProjectTreeNode[]>();
+  const [selection, setSelection] = useState<ProjectTreeSelection>(
+    emptyProjectTreeSelection,
+  );
+  const selectionRegionRef = useRef<HTMLDivElement>(null);
   const [pending, setPending] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [appliedSearchQuery, setAppliedSearchQuery] = useState('');
@@ -196,6 +233,18 @@ export const ProjectSidebar = forwardRef<
     position: { x: number; y: number };
     restoreFocus?: HTMLElement | null;
   }>();
+
+  async function refreshRelationships(
+    parentIds: readonly (string | null)[],
+  ): Promise<boolean> {
+    const branches = new Set<string | null>(parentIds);
+    for (const parentId of parentIds) {
+      if (parentId !== null) {
+        branches.add(controller.findNode(parentId)?.parentId ?? null);
+      }
+    }
+    return controller.refreshParents([...branches]);
+  }
 
   useEffect(() => () => controller.dispose(), [controller]);
   useEffect(() => {
@@ -277,6 +326,12 @@ export const ProjectSidebar = forwardRef<
     return onBeforeNodeChange ? onBeforeNodeChange(node) : true;
   }
 
+  async function allowNodesChange(
+    nodes: readonly ProjectTreeNode[],
+  ): Promise<boolean> {
+    return onBeforeNodesChange ? onBeforeNodesChange(nodes) : true;
+  }
+
   const startCreate = useCallback(
     async (
       parentId: string | null,
@@ -344,7 +399,7 @@ export const ProjectSidebar = forwardRef<
           reportError(result.error.message);
           return;
         }
-        await controller.refreshParents([edit.parentId]);
+        await refreshRelationships([edit.parentId]);
         setEdit(undefined);
         onNodeChanged?.(result.value);
         if (result.value.kind === 'page') {
@@ -364,7 +419,7 @@ export const ProjectSidebar = forwardRef<
         reportError(result.error.message);
         return;
       }
-      await controller.refreshParents([edit.node.parentId]);
+      await refreshRelationships([edit.node.parentId]);
       setEdit(undefined);
       onNodeChanged?.(result.value);
     } catch (operationError) {
@@ -394,7 +449,7 @@ export const ProjectSidebar = forwardRef<
         reportError(result.error.message);
         return;
       }
-      await controller.refreshParents([node.parentId, parentId]);
+      await refreshRelationships([node.parentId, parentId]);
       onNodeChanged?.(result.value);
     } catch (operationError) {
       reportError(String(operationError));
@@ -419,6 +474,55 @@ export const ProjectSidebar = forwardRef<
     return onMoveNode(request);
   }
 
+  async function moveSelectionByDrop(
+    nodes: readonly ProjectTreeNode[],
+    parentId: string | null,
+    beforeNodeId?: string | null,
+  ): Promise<void> {
+    if (pending || !(await allowNodesChange(nodes))) {
+      return;
+    }
+    setPending(true);
+    try {
+      const result = await onMoveNodes({
+        nodeIds: nodes.map(({ nodeId }) => nodeId),
+        parentId,
+        ...(beforeNodeId === undefined ? {} : { beforeNodeId }),
+      });
+      if (!result.ok) {
+        reportError(result.error.message);
+        return;
+      }
+      await refreshRelationships([
+        ...nodes.map((node) => node.parentId),
+        parentId,
+      ]);
+      setSelection(emptyProjectTreeSelection());
+      for (const node of result.value.nodes) {
+        onNodeChanged?.(node);
+      }
+    } catch (error) {
+      reportError(String(error));
+    } finally {
+      setPending(false);
+    }
+  }
+
+  async function moveSelectionFromDialog(
+    request: MoveProjectNodesRequest,
+  ): Promise<ProjectResult<ProjectNodesMutationOutcome>> {
+    if (!movingNodes || !(await allowNodesChange(movingNodes))) {
+      return {
+        ok: false,
+        error: {
+          code: 'invalid-operation',
+          message: translate('projects.operationFailed'),
+        },
+      };
+    }
+    return onMoveNodes(request);
+  }
+
   async function trashFromDialog(
     request: TrashProjectNodeRequest,
   ): Promise<ProjectResult<TrashProjectNodeOutcome>> {
@@ -433,6 +537,21 @@ export const ProjectSidebar = forwardRef<
       };
     }
     return onTrashNode(request);
+  }
+
+  async function trashSelectionFromDialog(
+    request: TrashProjectNodesRequest,
+  ): Promise<ProjectResult<TrashProjectNodeOutcome>> {
+    if (!trashingNodes || !(await allowNodesChange(trashingNodes))) {
+      return {
+        ok: false,
+        error: {
+          code: 'invalid-operation',
+          message: translate('projects.operationFailed'),
+        },
+      };
+    }
+    return onTrashNodes(request);
   }
 
   function openInstancePicker(
@@ -571,7 +690,45 @@ export const ProjectSidebar = forwardRef<
       className="home__sidebar project-sidebar"
       hidden={hidden}
     >
-      <header className="project-sidebar__header">
+      <div
+        className="project-sidebar__selection-region"
+        onBlurCapture={(event) => {
+          const region = event.currentTarget;
+          requestAnimationFrame(() => {
+            const active = document.activeElement;
+            if (
+              (active instanceof Node && region.contains(active)) ||
+              (active instanceof Element &&
+                Boolean(
+                  active.closest(
+                    '.flyoff-menu, .flyoff-dialog, .add-instance-popover',
+                  ),
+                )) ||
+              movingNode ||
+              movingNodes ||
+              trashingNode ||
+              trashingNodes ||
+              instancePicker ||
+              branchMenu
+            ) {
+              return;
+            }
+            setSelection(emptyProjectTreeSelection());
+          });
+        }}
+        onKeyDown={(event) => {
+          if (
+            event.key === 'Escape' &&
+            !event.defaultPrevented &&
+            selection.selectedIds.size > 0
+          ) {
+            event.preventDefault();
+            setSelection(emptyProjectTreeSelection());
+          }
+        }}
+        ref={selectionRegionRef}
+      >
+        <header className="project-sidebar__header">
         <div className="project-sidebar__tools">
           <button
             aria-label={translate('projects.closeProject')}
@@ -628,15 +785,18 @@ export const ProjectSidebar = forwardRef<
             />
           </button>
         </div>
-      </header>
-      <ProjectSearchInput
-        onChange={setSearchQuery}
+        </header>
+        <ProjectSearchInput
+        onChange={(query) => {
+          setSearchQuery(query);
+          setSelection(emptyProjectTreeSelection());
+        }}
         searching={searching}
         skippedLockedCount={skippedLockedCount}
         translate={translate}
         value={searchQuery}
-      />
-      <div
+        />
+        <div
         aria-busy={searching || undefined}
         className="project-sidebar__tree-scroll"
         onContextMenu={(event) => {
@@ -650,8 +810,8 @@ export const ProjectSidebar = forwardRef<
             event.currentTarget,
           );
         }}
-      >
-        <ProjectTree
+        >
+          <ProjectTree
           activeNodeId={activeNodeId}
           controller={controller}
           edit={edit}
@@ -659,21 +819,46 @@ export const ProjectSidebar = forwardRef<
           onMoveNode={(node, parentId, beforeNodeId) =>
             void moveByDrop(node, parentId, beforeNodeId)
           }
+          onMoveNodes={(nodes, parentId, beforeNodeId) =>
+            void moveSelectionByDrop(nodes, parentId, beforeNodeId)
+          }
           onOpenNode={onOpenNode}
+          onOpenNodes={onOpenNodes}
           onRequestAddInstance={openInstancePicker}
           onRequestBranchMenu={openBranchMenu}
+          onRequestCopySelection={(nodes) => {
+            if (nodes.length === 1) {
+              void performPathAction(onCopyPath, nodes[0]!.nodeId);
+              return;
+            }
+            void onCopyPaths?.({
+              nodeIds: nodes.map(({ nodeId }) => nodeId),
+            }).then((result) => {
+              if (result && !result.ok) {
+                reportError(result.error.message);
+              }
+            });
+          }}
           onRequestMove={setMovingNode}
+          onRequestMoveSelection={setMovingNodes}
           onRequestProperties={onRequestProperties}
           onRequestRename={(node) => setEdit({ mode: 'rename', node })}
           onRequestTrash={setTrashingNode}
+          onRequestTrashSelection={setTrashingNodes}
+          onSelectionChange={setSelection}
+          onSelectionLimitReached={() =>
+            onNotice?.(translate('projects.selectionLimitReached'))
+          }
           onSubmitEdit={(name) => void submitEdit(name)}
           operationPending={pending}
           projectId={project.projectId}
           searchNodeIds={searchNodeIds}
           searchPreviews={searchPreviews}
           searchQuery={appliedSearchQuery}
+          selection={selection}
           translate={translate}
-        />
+          />
+        </div>
       </div>
       <footer className="project-sidebar__footer">
         <button
@@ -683,7 +868,7 @@ export const ProjectSidebar = forwardRef<
           type="button"
           {...getTooltipTargetProps(project.location, 'top')}
         >
-          <span>{project.name}</span>
+          <TwemojiText text={project.name} />
         </button>
         <div className="project-sidebar__footer-actions">
           <button
@@ -746,8 +931,30 @@ export const ProjectSidebar = forwardRef<
           onError={reportError}
           onMove={moveFromDialog}
           onMoved={(node) => {
+            void refreshRelationships([movingNode.parentId, node.parentId]);
             setMovingNode(undefined);
             onNodeChanged?.(node);
+          }}
+          translate={translate}
+        />
+      ) : null}
+      {movingNodes ? (
+        <MoveProjectNodesDialog
+          controller={controller}
+          nodes={movingNodes}
+          onCancel={() => setMovingNodes(undefined)}
+          onError={reportError}
+          onMove={moveSelectionFromDialog}
+          onMoved={(nodes) => {
+            void refreshRelationships([
+              ...movingNodes.map((node) => node.parentId),
+              ...nodes.map((node) => node.parentId),
+            ]);
+            setMovingNodes(undefined);
+            setSelection(emptyProjectTreeSelection());
+            for (const node of nodes) {
+              onNodeChanged?.(node);
+            }
           }}
           translate={translate}
         />
@@ -759,8 +966,26 @@ export const ProjectSidebar = forwardRef<
           onTrash={trashFromDialog}
           onTrashed={(node) => {
             setTrashingNode(undefined);
-            void controller.refreshParents([node.parentId]);
+            void refreshRelationships([node.parentId]);
             onNodeTrashed?.(node);
+          }}
+          translate={translate}
+        />
+      ) : null}
+      {trashingNodes ? (
+        <TrashProjectNodesDialog
+          nodes={trashingNodes}
+          onCancel={() => setTrashingNodes(undefined)}
+          onTrash={trashSelectionFromDialog}
+          onTrashed={(nodes) => {
+            setTrashingNodes(undefined);
+            setSelection(emptyProjectTreeSelection());
+            void refreshRelationships(
+              nodes.map(({ parentId }) => parentId),
+            );
+            for (const node of nodes) {
+              onNodeTrashed?.(node);
+            }
           }}
           translate={translate}
         />

@@ -91,6 +91,61 @@ describe('project preload bridge', () => {
       PROJECT_IPC_CHANNELS.copyPath,
       { nodeId },
     );
+
+    await expect(api.copyProjectPaths({ nodeIds: [nodeId] })).resolves.toEqual({
+      ok: true,
+      value: null,
+    });
+    expect(electronMocks.invoke).toHaveBeenCalledWith(
+      PROJECT_IPC_CHANNELS.copyPaths,
+      { nodeIds: [nodeId] },
+    );
+  });
+
+  it('validates and forwards batch node mutations', async () => {
+    const api = flyoffApi as FlyoffApi;
+    const secondNodeId = '44444444-4444-4444-8444-444444444444';
+    const nodes = [nodeId, secondNodeId].map((currentNodeId, index) => ({
+      canContainChildren: true,
+      hasChildren: false,
+      kind: 'page' as const,
+      name: `Note ${index + 1}`,
+      nodeId: currentNodeId,
+      pageType: 'markdown',
+      parentId: null,
+    }));
+    electronMocks.invoke.mockResolvedValueOnce(
+      projectSuccess({
+        nodes,
+        skippedLockedNodeIds: [],
+        updatedDocumentNodeIds: [],
+      }),
+    );
+
+    await expect(
+      api.moveProjectNodes({ nodeIds: [nodeId, secondNodeId], parentId: null }),
+    ).resolves.toMatchObject({ ok: true, value: { nodes } });
+    expect(electronMocks.invoke).toHaveBeenLastCalledWith(
+      PROJECT_IPC_CHANNELS.moveNodes,
+      { nodeIds: [nodeId, secondNodeId], parentId: null },
+    );
+
+    electronMocks.invoke.mockResolvedValueOnce(
+      projectSuccess({ nodeIds: [nodeId, secondNodeId] }),
+    );
+    await expect(
+      api.trashProjectNodes({ nodeIds: [nodeId, secondNodeId] }),
+    ).resolves.toEqual(
+      projectSuccess({ nodeIds: [nodeId, secondNodeId] }),
+    );
+    expect(electronMocks.invoke).toHaveBeenLastCalledWith(
+      PROJECT_IPC_CHANNELS.trashNodes,
+      { nodeIds: [nodeId, secondNodeId] },
+    );
+
+    await expect(
+      api.trashProjectNodes({ nodeIds: [] }),
+    ).rejects.toBeInstanceOf(TypeError);
   });
 
   it('validates preferences in both directions', async () => {
@@ -396,6 +451,9 @@ describe('project preload bridge', () => {
     await expect(
       api.copyProjectPath({ nodeId: 'invalid' }),
     ).rejects.toThrow('Invalid project path request');
+    await expect(
+      api.copyProjectPaths({ nodeIds: [] }),
+    ).rejects.toThrow('Invalid project paths request');
     expect(electronMocks.invoke).not.toHaveBeenCalled();
 
     electronMocks.invoke.mockResolvedValue({ ok: true, value: 'unexpected' });

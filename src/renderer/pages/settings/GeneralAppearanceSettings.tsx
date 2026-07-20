@@ -9,6 +9,7 @@ import {
   usePreferenceSection,
 } from './SettingsControls';
 import { useFlyoffPreferences } from '../../preferences';
+import { AccentColorPicker } from './AccentColorPicker';
 
 interface SettingsSectionProps {
   query: string;
@@ -206,6 +207,18 @@ export function AppearanceSettings({
             </button>
           ))}
         </div>
+      </SettingRow>
+      <SettingRow
+        description={translate('settings.accentColorDescription')}
+        query={query}
+        title={translate('settings.accentColor')}
+      >
+        <AccentColorPicker
+          onChange={(accentColor) => update({ accentColor })}
+          theme={appearance.theme}
+          translate={translate}
+          value={appearance.accentColor}
+        />
       </SettingRow>
       <SettingRow
         description={translate('settings.accentStrengthDescription')}

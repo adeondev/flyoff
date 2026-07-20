@@ -23,14 +23,17 @@ import {
   migratePaneWorkspace,
   movePaneTab,
   moveOrOpenPaneTarget,
+  moveOrOpenPaneTargetReusingNewTab,
   moveTabBetweenPanes,
   openPaneTarget,
+  openPaneTargetReusingNewTab,
   resizeWorkspaceSplit,
   selectPane,
   selectPaneTab,
   splitPane,
   splitPaneWithTab,
   splitPaneWithTarget,
+  splitPaneWithTargets,
   updatePageState,
   updateScroll,
   type PaneWorkspaceState,
@@ -58,8 +61,19 @@ export type WorkspaceAction =
       target: TabTarget;
       initialPageState?: PageSessionState;
     } & PaneActionTarget)
+  | ({
+      type: 'open-target-reusing-new-tab';
+      target: TabTarget;
+      initialPageState?: PageSessionState;
+    } & PaneActionTarget)
   | {
       type: 'move-or-open-target';
+      target: TabTarget;
+      paneId: string;
+      initialPageState?: PageSessionState;
+    }
+  | {
+      type: 'move-or-open-target-reusing-new-tab';
       target: TabTarget;
       paneId: string;
       initialPageState?: PageSessionState;
@@ -108,6 +122,13 @@ export type WorkspaceAction =
       direction: WorkspaceSplitDirection;
       before: boolean;
       initialPageState?: PageSessionState;
+    }
+  | {
+      type: 'split-pane-with-targets';
+      targetPaneId: string;
+      targets: readonly TabTarget[];
+      direction: WorkspaceSplitDirection;
+      before: boolean;
     }
   | { type: 'close-pane'; paneId: string }
   | { type: 'close-all-project-tabs' }
@@ -206,8 +227,22 @@ function reducePaneWorkspace(
         paneId,
         action.initialPageState,
       );
+    case 'open-target-reusing-new-tab':
+      return openPaneTargetReusingNewTab(
+        workspace,
+        action.target,
+        paneId,
+        action.initialPageState,
+      );
     case 'move-or-open-target':
       return moveOrOpenPaneTarget(
+        workspace,
+        action.target,
+        action.paneId,
+        action.initialPageState,
+      );
+    case 'move-or-open-target-reusing-new-tab':
+      return moveOrOpenPaneTargetReusingNewTab(
         workspace,
         action.target,
         action.paneId,
@@ -269,6 +304,14 @@ function reducePaneWorkspace(
         action.direction,
         action.before,
         action.initialPageState,
+      );
+    case 'split-pane-with-targets':
+      return splitPaneWithTargets(
+        workspace,
+        action.targetPaneId,
+        action.targets,
+        action.direction,
+        action.before,
       );
     case 'close-pane':
       return closeWorkspacePane(workspace, action.paneId);
@@ -353,8 +396,16 @@ export function workspaceReducer(
           (action.type === 'open-page' &&
             !getPageDefinition(action.pageId).availableInProject) ||
           ((action.type === 'open-target' ||
-            action.type === 'move-or-open-target') &&
-            !acceptsProjectTarget(state.project.projectId, action.target))
+            action.type === 'move-or-open-target' ||
+            action.type === 'open-target-reusing-new-tab' ||
+            action.type === 'move-or-open-target-reusing-new-tab' ||
+            action.type === 'split-pane-with-target') &&
+            !acceptsProjectTarget(state.project.projectId, action.target)) ||
+          (action.type === 'split-pane-with-targets' &&
+            action.targets.some(
+              (target) =>
+                !acceptsProjectTarget(state.project!.projectId, target),
+            ))
         ) {
           return state;
         }
@@ -366,8 +417,17 @@ export function workspaceReducer(
 
       if (
         (action.type === 'open-target' ||
-          action.type === 'move-or-open-target') &&
+          action.type === 'move-or-open-target' ||
+          action.type === 'open-target-reusing-new-tab' ||
+          action.type === 'move-or-open-target-reusing-new-tab' ||
+          action.type === 'split-pane-with-target') &&
         isProjectTarget(action.target)
+      ) {
+        return state;
+      }
+      if (
+        action.type === 'split-pane-with-targets' &&
+        action.targets.some(isProjectTarget)
       ) {
         return state;
       }

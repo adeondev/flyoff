@@ -18,6 +18,8 @@ const nodeId = 'c8382c79-173b-4fe4-a043-9c6de90024ea';
 const revision = '1'.repeat(64);
 const nextRevision = '2'.repeat(64);
 const node: ProjectTreeNode = {
+  canContainChildren: true,
+  hasChildren: false,
   nodeId,
   parentId: null,
   kind: 'page',

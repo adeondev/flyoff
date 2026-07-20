@@ -427,6 +427,37 @@ describe('ProjectService', () => {
           '[label](Elsewhere/Target.md#Heading)\n[[Elsewhere/Target#Heading|alias]]',
       },
     });
+
+    const container = await service.createNode(1, {
+      kind: 'page',
+      name: 'Container',
+      pageType: 'markdown',
+      parentId: null,
+    });
+    if (!container.ok) {
+      throw new Error('Expected note container to be created.');
+    }
+    const organized = await service.moveNode(1, {
+      nodeId: target.value.nodeId,
+      parentId: container.value.nodeId,
+    });
+
+    expect(organized).toMatchObject({
+      ok: true,
+      value: {
+        node: { parentId: container.value.nodeId },
+        updatedDocumentNodeIds: [],
+      },
+    });
+    await expect(
+      service.readMarkdown(1, { nodeId: source.value.nodeId }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: {
+        content:
+          '[label](Elsewhere/Target.md#Heading)\n[[Elsewhere/Target#Heading|alias]]',
+      },
+    });
   });
 
   it('rolls link rewrites back when the filesystem mutation fails', async () => {

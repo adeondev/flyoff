@@ -65,6 +65,8 @@ const project: ProjectSummary = {
 };
 
 const note: ProjectTreeNode = {
+  canContainChildren: true,
+  hasChildren: false,
   nodeId: noteId,
   parentId: null,
   name: 'Roadmap',
@@ -195,6 +197,41 @@ afterEach(() => {
 });
 
 describe('project workspace integration', () => {
+  it('persists editor scroll only after the movement settles', async () => {
+    const api = installProjectApi();
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Open den' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Roadmap' }));
+    const editor = await screen.findByRole('textbox', {
+      name: 'Markdown editor',
+    });
+    await new Promise((resolve) => window.setTimeout(resolve, 240));
+    vi.mocked(api.saveTabSession!).mockClear();
+
+    editor.scrollTop = 24;
+    fireEvent.scroll(editor);
+    editor.scrollTop = 48;
+    fireEvent.scroll(editor);
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+    expect(api.saveTabSession).not.toHaveBeenCalled();
+
+    fireEvent(editor, new Event('scrollend', { bubbles: true }));
+    await waitFor(() => expect(api.saveTabSession).toHaveBeenCalledOnce());
+    const saved = vi.mocked(api.saveTabSession!).mock.calls[0]![0];
+    const projectPane = saved.project?.root;
+    expect(projectPane?.kind).toBe('pane');
+    if (projectPane?.kind === 'pane') {
+      expect(
+        projectPane.tabs.find(
+          ({ target }) =>
+            target.type === 'project-content' && target.nodeId === noteId,
+        )?.scrollTop,
+      ).toBe(48);
+    }
+  });
+
   it('records real note activation and closure without counting workspace setup', async () => {
     const recordProjectNoteActivity = vi.fn(async (event) => ({
       ok: true as const,
@@ -579,6 +616,8 @@ describe('project workspace integration', () => {
 
   it('updates an open note path after an ancestor rename', async () => {
     const folder: ProjectTreeNode = {
+      canContainChildren: true,
+      hasChildren: true,
       nodeId: folderId,
       parentId: null,
       name: 'Notes',
@@ -612,6 +651,8 @@ describe('project workspace integration', () => {
     const folderItem = screen
       .getByRole('button', { name: 'Notes' })
       .closest<HTMLElement>('[role="treeitem"]')!;
+    fireEvent.keyDown(folderItem, { key: 'Escape' });
+    fireEvent.keyDown(folderItem, { key: ' ', ctrlKey: true });
     fireEvent.keyDown(folderItem, { key: 'F2' });
     const nameInput = screen.getByRole('textbox', { name: 'Name' });
     fireEvent.change(nameInput, { target: { value: 'Archive' } });
@@ -981,6 +1022,8 @@ describe('project workspace integration', () => {
 
   it('preserves lazy tree expansion across project tab switches', async () => {
     const folder: ProjectTreeNode = {
+      canContainChildren: true,
+      hasChildren: true,
       nodeId: folderId,
       parentId: null,
       name: 'Notes',
@@ -1290,12 +1333,16 @@ describe('project workspace integration', () => {
       parentId: nestedFolderId,
     };
     const rootFolder: ProjectTreeNode = {
+      canContainChildren: true,
+      hasChildren: true,
       nodeId: folderId,
       parentId: null,
       name: 'Archive',
       kind: 'folder',
     };
     const nestedFolder: ProjectTreeNode = {
+      canContainChildren: true,
+      hasChildren: true,
       nodeId: nestedFolderId,
       parentId: folderId,
       name: 'Nested',

@@ -49,6 +49,7 @@ import {
   FLYOFF_RENDERER_URL,
   hardenCommandLine,
   hasRemoteDebuggingSwitch,
+  registerFlyoffAssetProtocol,
   registerFlyoffProtocol,
   registerFlyoffScheme,
 } from './security';
@@ -278,6 +279,17 @@ async function startApplication(): Promise<void> {
     registerFlyoffProtocol(MAIN_WINDOW_WEBPACK_ENTRY);
   }
 
+  registerFlyoffAssetProtocol(
+    usePackagedRenderer
+      ? path.join(path.dirname(app.getAppPath()), 'twemoji', 'svg')
+      : path.join(
+          app.getAppPath(),
+          'public',
+          'images',
+          'twemoji',
+          'svg',
+        ),
+  );
   configureSessionSecurity(session.defaultSession, usePackagedRenderer);
 
   coreClient = new NativeCoreClient({

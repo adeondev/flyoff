@@ -15,6 +15,7 @@ import {
 
 import chevronRightIcon from '../../../../public/images/icons/actions/chevron-right.svg';
 import { MaskedIcon } from '../MaskedIcon';
+import { TwemojiText } from '../twemoji';
 import { calculateMenuPosition, type MenuPlacement } from './menu-position';
 import type { MenuItem } from './menu-types';
 
@@ -399,7 +400,7 @@ function MenuSurface({
         if (item.kind === 'label') {
           return (
             <div className="flyoff-menu__label" key={item.id} role="presentation">
-              {item.label}
+              <TwemojiText text={item.label} />
             </div>
           );
         }
@@ -464,7 +465,10 @@ function MenuSurface({
                 />
               ) : null}
             </span>
-            <span className="flyoff-menu__item-label">{item.label}</span>
+            <TwemojiText
+              className="flyoff-menu__item-label"
+              text={item.label}
+            />
             {item.kind === 'action' && item.shortcut ? (
               <span aria-hidden="true" className="flyoff-menu__shortcut">
                 {item.shortcut}

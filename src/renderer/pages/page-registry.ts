@@ -11,6 +11,10 @@ import {
   readEditorMode,
 } from '../projects/editor-mode';
 import {
+  createProjectGraphPageState,
+  migrateProjectGraphPageState,
+} from '../projects/project-graph-state';
+import {
   INTERNAL_PAGE_IDS,
   type InternalPageId,
   type PageSessionState,
@@ -42,7 +46,7 @@ export interface InternalPageDefinition {
 }
 
 export interface ProjectPageDefinition {
-  targetType: 'project-overview' | 'project-content';
+  targetType: 'project-overview' | 'project-graph' | 'project-content';
   retention: PageRetention;
   stateVersion: number;
   createInitialState: () => PageSessionState;
@@ -154,6 +158,13 @@ export const PROJECT_PAGE_REGISTRY = {
     createInitialState: createEmptyState,
     migrateState: migrateEmptyState,
   },
+  'project-graph': {
+    targetType: 'project-graph',
+    retention: 'keep-alive',
+    stateVersion: 2,
+    createInitialState: createProjectGraphPageState,
+    migrateState: migrateProjectGraphPageState,
+  },
   'project-content': {
     targetType: 'project-content',
     retention: 'active-only',
@@ -162,7 +173,7 @@ export const PROJECT_PAGE_REGISTRY = {
     migrateState: (state) => createEditorModeState(readEditorMode(state)),
   },
 } as const satisfies Record<
-  'project-overview' | 'project-content',
+  'project-overview' | 'project-graph' | 'project-content',
   ProjectPageDefinition
 >;
 

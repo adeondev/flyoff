@@ -107,6 +107,31 @@ describe('markdown DOM renderer', () => {
     expect(container.querySelector('strong')).toBeNull();
   });
 
+  it('uses an isolated Twemoji image and reveals Unicode if it fails', () => {
+    const container = render('Hello 👋🏽');
+    const wrapper = container.querySelector('.twemoji')!;
+    const image = wrapper.querySelector<HTMLImageElement>('img')!;
+
+    expect(image.src).toBe(
+      'flyoff-asset://app/twemoji/1f44b-1f3fd.svg',
+    );
+    expect(container.querySelector('use')).toBeNull();
+    image.dispatchEvent(new Event('error'));
+    expect(wrapper.classList.contains('twemoji--fallback')).toBe(true);
+    expect(wrapper.querySelector('img')).toBeNull();
+    expect(wrapper.textContent).toBe('👋🏽');
+  });
+
+  it('renders fenced code as a preformatted block with its language', () => {
+    const container = render('```ts\nconst answer = 42;\n```');
+    const pre = container.querySelector('pre');
+    const code = pre?.querySelector('code');
+
+    expect(pre).toBeTruthy();
+    expect(code?.dataset.lang).toBe('ts');
+    expect(code?.textContent).toBe('const answer = 42;');
+  });
+
   it('renders a simple line ending between highlight and link as br', () => {
     const container = render('==uau==\n[text](https://x.dev)');
     const paragraph = container.querySelector('p')!;

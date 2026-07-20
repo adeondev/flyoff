@@ -13,7 +13,10 @@ import {
   subscribeWorkspaceDragReset,
   writeWorkspaceTabDrag,
 } from '../../src/renderer/components/tabs/workspace-drag';
-import { resolvePaneDropEdge } from '../../src/renderer/components/tabs/WorkspacePaneHost';
+import {
+  canSplitWorkspacePane,
+  resolvePaneDropEdge,
+} from '../../src/renderer/components/tabs/WorkspacePaneHost';
 
 function createDataTransfer(): DataTransfer {
   const values = new Map<string, string>();
@@ -36,6 +39,21 @@ afterEach(() => {
 });
 
 describe('workspace drag lifecycle', () => {
+  it('requires 240 pixels for both children before exposing a split', () => {
+    expect(
+      canSplitWorkspacePane({ height: 700, width: 484 }, 'row'),
+    ).toBe(false);
+    expect(
+      canSplitWorkspacePane({ height: 700, width: 485 }, 'row'),
+    ).toBe(true);
+    expect(
+      canSplitWorkspacePane({ height: 484, width: 900 }, 'column'),
+    ).toBe(false);
+    expect(
+      canSplitWorkspacePane({ height: 485, width: 900 }, 'column'),
+    ).toBe(true);
+  });
+
   it('does not reuse a payload after its session was cleared', () => {
     const transfer = createDataTransfer();
     writeWorkspaceTabDrag(transfer, 'pane:1', 'tab:1', 'target:1');
@@ -106,12 +124,12 @@ describe('workspace drag lifecycle', () => {
   it('primes a sidebar note drag before the native drag session starts', () => {
     const removeLifecycle = installWorkspaceDragLifecycle();
     beginWorkspaceProjectNodePointerDrag(
-      {
+      [{
         type: 'project-content',
         projectId: 'project:1',
         nodeId: 'note:1',
         pageType: 'markdown',
-      },
+      }],
       7,
       12,
       24,
@@ -122,10 +140,12 @@ describe('workspace drag lifecycle', () => {
 
     expect(readWorkspaceDrag(createDataTransfer())).toMatchObject({
       kind: 'project-node',
-      target: {
-        projectId: 'project:1',
-        nodeId: 'note:1',
-      },
+      targets: [
+        {
+          projectId: 'project:1',
+          nodeId: 'note:1',
+        },
+      ],
     });
     expect(document.documentElement.dataset.workspaceDragging).toBe('true');
 

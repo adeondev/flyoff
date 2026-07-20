@@ -7,6 +7,7 @@ import {
   type UIEvent,
 } from 'react';
 
+import { useScrollPositionReporter } from '../../hooks/use-scroll-position-reporter';
 import type {
   PageSessionState,
   TabDescriptor,
@@ -27,7 +28,11 @@ interface PageHostProps {
   getPresentation: (tab: TabDescriptor) => TabPresentation;
   renderPage: PageRenderer;
   onPageStateChange: (tabId: string, state: PageSessionState) => void;
-  onScrollChange: (tabId: string, scrollTop: number) => void;
+  onScrollChange: (
+    tabId: string,
+    scrollTop: number,
+    settled?: boolean,
+  ) => void;
   emptyState?: ReactNode;
 }
 
@@ -64,7 +69,11 @@ interface PagePanelProps {
   translate: Translate;
   renderPage: PageRenderer;
   onPageStateChange: (tabId: string, state: PageSessionState) => void;
-  onScrollChange: (tabId: string, scrollTop: number) => void;
+  onScrollChange: (
+    tabId: string,
+    scrollTop: number,
+    settled?: boolean,
+  ) => void;
 }
 
 interface ActiveOnlyRetentionState {
@@ -105,7 +114,7 @@ function renderPanelPage(
   translate: Translate,
   renderPage: PageRenderer,
   onStateChange: (state: PageSessionState) => void,
-  onScrollChange: (scrollTop: number) => void,
+  onScrollChange: (scrollTop: number, settled?: boolean) => void,
 ): ReactNode {
   return renderPage({
     active,
@@ -129,6 +138,9 @@ function PagePanel({
   onScrollChange,
 }: PagePanelProps) {
   const panelRef = useRef<HTMLElement>(null);
+  const scrollReporter = useScrollPositionReporter((scrollTop, settled) =>
+    onScrollChange(descriptor.tabId, scrollTop, settled),
+  );
 
   useEffect(() => {
     const panel = panelRef.current;
@@ -142,7 +154,14 @@ function PagePanel({
     if (event.target !== event.currentTarget) {
       return;
     }
-    onScrollChange(descriptor.tabId, event.currentTarget.scrollTop);
+    scrollReporter.reportScroll(event.currentTarget.scrollTop);
+  }
+
+  function handleScrollEnd(event: UIEvent<HTMLElement>): void {
+    if (event.target !== event.currentTarget) {
+      return;
+    }
+    scrollReporter.reportScrollEnd(event.currentTarget.scrollTop);
   }
 
   return (
@@ -152,6 +171,7 @@ function PagePanel({
       hidden={!active}
       id={`page-panel-${paneId}-${descriptor.tabId}`}
       onScroll={handleScroll}
+      onScrollEnd={handleScrollEnd}
       ref={panelRef}
       role="tabpanel"
       tabIndex={0}
@@ -170,7 +190,8 @@ function PagePanel({
           translate,
           renderPage,
           (state) => onPageStateChange(descriptor.tabId, state),
-          (scrollTop) => onScrollChange(descriptor.tabId, scrollTop),
+          (scrollTop, settled) =>
+            onScrollChange(descriptor.tabId, scrollTop, settled),
         )}
       </PageErrorBoundary>
     </section>

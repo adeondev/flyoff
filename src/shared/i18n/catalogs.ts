@@ -46,10 +46,29 @@ export interface TranslationCatalog {
     comingSoon: string;
   };
   graph: {
+    appearance: string;
     canvas: string;
+    centerStrength: string;
+    closeSettings: string;
+    damping: string;
+    edgeScale: string;
     empty: string;
+    fit: string;
+    labelZoom: string;
+    nodeDistance: string;
+    nodeScale: string;
+    openInTab: string;
+    openSettings: string;
     refresh: string;
     refreshing: string;
+    repulsion: string;
+    resetSettings: string;
+    settings: string;
+    simulation: string;
+    simulationSpeed: string;
+    springStrength: string;
+    zoom: string;
+    zoomSensitivity: string;
   };
   toolbar: {
     label: string;
@@ -64,6 +83,12 @@ export interface TranslationCatalog {
     quote: string;
     link: string;
     divider: string;
+    emoji: string;
+    emojiPicker: string;
+    emojiSearch: string;
+    emojiRecent: string;
+    emojiNoResults: string;
+    emojiSkinTone: string;
   };
   home: {
     prompt: string;
@@ -123,6 +148,10 @@ export interface TranslationCatalog {
     themeDescription: string;
     themeFlyoffDescription: string;
     themeBasaltDescription: string;
+    accentColor: string;
+    accentColorDescription: string;
+    accentPresets: string;
+    accentUseTheme: string;
     accentStrength: string;
     accentStrengthDescription: string;
     interfaceFont: string;
@@ -209,6 +238,7 @@ export interface TranslationCatalog {
     aboutRuntime: string;
     aboutLicense: string;
     aboutLicensePrivate: string;
+    aboutEmojiAssets: string;
     aboutSummary: string;
     optionAsk: string;
     optionRestore: string;
@@ -288,6 +318,8 @@ export interface TranslationCatalog {
     branchActions: string;
     expandAll: string;
     collapseAll: string;
+    expandItem: string;
+    collapseItem: string;
     expandLimitReached: string;
     revealInExplorer: string;
     revealInFinder: string;
@@ -297,6 +329,13 @@ export interface TranslationCatalog {
     move: string;
     moveTo: string;
     trash: string;
+    openSelected: string;
+    moveSelected: string;
+    copySelectedPaths: string;
+    trashSelected: string;
+    selectionLimitReached: string;
+    notesSelected: string;
+    itemsSelected: string;
     loading: string;
     loadFailed: string;
     operationFailed: string;
@@ -529,10 +568,29 @@ export const ptBR = {
     comingSoon: 'Em breve.',
   },
   graph: {
+    appearance: 'Aparência',
     canvas: 'Grafo de conexões entre notas',
+    centerStrength: 'Força de centralização',
+    closeSettings: 'Fechar ajustes do grafo',
+    damping: 'Amortecimento',
+    edgeScale: 'Espessura das conexões',
     empty: 'Nenhuma conexão para mostrar.',
+    fit: 'Ajustar à tela',
+    labelZoom: 'Exibição dos nomes',
+    nodeDistance: 'Distância entre nós',
+    nodeScale: 'Tamanho dos nós',
+    openInTab: 'Abrir grafo em uma aba',
+    openSettings: 'Ajustar grafo',
     refresh: 'Atualizar grafo',
     refreshing: 'Atualizando grafo',
+    repulsion: 'Repulsão',
+    resetSettings: 'Restaurar padrões',
+    settings: 'Ajustes do grafo',
+    simulation: 'Simulação',
+    simulationSpeed: 'Velocidade',
+    springStrength: 'Elasticidade',
+    zoom: 'Câmera',
+    zoomSensitivity: 'Sensibilidade do zoom',
   },
   toolbar: {
     label: 'Ferramentas de markdown',
@@ -547,6 +605,12 @@ export const ptBR = {
     quote: 'Citação',
     link: 'Link',
     divider: 'Divisor',
+    emoji: 'Emoji',
+    emojiPicker: 'Escolher emoji',
+    emojiSearch: 'Pesquisar emojis',
+    emojiRecent: 'Usados recentemente',
+    emojiNoResults: 'Nenhum emoji encontrado.',
+    emojiSkinTone: 'Tom de pele',
   },
   home: {
     prompt: 'O que vai fazer hoje?',
@@ -621,9 +685,14 @@ export const ptBR = {
     themeFlyoffDescription:
       'Cinza suave com detalhes em roxo.',
     themeBasaltDescription: 'O visual escuro original do Flyoff.',
+    accentColor: 'Cor de destaque',
+    accentColorDescription:
+      'Escolha a cor usada em controles, seleções, links e no grafo.',
+    accentPresets: 'Cores de destaque',
+    accentUseTheme: 'Usar cor do tema',
     accentStrength: 'Intensidade do destaque',
     accentStrengthDescription:
-      'Escolha quanto roxo aparece nos controles e nas sele\u00e7\u00f5es.',
+      'Escolha quanto destaque aparece nos controles e nas sele\u00e7\u00f5es.',
     interfaceFont: 'Fonte da interface',
     interfaceFontDescription:
       'Muda os menus e controles sem alterar o texto das notas.',
@@ -744,6 +813,7 @@ export const ptBR = {
     aboutRuntime: 'Tecnologia',
     aboutLicense: 'Licen\u00e7a',
     aboutLicensePrivate: 'Uso privado',
+    aboutEmojiAssets: 'Emojis e atribui\u00e7\u00f5es',
     aboutSummary:
       'Um lugar privado e flex\u00edvel para suas notas Markdown.',
     optionAsk: 'Perguntar',
@@ -825,6 +895,8 @@ export const ptBR = {
     branchActions: 'Ações da pasta',
     expandAll: 'Expandir tudo',
     collapseAll: 'Colapsar tudo',
+    expandItem: 'Expandir',
+    collapseItem: 'Recolher',
     expandLimitReached:
       'A expansão foi interrompida após 500 pastas para manter o Flyoff responsivo.',
     revealInExplorer: 'Mostrar no Explorador de Arquivos',
@@ -835,6 +907,14 @@ export const ptBR = {
     move: 'Mover',
     moveTo: 'Mover para…',
     trash: 'Mover para a lixeira',
+    openSelected: 'Abrir selecionadas',
+    moveSelected: 'Mover selecionadas\u2026',
+    copySelectedPaths: 'Copiar caminhos',
+    trashSelected: 'Excluir selecionadas',
+    selectionLimitReached:
+      'A sele\u00e7\u00e3o foi limitada a 500 itens.',
+    notesSelected: 'notas selecionadas ser\u00e3o movidas para a lixeira.',
+    itemsSelected: 'itens selecionados ser\u00e3o movidos para a lixeira.',
     loading: 'Carregando…',
     loadFailed: 'Não foi possível carregar esta pasta.',
     operationFailed: 'Não foi possível concluir a operação.',
@@ -1068,10 +1148,29 @@ export const enUS = {
     comingSoon: 'Coming soon.',
   },
   graph: {
+    appearance: 'Appearance',
     canvas: 'Graph of connections between notes',
+    centerStrength: 'Centering force',
+    closeSettings: 'Close graph settings',
+    damping: 'Damping',
+    edgeScale: 'Connection thickness',
     empty: 'No connections to show.',
+    fit: 'Fit to view',
+    labelZoom: 'Label visibility',
+    nodeDistance: 'Node distance',
+    nodeScale: 'Node size',
+    openInTab: 'Open graph in a tab',
+    openSettings: 'Adjust graph',
     refresh: 'Refresh graph',
     refreshing: 'Refreshing graph',
+    repulsion: 'Repulsion',
+    resetSettings: 'Restore defaults',
+    settings: 'Graph settings',
+    simulation: 'Simulation',
+    simulationSpeed: 'Speed',
+    springStrength: 'Elasticity',
+    zoom: 'Camera',
+    zoomSensitivity: 'Zoom sensitivity',
   },
   toolbar: {
     label: 'Markdown tools',
@@ -1086,6 +1185,12 @@ export const enUS = {
     quote: 'Quote',
     link: 'Link',
     divider: 'Divider',
+    emoji: 'Emoji',
+    emojiPicker: 'Choose emoji',
+    emojiSearch: 'Search emoji',
+    emojiRecent: 'Recently used',
+    emojiNoResults: 'No emoji found.',
+    emojiSkinTone: 'Skin tone',
   },
   home: {
     prompt: 'What would you like to do today?',
@@ -1153,9 +1258,14 @@ export const enUS = {
     themeFlyoffDescription:
       'Soft gray with purple details.',
     themeBasaltDescription: 'Flyoff\u2019s original dark look.',
+    accentColor: 'Accent color',
+    accentColorDescription:
+      'Choose the color used for controls, selections, links, and the graph.',
+    accentPresets: 'Accent colors',
+    accentUseTheme: 'Use theme color',
     accentStrength: 'Accent strength',
     accentStrengthDescription:
-      'Choose how much purple appears in controls and selections.',
+      'Choose how much accent appears in controls and selections.',
     interfaceFont: 'Interface font',
     interfaceFontDescription:
       'Changes menus and controls without affecting note text.',
@@ -1271,6 +1381,7 @@ export const enUS = {
     aboutRuntime: 'Technology',
     aboutLicense: 'License',
     aboutLicensePrivate: 'Private use',
+    aboutEmojiAssets: 'Emoji and attribution',
     aboutSummary:
       'A private and flexible place for your Markdown notes.',
     optionAsk: 'Ask',
@@ -1351,6 +1462,8 @@ export const enUS = {
     branchActions: 'Folder actions',
     expandAll: 'Expand all',
     collapseAll: 'Collapse all',
+    expandItem: 'Expand',
+    collapseItem: 'Collapse',
     expandLimitReached:
       'Expansion stopped after 500 folders to keep Flyoff responsive.',
     revealInExplorer: 'Show in File Explorer',
@@ -1361,6 +1474,14 @@ export const enUS = {
     move: 'Move',
     moveTo: 'Move to…',
     trash: 'Move to trash',
+    openSelected: 'Open selected',
+    moveSelected: 'Move selected\u2026',
+    copySelectedPaths: 'Copy paths',
+    trashSelected: 'Delete selected',
+    selectionLimitReached:
+      'The selection was limited to 500 items.',
+    notesSelected: 'selected notes will be moved to the trash.',
+    itemsSelected: 'selected items will be moved to the trash.',
     loading: 'Loading…',
     loadFailed: 'This folder could not be loaded.',
     operationFailed: 'The operation could not be completed.',
