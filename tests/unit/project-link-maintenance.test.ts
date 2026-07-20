@@ -1,10 +1,5 @@
-import {
-  existsSync,
-  mkdtempSync,
-  mkdirSync,
-  realpathSync,
-  rmSync,
-} from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { realpath } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -18,11 +13,11 @@ const targetId = 'ffbf978c-43d7-4135-a3ea-f6e4e3ec76fb';
 const firstSourceId = '2b4aa17c-9c6e-4f99-99af-b729c77c7603';
 const secondSourceId = 'f44fd7c7-e84d-4b31-8d23-c268c1be446d';
 
-function createStore(): {
+async function createStore(): Promise<{
   filePath: string;
   store: ProjectLinkMaintenanceStore;
-} {
-  const rootPath = realpathSync(
+}> {
+  const rootPath = await realpath(
     mkdtempSync(path.join(os.tmpdir(), 'flyoff-link-maintenance-')),
   );
   temporaryDirectories.push(rootPath);
@@ -41,7 +36,7 @@ afterEach(() => {
 
 describe('ProjectLinkMaintenanceStore', () => {
   it('repairs each locked note from the path generation it last observed', async () => {
-    const { filePath, store } = createStore();
+    const { filePath, store } = await createStore();
     const firstPaths = new Map([
       [targetId, 'Target.md'],
       [firstSourceId, 'First.md'],
