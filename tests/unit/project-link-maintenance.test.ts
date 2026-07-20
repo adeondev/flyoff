@@ -1,4 +1,10 @@
-import { existsSync, mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  realpathSync,
+  rmSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -16,8 +22,8 @@ function createStore(): {
   filePath: string;
   store: ProjectLinkMaintenanceStore;
 } {
-  const rootPath = mkdtempSync(
-    path.join(os.tmpdir(), 'flyoff-link-maintenance-'),
+  const rootPath = realpathSync(
+    mkdtempSync(path.join(os.tmpdir(), 'flyoff-link-maintenance-')),
   );
   temporaryDirectories.push(rootPath);
   mkdirSync(path.join(rootPath, '.flyoff'));
