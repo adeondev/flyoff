@@ -7,6 +7,7 @@ import {
   type ProjectGraphCamera,
   type ProjectGraphLayout,
 } from './project-graph-layout';
+import { projectGraphSnapshotEqual } from './project-graph-snapshot';
 import {
   DEFAULT_PROJECT_GRAPH_SETTINGS,
   normalizeProjectGraphSettings,
@@ -176,6 +177,12 @@ export class ProjectGraphController {
       }
       if (!result.ok) {
         onError(result.error.message);
+        return;
+      }
+      if (projectGraphSnapshotEqual(result.value, this.snapshot.graph)) {
+        // No structural change: keep the existing graph/layout references so
+        // subscribers (the panel runtime) don't rebuild. `finally` clears the
+        // refreshing flag while preserving those identities.
         return;
       }
       const layout = createProjectGraphLayout(

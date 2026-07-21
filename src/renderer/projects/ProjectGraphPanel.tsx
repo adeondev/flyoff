@@ -111,6 +111,7 @@ interface GraphRuntime {
   meteorTours: readonly string[][];
   meteors: ProjectGraphMeteorCursor[];
   meteorTrails: ProjectGraphMeteorPoint[][];
+  systemExtents: readonly number[];
   mode: ProjectGraphLayoutMode;
   orbit: ProjectGraphOrbitLayout;
   orbitClock: number;
@@ -132,6 +133,43 @@ function reducedMotion(): boolean {
     typeof window.matchMedia === 'function' &&
     window.matchMedia('(prefers-reduced-motion: reduce)').matches
   );
+}
+
+interface OrbitRuntimeData {
+  orbit: ProjectGraphOrbitLayout;
+  meteorTours: readonly string[][];
+  meteors: ProjectGraphMeteorCursor[];
+  meteorTrails: ProjectGraphMeteorPoint[][];
+  systemExtents: readonly number[];
+}
+
+function buildOrbitRuntimeData(
+  graph: ProjectGraphSnapshot,
+  rootName?: string,
+): OrbitRuntimeData {
+  const orbit = buildProjectGraphOrbit(graph, { rootName });
+  const meteorTours = orbit.systems.map((system) =>
+    buildProjectGraphMeteorTour(system.edgeIndices, orbit.edges),
+  );
+  // Farthest a meteor can reach from its sun (constant ring radii, not the
+  // per-frame angle), so drawOrbit can skip off-screen systems cheaply.
+  const systemExtents = orbit.systems.map((system, index) => {
+    let extent = system.sun.radius;
+    for (const id of meteorTours[index]!) {
+      const body = orbit.byId.get(id);
+      if (body) {
+        extent = Math.max(extent, body.orbitRadius + body.radius);
+      }
+    }
+    return extent;
+  });
+  return {
+    orbit,
+    meteorTours,
+    meteors: orbit.systems.map(() => ({ segIndex: 0, t: 0 })),
+    meteorTrails: orbit.systems.map(() => []),
+    systemExtents,
+  };
 }
 
 function graphPalette(): GraphPalette {
@@ -763,7 +801,19 @@ function drawOrbit(
   const toScreen = (point: ProjectGraphMeteorPoint) =>
     projectGraphWorldToScreen(point, camera, width, height);
   for (let systemIndex = 0; systemIndex < orbit.systems.length; systemIndex += 1) {
+    if (sparksDrawn >= SPARK_BUDGET) {
+      break;
+    }
     const system = orbit.systems[systemIndex]!;
+    const sunCenter = { x: system.sun.x, y: system.sun.y };
+    // Cheap bounding-box gate: skip building waypoints/segment lengths for
+    // systems whose whole reach is off-screen (their meteor state simply pauses
+    // until scrolled back into view).
+    const extentPx =
+      (runtime.systemExtents[systemIndex] ?? 0) * zoom + headRadius + 8;
+    if (!onScreen(toScreen(sunCenter), extentPx)) {
+      continue;
+    }
     const waypoints = meteorWaypoints(
       runtime.meteorTours[systemIndex] ?? [],
       orbit.byId,
@@ -771,7 +821,6 @@ function drawOrbit(
     if (!waypoints) {
       continue;
     }
-    const sunCenter = { x: system.sun.x, y: system.sun.y };
     const segmentCount = waypoints.length * 2;
     const segmentLengths: number[] = [];
     for (let segment = 0; segment < segmentCount; segment += 1) {
@@ -810,9 +859,6 @@ function drawOrbit(
       trail.splice(0, trail.length - METEOR_TRAIL_MAX_POINTS);
     }
 
-    if (sparksDrawn >= SPARK_BUDGET) {
-      continue;
-    }
     const head = toScreen(headWorld);
     if (!onScreen(head, 120)) {
       continue;
@@ -1095,8 +1141,8 @@ export function ProjectGraphPanel({
     if (!canvas) {
       return;
     }
-    const layout = graphState.layout;
-    const orbit = buildProjectGraphOrbit(graphState.graph, { rootName });
+    const { graph, layout } = controller.getSnapshot();
+    const orbitData = buildOrbitRuntimeData(graph, rootName);
     const runtime: GraphRuntime = {
       camera: controller.camera,
       dirty: true,
@@ -1105,13 +1151,12 @@ export function ProjectGraphPanel({
       lastFrame: performance.now(),
       layoutFrames: 0,
       labels: new Map(labelRefs.current),
-      meteorTours: orbit.systems.map((system) =>
-        buildProjectGraphMeteorTour(system.edgeIndices, orbit.edges),
-      ),
-      meteors: orbit.systems.map(() => ({ segIndex: 0, t: 0 })),
-      meteorTrails: orbit.systems.map(() => []),
+      meteorTours: orbitData.meteorTours,
+      meteors: orbitData.meteors,
+      meteorTrails: orbitData.meteorTrails,
+      systemExtents: orbitData.systemExtents,
       mode: controller.getLayoutMode(),
-      orbit,
+      orbit: orbitData.orbit,
       orbitClock: controller.getOrbitClock(),
       palette: graphPalette(),
       particlePhase: 0,
@@ -1121,16 +1166,10 @@ export function ProjectGraphPanel({
       visible: true,
       width: canvas.clientWidth,
     };
-    runtime.selected =
-      layout.nodes.find(
-        ({ nodeId }) => nodeId === controller.getSelectedNodeId(),
-      );
+    runtime.selected = layout.nodes.find(
+      ({ nodeId }) => nodeId === runtime.selectedId,
+    );
     runtimeRef.current = runtime;
-    if (!controller.hasCamera() && graphState.graph.nodes.length > 0) {
-      fitCamera(runtime, true);
-      controller.markCameraReady();
-      publishViewState();
-    }
 
     const wake = () => {
       runtime.dirty = true;
@@ -1477,6 +1516,35 @@ export function ProjectGraphPanel({
         runtimeRef.current = undefined;
       }
     };
+  }, [controller, publishViewState, rootName]);
+
+  // Apply graph data changes in place so genuine reloads (rename/move/create/
+  // trash) update the live runtime without tearing down observers, listeners or
+  // the animation loop. Redundant reloads keep graph/layout identity upstream
+  // (see ProjectGraphController.refresh), so this effect only runs on real
+  // changes.
+  useEffect(() => {
+    const runtime = runtimeRef.current;
+    if (!runtime) {
+      return;
+    }
+    const orbitData = buildOrbitRuntimeData(graphState.graph, rootName);
+    runtime.layout = graphState.layout;
+    runtime.orbit = orbitData.orbit;
+    runtime.meteorTours = orbitData.meteorTours;
+    runtime.meteors = orbitData.meteors;
+    runtime.meteorTrails = orbitData.meteorTrails;
+    runtime.systemExtents = orbitData.systemExtents;
+    runtime.selected = graphState.layout.nodes.find(
+      ({ nodeId }) => nodeId === runtime.selectedId,
+    );
+    if (!controller.hasCamera() && graphState.graph.nodes.length > 0) {
+      fitCamera(runtime, true);
+      controller.markCameraReady();
+      publishViewState();
+    }
+    runtime.dirty = true;
+    runtime.wake?.();
   }, [controller, graphState.graph, graphState.layout, publishViewState, rootName]);
 
   function handleKeyboard(event: KeyboardEvent<HTMLCanvasElement>): void {

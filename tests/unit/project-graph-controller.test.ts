@@ -15,6 +15,20 @@ const graph = {
   ],
 };
 
+function makeGraph(name = 'Nota') {
+  return {
+    edges: [],
+    nodes: [
+      {
+        connectionCount: 0,
+        name,
+        nodeId: '11111111-1111-4111-8111-111111111111',
+        path: `/${name}`,
+      },
+    ],
+  };
+}
+
 describe('project graph controller', () => {
   it('deduplicates the same graph revision and preserves its layout', async () => {
     const controller = new ProjectGraphController();
@@ -27,6 +41,37 @@ describe('project graph controller', () => {
 
     expect(load).toHaveBeenCalledTimes(1);
     expect(controller.getSnapshot().layout).toBe(layout);
+  });
+
+  it('preserves graph and layout identity when a new signal reloads an unchanged graph', async () => {
+    const controller = new ProjectGraphController();
+    const load = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true as const, value: makeGraph() })
+      .mockResolvedValueOnce({ ok: true as const, value: makeGraph() });
+
+    await controller.refresh({}, load, vi.fn());
+    const { graph: firstGraph, layout } = controller.getSnapshot();
+    await controller.refresh({}, load, vi.fn());
+
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(controller.getSnapshot().graph).toBe(firstGraph);
+    expect(controller.getSnapshot().layout).toBe(layout);
+  });
+
+  it('rebuilds the layout when the reloaded graph structure changes', async () => {
+    const controller = new ProjectGraphController();
+    const load = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: true as const, value: makeGraph('Nota') })
+      .mockResolvedValueOnce({ ok: true as const, value: makeGraph('Outra') });
+
+    await controller.refresh({}, load, vi.fn());
+    const layout = controller.getSnapshot().layout;
+    await controller.refresh({}, load, vi.fn());
+
+    expect(controller.getSnapshot().layout).not.toBe(layout);
+    expect(controller.getSnapshot().graph.nodes[0]?.name).toBe('Outra');
   });
 
   it('restores and exposes a small camera and selection state', () => {

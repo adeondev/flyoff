@@ -140,6 +140,7 @@ import {
   createProjectGraphPageState,
   projectNodeDisplayName,
   projectNodeLogicalPath,
+  projectTreeNodeEqual,
   readProjectGraphViewState,
   resolveProjectNodeLineage,
   useProjectPageProperties,
@@ -621,7 +622,15 @@ export function App() {
 
   const cacheProjectNodes = useCallback(
     (nodes: readonly ProjectTreeNode[]): void => {
-      const next = new Map(projectNodesRef.current);
+      const current = projectNodesRef.current;
+      const unchanged = nodes.every((node) => {
+        const existing = current.get(node.nodeId);
+        return existing !== undefined && projectTreeNodeEqual(existing, node);
+      });
+      if (unchanged) {
+        return;
+      }
+      const next = new Map(current);
       for (const node of nodes) {
         next.set(node.nodeId, node);
       }
