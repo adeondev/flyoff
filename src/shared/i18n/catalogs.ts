@@ -504,6 +504,7 @@ export interface TranslationCatalog {
     resizePane: string;
     closeTab: string;
     failed: string;
+    retry: string;
   };
   sessionRestore: {
     message: string;
@@ -1109,6 +1110,7 @@ export const ptBR = {
     resizePane: 'Redimensionar painéis',
     closeTab: 'Fechar aba',
     failed: 'Não foi possível exibir esta página.',
+    retry: 'Tentar novamente',
   },
   sessionRestore: {
     message: 'Restaurar abas da última sessão?',
@@ -1693,6 +1695,7 @@ export const enUS = {
     resizePane: 'Resize panes',
     closeTab: 'Close tab',
     failed: 'This page could not be displayed.',
+    retry: 'Try again',
   },
   sessionRestore: {
     message: 'Restore tabs from your last session?',

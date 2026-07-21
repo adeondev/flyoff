@@ -3,6 +3,7 @@ import {
   useEffect,
   useRef,
   useState,
+  type ErrorInfo,
   type ReactNode,
   type UIEvent,
 } from 'react';
@@ -38,25 +39,44 @@ interface PageHostProps {
 
 interface ErrorBoundaryProps {
   children: ReactNode;
-  fallback: ReactNode;
+  fallback: (retry: () => void, error?: Error) => ReactNode;
+  resetKey?: unknown;
 }
 
 interface ErrorBoundaryState {
-  failed: boolean;
+  error: Error | null;
 }
 
 class PageErrorBoundary extends Component<
   ErrorBoundaryProps,
   ErrorBoundaryState
 > {
-  state: ErrorBoundaryState = { failed: false };
+  state: ErrorBoundaryState = { error: null };
 
-  static getDerivedStateFromError(): ErrorBoundaryState {
-    return { failed: true };
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { error };
   }
 
+  componentDidUpdate(previous: ErrorBoundaryProps): void {
+    if (this.state.error && previous.resetKey !== this.props.resetKey) {
+      this.setState({ error: null });
+    }
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo): void {
+    // Surface the crash: the boundary previously swallowed it, leaving the page
+    // stuck on a generic message with no way to know what actually failed.
+    console.error('Flyoff page failed to render', error, info.componentStack);
+  }
+
+  private retry = (): void => {
+    this.setState({ error: null });
+  };
+
   render(): ReactNode {
-    return this.state.failed ? this.props.fallback : this.props.children;
+    return this.state.error
+      ? this.props.fallback(this.retry, this.state.error)
+      : this.props.children;
   }
 }
 
@@ -177,11 +197,22 @@ function PagePanel({
       tabIndex={0}
     >
       <PageErrorBoundary
-        fallback={
+        resetKey={active}
+        fallback={(retry, error) => (
           <div className="page-error" role="alert">
-            {translate('pages.failed')}
+            <p>{translate('pages.failed')}</p>
+            {error?.message ? (
+              <small className="page-error__detail">{error.message}</small>
+            ) : null}
+            <button
+              className="page-error__retry"
+              onClick={retry}
+              type="button"
+            >
+              {translate('pages.retry')}
+            </button>
           </div>
-        }
+        )}
       >
         {renderPanelPage(
           pageActive,
