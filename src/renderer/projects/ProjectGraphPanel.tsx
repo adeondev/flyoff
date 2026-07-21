@@ -11,7 +11,6 @@ import {
 import expandIcon from '../../../public/images/icons/actions/expand-outline.svg';
 import refreshIcon from '../../../public/images/icons/actions/refresh.svg';
 import settingsIcon from '../../../public/images/icons/actions/settings-outline.svg';
-import rocketIcon from '../../../public/images/twemoji/svg/1f680.svg';
 import type {
   ProjectGraphNode,
   ProjectGraphSnapshot,
@@ -85,7 +84,7 @@ interface GraphPalette {
   nodeMuted: string;
 }
 
-interface OrbitRocket {
+interface OrbitSpark {
   edgePos: number;
   t: number;
 }
@@ -108,8 +107,7 @@ interface GraphRuntime {
   particlesActive: boolean;
   pointer?: PointerSession;
   raf?: number;
-  rocketImage?: HTMLImageElement;
-  rockets: Map<string, OrbitRocket>;
+  sparks: Map<string, OrbitSpark>;
   selected?: ProjectGraphLayoutNode;
   selectedId: string | null;
   settings: ProjectGraphSettings;
@@ -384,11 +382,12 @@ function drawGraph(
 
 // ---- Orbit (solar system) mode ----
 
-// Laps per second a rocket travels along one connection before hopping to the
+// Laps per second a spark travels along one connection before hopping to the
 // next connection of its system.
-const ROCKET_LAP_SPEED = 0.4;
-const ROCKET_SIZE = 22;
-const ROCKET_BUDGET = 160;
+const SPARK_LAP_SPEED = 0.4;
+// Base glow radius (world px at zoom 1) of the travelling spark's head.
+const SPARK_HEAD = 3.2;
+const SPARK_BUDGET = 200;
 
 function setupCanvas(
   canvas: HTMLCanvasElement,
@@ -443,16 +442,16 @@ function hitOrbitBody(
   return undefined;
 }
 
-function advanceRockets(runtime: GraphRuntime, elapsed: number): void {
+function advanceSparks(runtime: GraphRuntime, elapsed: number): void {
   for (const system of runtime.orbit.systems) {
-    const rocket = runtime.rockets.get(system.sun.id);
-    if (!rocket || system.edgeIndices.length === 0) {
+    const spark = runtime.sparks.get(system.sun.id);
+    if (!spark || system.edgeIndices.length === 0) {
       continue;
     }
-    rocket.t += ROCKET_LAP_SPEED * elapsed;
-    while (rocket.t >= 1) {
-      rocket.t -= 1;
-      rocket.edgePos = (rocket.edgePos + 1) % system.edgeIndices.length;
+    spark.t += SPARK_LAP_SPEED * elapsed;
+    while (spark.t >= 1) {
+      spark.t -= 1;
+      spark.edgePos = (spark.edgePos + 1) % system.edgeIndices.length;
     }
   }
 }
@@ -560,47 +559,61 @@ function drawOrbit(canvas: HTMLCanvasElement, runtime: GraphRuntime): void {
     }
   }
 
-  // One rocket per connected system, flying along that system's connections.
-  // The twemoji SVG only carries a viewBox, so its naturalWidth is 0 in
-  // Chromium; drawImage with explicit dimensions still renders it, so the
-  // guard is only "finished loading" (wrapped defensively in case the asset
-  // failed to load).
-  const rocket = runtime.rocketImage;
-  if (rocket && rocket.complete) {
-    let drawn = 0;
-    const size = Math.max(14, ROCKET_SIZE * Math.min(1.5, zoom));
-    try {
-      for (const system of orbit.systems) {
-        if (drawn >= ROCKET_BUDGET) {
-          break;
-        }
-        const state = runtime.rockets.get(system.sun.id);
-        if (!state) {
-          continue;
-        }
-        const edge = orbit.edges[system.edgeIndices[state.edgePos]!];
-        if (!edge) {
-          continue;
-        }
-        const source = projectGraphWorldToScreen(edge.source, camera, width, height);
-        const target = projectGraphWorldToScreen(edge.target, camera, width, height);
-        const x = source.x + (target.x - source.x) * state.t;
-        const y = source.y + (target.y - source.y) * state.t;
-        if (!onScreen({ x, y }, size)) {
-          continue;
-        }
-        const angle = Math.atan2(target.y - source.y, target.x - source.x);
-        context.save();
-        context.translate(x, y);
-        // Twemoji rocket points to the upper-right; rotate so its nose leads.
-        context.rotate(angle + Math.PI / 4);
-        context.drawImage(rocket, -size / 2, -size / 2, size, size);
-        context.restore();
-        drawn += 1;
-      }
-    } catch {
-      // A broken rocket asset should never break the whole frame.
+  // One spark per connected system, flying along that system's connections:
+  // a bright accent-coloured head trailing a short comet tail.
+  let sparksDrawn = 0;
+  const head = Math.max(2, SPARK_HEAD * Math.min(1.6, zoom));
+  const tail = head * 5;
+  for (const system of orbit.systems) {
+    if (sparksDrawn >= SPARK_BUDGET) {
+      break;
     }
+    const state = runtime.sparks.get(system.sun.id);
+    if (!state) {
+      continue;
+    }
+    const edge = orbit.edges[system.edgeIndices[state.edgePos]!];
+    if (!edge) {
+      continue;
+    }
+    const source = projectGraphWorldToScreen(edge.source, camera, width, height);
+    const target = projectGraphWorldToScreen(edge.target, camera, width, height);
+    const x = source.x + (target.x - source.x) * state.t;
+    const y = source.y + (target.y - source.y) * state.t;
+    if (!onScreen({ x, y }, tail)) {
+      continue;
+    }
+    const length = Math.hypot(target.x - source.x, target.y - source.y) || 1;
+    const dirX = (target.x - source.x) / length;
+    const dirY = (target.y - source.y) / length;
+    const tailX = x - dirX * tail;
+    const tailY = y - dirY * tail;
+
+    const trail = context.createLinearGradient(tailX, tailY, x, y);
+    trail.addColorStop(0, 'transparent');
+    trail.addColorStop(1, palette.accent);
+    context.strokeStyle = trail;
+    context.lineWidth = head * 0.9;
+    context.beginPath();
+    context.moveTo(tailX, tailY);
+    context.lineTo(x, y);
+    context.stroke();
+
+    const glow = context.createRadialGradient(x, y, 0, x, y, head * 1.8);
+    glow.addColorStop(0, palette.accent);
+    glow.addColorStop(1, 'transparent');
+    context.globalAlpha = 0.85;
+    context.fillStyle = glow;
+    context.beginPath();
+    context.arc(x, y, head * 1.8, 0, Math.PI * 2);
+    context.fill();
+    context.globalAlpha = 1;
+
+    context.fillStyle = palette.label;
+    context.beginPath();
+    context.arc(x, y, Math.max(1.2, head * 0.42), 0, Math.PI * 2);
+    context.fill();
+    sparksDrawn += 1;
   }
 }
 
@@ -632,7 +645,6 @@ export function ProjectGraphPanel({
     controller.getSnapshot,
   );
   const fitRef = useRef<() => void>(() => undefined);
-  const rocketImageRef = useRef<HTMLImageElement | undefined>(undefined);
   const onOpenSystemRef = useRef<
     ((sun: ProjectGraphOrbitBody, x: number, y: number) => void) | undefined
   >(undefined);
@@ -654,14 +666,6 @@ export function ProjectGraphPanel({
   useLayoutEffect(() => {
     controller.restoreView(initialViewState);
   }, [controller, initialViewState]);
-
-  useEffect(() => {
-    const image = new Image();
-    image.src = rocketIcon;
-    image.decoding = 'async';
-    image.onload = () => runtimeRef.current?.wake?.();
-    rocketImageRef.current = image;
-  }, []);
 
   useEffect(() => {
     onOpenSystemRef.current = (sun, x, y) => {
@@ -841,9 +845,9 @@ export function ProjectGraphPanel({
     }
     const layout = graphState.layout;
     const orbit = buildProjectGraphOrbit(graphState.graph, { rootName });
-    const rockets = new Map<string, OrbitRocket>();
+    const sparks = new Map<string, OrbitSpark>();
     orbit.systems.forEach((system, index) => {
-      rockets.set(system.sun.id, { edgePos: 0, t: (index * 0.37) % 1 });
+      sparks.set(system.sun.id, { edgePos: 0, t: (index * 0.37) % 1 });
     });
     const runtime: GraphRuntime = {
       camera: controller.camera,
@@ -859,9 +863,8 @@ export function ProjectGraphPanel({
       palette: graphPalette(),
       particlePhase: 0,
       particlesActive: false,
-      rocketImage: rocketImageRef.current,
-      rockets,
       selectedId: controller.getSelectedNodeId(),
+      sparks,
       settings: controller.getSnapshot().settings,
       visible: true,
       width: canvas.clientWidth,
@@ -898,7 +901,7 @@ export function ProjectGraphPanel({
       if (runtime.mode === 'orbit') {
         if (!reduced) {
           runtime.orbitClock = (runtime.orbitClock + elapsed) % 100_000;
-          advanceRockets(runtime, elapsed);
+          advanceSparks(runtime, elapsed);
           moving = true;
         }
         positionProjectGraphOrbit(runtime.orbit, runtime.orbitClock, reduced);
