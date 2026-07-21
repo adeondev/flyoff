@@ -11,6 +11,7 @@ import {
 import {
   CLOSE_REQUESTED_CHANNEL,
   CLOSE_RESPONSE_CHANNEL,
+  RESTART_APPLICATION_CHANNEL,
   isCloseResponse,
   type CloseIntent,
   type CloseRequest,
@@ -40,6 +41,10 @@ export class CloseCoordinator {
   constructor(private readonly options: CloseCoordinatorOptions) {
     app.on('before-quit', this.handleBeforeQuit);
     ipcMain.handle(CLOSE_RESPONSE_CHANNEL, this.handleCloseResponse);
+    ipcMain.handle(
+      RESTART_APPLICATION_CHANNEL,
+      this.handleRestartApplication,
+    );
   }
 
   attachWindow(window: BrowserWindow): () => void {
@@ -85,6 +90,7 @@ export class CloseCoordinator {
   dispose(): void {
     app.off('before-quit', this.handleBeforeQuit);
     ipcMain.removeHandler(CLOSE_RESPONSE_CHANNEL);
+    ipcMain.removeHandler(RESTART_APPLICATION_CHANNEL);
     this.pendingClose = undefined;
   }
 
@@ -148,6 +154,21 @@ export class CloseCoordinator {
     this.complete(pending.window, pending.request.intent);
   };
 
+  private readonly handleRestartApplication = (
+    event: IpcMainInvokeEvent,
+  ): void => {
+    validateTrustedMainFrame(
+      event,
+      this.options.isAllowedUrl,
+      'Application restart',
+    );
+    const window = BrowserWindow.fromWebContents(event.sender);
+    if (!window) {
+      throw new Error('The restart request does not belong to a window.');
+    }
+    this.requestClose(window, 'restart-application');
+  };
+
   private requestClose(window: BrowserWindow, intent: CloseIntent): void {
     if (!this.canRequestRenderer(window)) {
       this.complete(window, intent);
@@ -170,7 +191,10 @@ export class CloseCoordinator {
   }
 
   private complete(window: BrowserWindow, intent: CloseIntent): void {
-    if (intent === 'quit-application') {
+    if (
+      intent === 'quit-application' ||
+      intent === 'restart-application'
+    ) {
       this.quitApproved = true;
       this.options.onShutdownApproved?.();
 
@@ -178,6 +202,9 @@ export class CloseCoordinator {
         this.bypassWindows.add(candidate);
       }
 
+      if (intent === 'restart-application') {
+        app.relaunch();
+      }
       app.quit();
       return;
     }

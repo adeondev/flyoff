@@ -12,12 +12,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { App } from '../../src/renderer/App';
 import {
-  TAB_SESSION_VERSION,
+  WORKSPACE_SESSION_VERSION,
   type BootstrapState,
   type CloseRequest,
   type FlyoffApi,
   type RendererMenuCommand,
-  type TabSessionSnapshot,
+  type WorkspaceSessionSnapshot,
 } from '../../src/shared/contracts';
 
 const bootstrap: BootstrapState = {
@@ -34,20 +34,28 @@ const bootstrap: BootstrapState = {
 function createSession(
   pages: readonly ('home' | 'help' | 'settings')[],
   activeTabId = `page:${pages[0] ?? 'home'}`,
-): TabSessionSnapshot {
+): WorkspaceSessionSnapshot {
   return {
-    version: TAB_SESSION_VERSION,
-    tabs: pages.map((pageId) => ({
-      tabId: `page:${pageId}`,
-      target: { type: 'internal', pageId },
-      scrollTop: 0,
-      pageState: { version: 1, data: {} },
-    })),
-    activeTabId,
+    version: WORKSPACE_SESSION_VERSION,
+    home: {
+      root: {
+        kind: 'pane',
+        paneId: 'home-pane-1',
+        tabs: pages.map((pageId) => ({
+          tabId: `page:${pageId}`,
+          target: { type: 'internal', pageId },
+          scrollTop: 0,
+          pageState: { version: 1, data: {} },
+        })),
+        activeTabId,
+      },
+      activePaneId: 'home-pane-1',
+    },
+    project: null,
   };
 }
 
-function installApi(restorable: TabSessionSnapshot | null = null) {
+function installApi(restorable: WorkspaceSessionSnapshot | null = null) {
   let closeListener: ((request: CloseRequest) => void) | undefined;
   let menuListener: ((command: RendererMenuCommand) => void) | undefined;
   const api: FlyoffApi = {
@@ -96,7 +104,7 @@ afterEach(() => {
 });
 
 describe('tab workspace', () => {
-  it('opens singleton pages, closes them predictably and recreates Home', async () => {
+  it('opens singleton pages and restores Home after closing the last one', async () => {
     installApi();
     render(<App />);
 
@@ -204,7 +212,13 @@ describe('tab workspace', () => {
         expect.objectContaining({
           requestId: 'close:2',
           decision: 'confirm',
-          session: expect.objectContaining({ activeTabId: 'page:settings' }),
+          session: expect.objectContaining({
+            home: expect.objectContaining({
+              root: expect.objectContaining({
+                activeTabId: 'page:settings',
+              }),
+            }),
+          }),
         }),
       ),
     );
@@ -264,6 +278,31 @@ describe('tab workspace', () => {
     );
   });
 
+  it('dismisses the pending session popup with Escape', async () => {
+    const previous = createSession(['home', 'settings'], 'page:settings');
+    const bridge = installApi(previous);
+    render(<App />);
+
+    expect(
+      await screen.findByText('Restore tabs from your last session?'),
+    ).toBeTruthy();
+    fireEvent.keyDown(window, { key: 'Escape' });
+
+    await waitFor(() =>
+      expect(
+        screen.queryByText('Restore tabs from your last session?'),
+      ).toBeNull(),
+    );
+    expect(bridge.api.resolveRestorableTabSession).toHaveBeenCalledWith(
+      'ignore',
+      expect.objectContaining({
+        home: expect.objectContaining({
+          root: expect.objectContaining({ activeTabId: 'page:home' }),
+        }),
+      }),
+    );
+  });
+
   it('ignores the pending session after eight seconds', async () => {
     vi.useFakeTimers();
     const previous = createSession(['home', 'settings'], 'page:settings');
@@ -283,7 +322,11 @@ describe('tab workspace', () => {
     expect(screen.queryByText('Restore tabs from your last session?')).toBeNull();
     expect(bridge.api.resolveRestorableTabSession).toHaveBeenCalledWith(
       'ignore',
-      expect.objectContaining({ activeTabId: 'page:home' }),
+      expect.objectContaining({
+        home: expect.objectContaining({
+          root: expect.objectContaining({ activeTabId: 'page:home' }),
+        }),
+      }),
     );
   });
 });

@@ -1,12 +1,17 @@
 import {
-  isTabSessionSnapshot,
-  type TabSessionSnapshot,
+  isWorkspaceSessionSnapshot,
+  type WorkspaceSessionSnapshot,
 } from './tab-session';
 
 export const CLOSE_REQUESTED_CHANNEL = 'flyoff:window:close-requested' as const;
 export const CLOSE_RESPONSE_CHANNEL = 'flyoff:window:close-response' as const;
+export const RESTART_APPLICATION_CHANNEL =
+  'flyoff:application:restart' as const;
 
-export type CloseIntent = 'close-window' | 'quit-application';
+export type CloseIntent =
+  | 'close-window'
+  | 'quit-application'
+  | 'restart-application';
 
 export interface CloseRequest {
   requestId: string;
@@ -21,7 +26,7 @@ export type CloseResponse =
   | {
       requestId: string;
       decision: 'confirm';
-      session: TabSessionSnapshot;
+      session: WorkspaceSessionSnapshot;
     };
 
 export function isCloseRequest(value: unknown): value is CloseRequest {
@@ -36,7 +41,8 @@ export function isCloseRequest(value: unknown): value is CloseRequest {
     request.requestId.length > 0 &&
     request.requestId.length <= 128 &&
     (request.intent === 'close-window' ||
-      request.intent === 'quit-application')
+      request.intent === 'quit-application' ||
+      request.intent === 'restart-application')
   );
 }
 
@@ -57,5 +63,6 @@ export function isCloseResponse(value: unknown): value is CloseResponse {
 
   return response.decision === 'cancel'
     ? response.session === undefined
-    : response.decision === 'confirm' && isTabSessionSnapshot(response.session);
+    : response.decision === 'confirm' &&
+        isWorkspaceSessionSnapshot(response.session);
 }

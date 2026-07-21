@@ -11,9 +11,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { TabSessionStore } from '../../src/main/session';
 import {
-  TAB_SESSION_VERSION,
+  WORKSPACE_SESSION_VERSION,
   type InternalPageId,
-  type TabSessionSnapshot,
+  type WorkspaceSessionSnapshot,
 } from '../../src/shared/contracts';
 
 const temporaryDirectories: string[] = [];
@@ -24,19 +24,27 @@ function createTemporaryDirectory(): string {
   return directory;
 }
 
-function createSnapshot(
+function createWorkspaceSnapshot(
   pageIds: readonly InternalPageId[],
   activeTabId = `page:${pageIds[0] ?? 'home'}`,
-): TabSessionSnapshot {
+): WorkspaceSessionSnapshot {
   return {
-    version: TAB_SESSION_VERSION,
-    tabs: pageIds.map((pageId) => ({
-      tabId: `page:${pageId}`,
-      target: { type: 'internal', pageId },
-      scrollTop: 0,
-      pageState: { version: 1, data: {} },
-    })),
-    activeTabId,
+    version: WORKSPACE_SESSION_VERSION,
+    home: {
+      root: {
+        kind: 'pane',
+        paneId: 'home-pane-1',
+        tabs: pageIds.map((pageId) => ({
+          tabId: `page:${pageId}`,
+          target: { type: 'internal', pageId },
+          scrollTop: 0,
+          pageState: { version: 1, data: {} },
+        })),
+        activeTabId,
+      },
+      activePaneId: 'home-pane-1',
+    },
+    project: null,
   };
 }
 
@@ -47,7 +55,7 @@ afterEach(() => {
 });
 
 describe('TabSessionStore', () => {
-  it('loads a version 1 session as version 2', () => {
+  it('migrates a legacy flat session into a workspace snapshot', () => {
     const directory = createTemporaryDirectory();
     writeFileSync(
       path.join(directory, 'tab-session.json'),
@@ -73,13 +81,13 @@ describe('TabSessionStore', () => {
     );
 
     expect(new TabSessionStore(directory).getRestorableSession()).toEqual(
-      createSnapshot(['home', 'settings'], 'page:settings'),
+      createWorkspaceSnapshot(['home', 'settings'], 'page:settings'),
     );
   });
 
   it('persists the latest session and does not offer Home alone', () => {
     const directory = createTemporaryDirectory();
-    const home = createSnapshot(['home']);
+    const home = createWorkspaceSnapshot(['home']);
     const store = new TabSessionStore(directory);
 
     expect(store.getRestorableSession()).toBeNull();
@@ -92,7 +100,7 @@ describe('TabSessionStore', () => {
 
   it('protects a previous useful session until restore is resolved', () => {
     const directory = createTemporaryDirectory();
-    const previous = createSnapshot(
+    const previous = createWorkspaceSnapshot(
       ['home', 'settings'],
       'page:settings',
     );
@@ -102,15 +110,15 @@ describe('TabSessionStore', () => {
 
     const nextRun = new TabSessionStore(directory);
     expect(nextRun.getRestorableSession()).toEqual(previous);
-    expect(() => nextRun.save(createSnapshot(['home']))).toThrow(
+    expect(() => nextRun.save(createWorkspaceSnapshot(['home']))).toThrow(
       'must be resolved',
     );
   });
 
   it('atomically replaces the previous snapshot when ignored or restored', () => {
     const directory = createTemporaryDirectory();
-    const previous = createSnapshot(['home', 'help'], 'page:help');
-    const home = createSnapshot(['home']);
+    const previous = createWorkspaceSnapshot(['home', 'help'], 'page:help');
+    const home = createWorkspaceSnapshot(['home']);
     const firstRun = new TabSessionStore(directory);
     firstRun.save(previous);
     firstRun.flush();

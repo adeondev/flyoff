@@ -1,10 +1,19 @@
 import { createElement, type ComponentType, type ReactNode } from 'react';
 
+import flyoffLogo from '../../../public/images/flyoff/flyoff-logo.svg';
 import configurationIcon from '../../../public/images/icons/homepage/configuration.svg';
-import helpIcon from '../../../public/images/icons/homepage/help.svg';
-import homeIcon from '../../../public/images/icons/homepage/home.svg';
-import thisDeviceIcon from '../../../public/images/icons/homepage/this-device.svg';
-import updateIcon from '../../../public/images/icons/homepage/update-app.svg';
+import folderOpenIcon from '../../../public/images/icons/instances/folder-open.svg';
+import refreshIcon from '../../../public/images/icons/actions/refresh.svg';
+import plusIcon from '../../../public/images/icons/actions/plus.svg';
+import documentationIcon from '../../../public/images/icons/site/documentation.svg';
+import {
+  createEditorModeState,
+  readEditorMode,
+} from '../projects/editor-mode';
+import {
+  createProjectGraphPageState,
+  migrateProjectGraphPageState,
+} from '../projects/project-graph-state';
 import {
   INTERNAL_PAGE_IDS,
   type InternalPageId,
@@ -14,12 +23,14 @@ import {
 } from '../../shared/contracts';
 import type { TranslationKey } from '../../shared/i18n';
 import { HomePage } from './HomePage';
+import { NewTabPage } from './NewTabPage';
 import type {
   InternalPageProps,
   PageRenderProps,
   PageRetention,
 } from './page-types';
 import { PlaceholderPage } from './PlaceholderPage';
+import { SettingsPage } from './SettingsPage';
 
 export interface InternalPageDefinition {
   id: InternalPageId;
@@ -31,10 +42,11 @@ export interface InternalPageDefinition {
   component: ComponentType<InternalPageProps>;
   createInitialState: () => PageSessionState;
   migrateState: (state: PageSessionState) => PageSessionState;
+  availableInProject?: boolean;
 }
 
 export interface ProjectPageDefinition {
-  targetType: 'project-overview' | 'project-content';
+  targetType: 'project-overview' | 'project-graph' | 'project-content';
   retention: PageRetention;
   stateVersion: number;
   createInitialState: () => PageSessionState;
@@ -63,7 +75,7 @@ export const PAGE_REGISTRY = {
   [INTERNAL_PAGE_IDS.home]: {
     id: INTERNAL_PAGE_IDS.home,
     titleKey: 'pages.home',
-    icon: homeIcon,
+    icon: flyoffLogo,
     singleton: true,
     retention: 'keep-alive',
     stateVersion: 1,
@@ -74,7 +86,7 @@ export const PAGE_REGISTRY = {
   [INTERNAL_PAGE_IDS.thisDevice]: {
     id: INTERNAL_PAGE_IDS.thisDevice,
     titleKey: 'pages.thisDevice',
-    icon: thisDeviceIcon,
+    icon: folderOpenIcon,
     singleton: true,
     retention: 'keep-alive',
     stateVersion: 1,
@@ -89,14 +101,15 @@ export const PAGE_REGISTRY = {
     singleton: true,
     retention: 'keep-alive',
     stateVersion: 1,
-    component: PlaceholderPage,
+    component: SettingsPage,
     createInitialState: createEmptyState,
     migrateState: migrateEmptyState,
+    availableInProject: true,
   },
   [INTERNAL_PAGE_IDS.help]: {
     id: INTERNAL_PAGE_IDS.help,
     titleKey: 'pages.help',
-    icon: helpIcon,
+    icon: documentationIcon,
     singleton: true,
     retention: 'keep-alive',
     stateVersion: 1,
@@ -107,13 +120,25 @@ export const PAGE_REGISTRY = {
   [INTERNAL_PAGE_IDS.updateApp]: {
     id: INTERNAL_PAGE_IDS.updateApp,
     titleKey: 'pages.updateApp',
-    icon: updateIcon,
+    icon: refreshIcon,
     singleton: true,
     retention: 'keep-alive',
     stateVersion: 1,
     component: PlaceholderPage,
     createInitialState: createEmptyState,
     migrateState: migrateEmptyState,
+  },
+  [INTERNAL_PAGE_IDS.newTab]: {
+    id: INTERNAL_PAGE_IDS.newTab,
+    titleKey: 'pages.newTab',
+    icon: plusIcon,
+    singleton: false,
+    retention: 'active-only',
+    stateVersion: 1,
+    component: NewTabPage,
+    createInitialState: createEmptyState,
+    migrateState: migrateEmptyState,
+    availableInProject: true,
   },
 } as const satisfies Record<InternalPageId, InternalPageDefinition>;
 
@@ -133,15 +158,22 @@ export const PROJECT_PAGE_REGISTRY = {
     createInitialState: createEmptyState,
     migrateState: migrateEmptyState,
   },
+  'project-graph': {
+    targetType: 'project-graph',
+    retention: 'keep-alive',
+    stateVersion: 2,
+    createInitialState: createProjectGraphPageState,
+    migrateState: migrateProjectGraphPageState,
+  },
   'project-content': {
     targetType: 'project-content',
     retention: 'active-only',
-    stateVersion: 1,
-    createInitialState: createEmptyState,
-    migrateState: migrateEmptyState,
+    stateVersion: 3,
+    createInitialState: () => createEditorModeState('edit'),
+    migrateState: (state) => createEditorModeState(readEditorMode(state)),
   },
 } as const satisfies Record<
-  'project-overview' | 'project-content',
+  'project-overview' | 'project-graph' | 'project-content',
   ProjectPageDefinition
 >;
 
@@ -170,12 +202,12 @@ export function renderRegisteredInternalPage(
     throw new TypeError('Expected an internal page target.');
   }
 
-  const PageComponent = getPageDefinition(
-    props.descriptor.target.pageId,
-  ).component;
+  const definition = getPageDefinition(props.descriptor.target.pageId);
+  const PageComponent = definition.component;
 
   return createElement(PageComponent, {
     ...props,
+    icon: definition.icon,
     descriptor: props.descriptor as TabDescriptor & {
       target: { type: 'internal'; pageId: InternalPageId };
     },

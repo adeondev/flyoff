@@ -3,6 +3,8 @@ import reactHooks from 'eslint-plugin-react-hooks';
 import globals from 'globals';
 import tseslint from 'typescript-eslint';
 
+import { noNativeTitle } from './eslint-rules/no-native-title.mjs';
+
 export default tseslint.config(
   {
     ignores: [
@@ -35,6 +37,19 @@ export default tseslint.config(
     },
     plugins: {
       'react-hooks': reactHooks,
+    },
+  },
+  {
+    files: ['src/renderer/**/*.{ts,tsx}'],
+    plugins: {
+      flyoff: {
+        rules: {
+          'no-native-title': noNativeTitle,
+        },
+      },
+    },
+    rules: {
+      'flyoff/no-native-title': 'error',
     },
   },
   {

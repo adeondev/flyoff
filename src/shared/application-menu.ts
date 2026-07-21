@@ -107,18 +107,16 @@ export const APPLICATION_MENU_DEFINITIONS = [
     children: [
       {
         kind: 'action',
-        command: command.undo,
-        target: 'main',
+        command: rendererCommand.undo,
+        target: 'renderer',
         labelKey: 'menu.undo',
-        role: 'undo',
         shortcut: { accelerator: 'CommandOrControl+Z', display: 'Ctrl+Z' },
       },
       {
         kind: 'action',
-        command: command.redo,
-        target: 'main',
+        command: rendererCommand.redo,
+        target: 'renderer',
         labelKey: 'menu.redo',
-        role: 'redo',
         shortcut: {
           accelerator: 'CommandOrControl+Shift+Z',
           display: 'Ctrl+Shift+Z',
@@ -178,7 +176,10 @@ export const APPLICATION_MENU_DEFINITIONS = [
         target: 'main',
         labelKey: 'menu.zoomIn',
         role: 'zoomIn',
-        shortcut: { accelerator: 'CommandOrControl+Plus', display: 'Ctrl++' },
+        // "Plus" only fires with Shift on most layouts; "=" is the key users
+        // actually press for zoom in. Shift+= and numpad + are handled by the
+        // window navigation shortcuts.
+        shortcut: { accelerator: 'CommandOrControl+=', display: 'Ctrl++' },
       },
       {
         kind: 'action',

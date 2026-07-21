@@ -8,7 +8,9 @@ import {
 } from 'react';
 
 import { MenuTree } from './MenuTree';
+import type { MenuPlacement } from './menu-position';
 import type { MenuItem } from './menu-types';
+import { suppressFlyoffTooltip } from '../tooltip';
 
 export interface DropdownMenuTriggerProps {
   'aria-controls': string;
@@ -23,12 +25,14 @@ export interface DropdownMenuTriggerProps {
 export interface DropdownMenuProps {
   items: readonly MenuItem[];
   onAction: (id: string) => void;
+  placement?: MenuPlacement;
   trigger: (props: DropdownMenuTriggerProps) => ReactNode;
 }
 
 export function DropdownMenu({
   items,
   onAction,
+  placement = 'bottom-start',
   trigger,
 }: DropdownMenuProps) {
   const generatedId = useId();
@@ -42,7 +46,12 @@ export function DropdownMenu({
     (restoreFocus: boolean) => {
       setOpen(false);
       if (restoreFocus) {
-        requestAnimationFrame(() => anchor?.focus());
+        requestAnimationFrame(() => {
+          if (anchor) {
+            suppressFlyoffTooltip(anchor);
+            anchor.focus();
+          }
+        });
       }
     },
     [anchor],
@@ -86,6 +95,7 @@ export function DropdownMenu({
           items={items}
           onAction={onAction}
           onClose={close}
+          placement={placement}
         />
       ) : null}
     </>

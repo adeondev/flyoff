@@ -1,6 +1,6 @@
-import importProjectIcon from '../../../public/images/icons/homepage/import-project.svg';
-import modelsIcon from '../../../public/images/icons/homepage/models.svg';
-import newProjectIcon from '../../../public/images/icons/homepage/new-project.svg';
+import folderOpenIcon from '../../../public/images/icons/instances/folder-open.svg';
+import projectIcon from '../../../public/images/icons/instances/project.svg';
+import tableIcon from '../../../public/images/icons/instances/table.svg';
 import flyoffLogo from '../../../public/images/flyoff/flyoff-logo.svg';
 import flyoffWordmark from '../../../public/images/flyoff/text_black_mode.svg';
 import { MaskedIcon } from '../components/MaskedIcon';
@@ -39,7 +39,7 @@ export function HomePage({
             onClick={onNewProject}
             type="button"
           >
-            <MaskedIcon icon={newProjectIcon} />
+            <MaskedIcon icon={projectIcon} />
             {translate('home.newProject')}
           </button>
           <button
@@ -48,11 +48,11 @@ export function HomePage({
             onClick={onOpenProject}
             type="button"
           >
-            <MaskedIcon icon={importProjectIcon} />
+            <MaskedIcon icon={folderOpenIcon} />
             {translate('home.openProject')}
           </button>
           <button aria-disabled="true" disabled type="button">
-            <MaskedIcon icon={modelsIcon} />
+            <MaskedIcon icon={tableIcon} />
             {translate('home.templates')}
           </button>
         </div>

@@ -1,0 +1,50 @@
+.twemoji {
+  position: relative;
+  display: inline-grid;
+  width: 1em;
+  height: 1em;
+  flex: none;
+  place-items: center;
+  margin: 0 0.04em;
+  vertical-align: -0.12em;
+}
+
+.twemoji__unicode {
+  position: absolute;
+  width: 1em;
+  overflow: hidden;
+  color: transparent;
+  font-size: 1em;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.twemoji__glyph {
+  position: relative;
+  z-index: 1;
+  display: block;
+  width: 1em;
+  height: 1em;
+  object-fit: contain;
+  pointer-events: none;
+}
+
+.twemoji:not(.twemoji--fallback) .twemoji__unicode::selection {
+  color: transparent;
+}
+
+.twemoji--source:not(.twemoji--fallback) .twemoji__unicode {
+  z-index: 2;
+  overflow: visible;
+  caret-color: var(--color-accent-bright);
+}
+
+.twemoji--fallback .twemoji__unicode {
+  position: static;
+  overflow: visible;
+  color: inherit;
+}
+
+.twemoji--source {
+  vertical-align: -0.1em;
+}

@@ -4,6 +4,7 @@ import { app, BrowserWindow, Menu, screen } from 'electron';
 
 import flyoffIcon from '../../../resources/icons/flyoff.png';
 import {
+  type FlyoffTheme,
   WINDOW_STATE_CHANGED_CHANNEL,
   type WindowState,
 } from '../../shared/contracts';
@@ -13,6 +14,10 @@ import {
   trackWindowState,
   type WindowStateStore,
 } from './window-state-store';
+import {
+  getWindowThemeColors,
+  WINDOW_TITLE_BAR_OVERLAY,
+} from './window-theme';
 
 const DEFAULT_WIDTH = 1_200;
 const DEFAULT_HEIGHT = 760;
@@ -21,6 +26,7 @@ const MINIMUM_HEIGHT = 600;
 
 export interface CreateMainWindowOptions extends RendererLocation {
   onWindowCreated?: (window: BrowserWindow) => void;
+  theme: FlyoffTheme;
   windowStateStore?: WindowStateStore;
 }
 
@@ -46,8 +52,10 @@ export async function createMainWindow({
   isAllowedUrl,
   onWindowCreated,
   rendererUrl,
+  theme,
   windowStateStore,
 }: CreateMainWindowOptions): Promise<BrowserWindow> {
+  const themeColors = getWindowThemeColors(theme);
   const persistedState = windowStateStore?.load();
   const initialBounds = persistedState
     ? fitWindowBoundsToDisplay(
@@ -62,9 +70,17 @@ export async function createMainWindow({
     minWidth: MINIMUM_WIDTH,
     minHeight: MINIMUM_HEIGHT,
     show: false,
-    frame: false,
+    titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'hidden',
+    ...(process.platform === 'darwin'
+      ? {}
+      : {
+          titleBarOverlay: {
+            ...WINDOW_TITLE_BAR_OVERLAY,
+            symbolColor: themeColors.symbol,
+          },
+        }),
     autoHideMenuBar: process.platform !== 'darwin',
-    backgroundColor: '#131014',
+    backgroundColor: themeColors.background,
     icon:
       process.platform === 'darwin'
         ? undefined
@@ -77,7 +93,7 @@ export async function createMainWindow({
       nodeIntegration: false,
       preload: MAIN_WINDOW_PRELOAD_WEBPACK_ENTRY,
       sandbox: true,
-      spellcheck: true,
+      spellcheck: process.platform === 'darwin',
       webSecurity: true,
     },
   });

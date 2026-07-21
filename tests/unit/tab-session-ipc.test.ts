@@ -8,8 +8,8 @@ import {
   GET_RESTORABLE_TAB_SESSION_CHANNEL,
   RESOLVE_RESTORABLE_TAB_SESSION_CHANNEL,
   SAVE_TAB_SESSION_CHANNEL,
-  TAB_SESSION_VERSION,
-  type TabSessionSnapshot,
+  WORKSPACE_SESSION_VERSION,
+  type WorkspaceSessionSnapshot,
 } from '../../src/shared/contracts';
 
 const electronMocks = vi.hoisted(() => ({
@@ -24,17 +24,25 @@ vi.mock('electron', () => ({
   },
 }));
 
-const session: TabSessionSnapshot = {
-  version: TAB_SESSION_VERSION,
-  tabs: [
-    {
-      tabId: 'page:home',
-      target: { type: 'internal', pageId: 'home' },
-      scrollTop: 0,
-      pageState: { version: 1, data: {} },
+const session: WorkspaceSessionSnapshot = {
+  version: WORKSPACE_SESSION_VERSION,
+  home: {
+    root: {
+      kind: 'pane',
+      paneId: 'home-pane-1',
+      tabs: [
+        {
+          tabId: 'page:home',
+          target: { type: 'internal', pageId: 'home' },
+          scrollTop: 0,
+          pageState: { version: 1, data: {} },
+        },
+      ],
+      activeTabId: 'page:home',
     },
-  ],
-  activeTabId: 'page:home',
+    activePaneId: 'home-pane-1',
+  },
+  project: null,
 };
 
 function createEvent(url = 'flyoff://app/index.html') {

@@ -1,0 +1,61 @@
+.flyoff-panel-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: var(--sidebar-width);
+  width: 14px;
+  transform: translateX(-50%);
+  z-index: 5;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.workspace[data-context='project'] .flyoff-panel-resizer {
+  left: calc(var(--rail-width) + var(--sidebar-width));
+}
+
+.workspace[data-context='project'] .flyoff-panel-resizer--rail {
+  left: var(--rail-width);
+}
+
+.flyoff-panel-resizer::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 2px;
+  transform: translateX(-50%);
+  background: transparent;
+  transition: background 45ms ease-out;
+}
+
+.flyoff-panel-resizer:hover::before,
+.flyoff-panel-resizer:focus-visible::before,
+.flyoff-panel-resizer[data-resizing='true']::before {
+  background: var(--color-accent);
+}
+
+.flyoff-panel-resizer:focus-visible {
+  outline: 0;
+}
+
+.flyoff-panel-resizer:focus-visible::before {
+  width: 2px;
+  background: var(--color-focus-ring);
+}
+
+.flyoff-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.flyoff-resizing .workspace {
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion='full']) .flyoff-panel-resizer::before {
+    transition: none;
+  }
+}

@@ -91,6 +91,7 @@ describe('session security', () => {
     expect(csp).toContain("form-action 'none'");
     expect(csp).toContain("frame-src 'none'");
     expect(csp).toContain("worker-src 'none'");
+    expect(csp).toContain("img-src 'self' data: flyoff-asset:");
     expect(responseHeaders?.['X-Content-Type-Options']).toEqual(['nosniff']);
 
     const checkHandler = setPermissionCheckHandler.mock.calls[0]?.[0] as

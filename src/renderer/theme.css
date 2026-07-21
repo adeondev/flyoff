@@ -1,18 +1,162 @@
 :root {
   color-scheme: dark;
+  --color-background: #222226;
+  --color-titlebar: #1b1b1e;
+  --color-surface: #29292e;
+  --color-surface-hover: #323238;
+  --color-surface-active: #3b3a43;
+  --color-surface-context: #343239;
+  --color-code-surface: #19191d;
+  --color-code-text: #e8e4ec;
+  --color-border: #424149;
+  --color-scrollbar-thumb: #605e67;
+  --color-scrollbar-thumb-hover: #76737e;
+  --color-scrollbar-thumb-active: #8b8793;
+  --color-text: #f4eff7;
+  --color-text-muted: #cec7d5;
+  --color-text-disabled: #958c9e;
+  --color-accent: #8f4fc4;
+  --color-accent-hover: #7e3eb5;
+  --color-accent-bright: #b476df;
+  --color-accent-ink: var(--color-text);
+  --color-danger: #b62326;
+  --color-danger-active: #c93d40;
+  --color-spelling-error: #e45b68;
+  --color-focus-ring: #a964dc;
+  --color-overlay: rgb(0 0 0 / 58%);
+  --shadow-overlay: 0 16px 44px rgb(0 0 0 / 32%);
+  --space-xs: 8px;
+  --space-sm: 12px;
+  --space-md: 16px;
+  --space-lg: 24px;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in: cubic-bezier(0.7, 0, 0.84, 0);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-micro: 100ms;
+  --dur-overlay: 45ms;
+  --dur-tooltip: 100ms;
+  --dur-toast-enter: 100ms;
+  --dur-toast-exit: 80ms;
+  --z-modal: 10000;
+  --z-toast: 10005;
+  --z-tooltip: 10010;
+  --radius-pill: 999px;
+  --font-system:
+    system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-interface:
+    "Inter", ui-sans-serif, var(--font-system);
+  --font-note: Arial, "Liberation Sans", "Helvetica Neue", sans-serif;
+  --font-illustrated-heading:
+    "Nunito Sans", var(--font-interface);
+  --font-code: ui-monospace, "Cascadia Code", "SFMono-Regular", Consolas,
+    monospace;
+}
+
+:root[data-theme='basalt'] {
   --color-background: #131014;
   --color-titlebar: #100f11;
   --color-surface: #100f11;
   --color-surface-hover: #18141b;
   --color-surface-active: #272129;
+  --color-surface-context: #211923;
+  --color-code-surface: #1b171c;
+  --color-code-text: #eee8f1;
   --color-border: #221c22;
+  --color-scrollbar-thumb: #463a48;
+  --color-scrollbar-thumb-hover: #5e4d61;
+  --color-scrollbar-thumb-active: #745a78;
   --color-text: #f4f0f6;
   --color-text-muted: #ded7e2;
   --color-text-disabled: #8f8794;
   --color-accent: #b04fd4;
   --color-accent-hover: #962cdc;
   --color-accent-bright: #b862d9;
-  --color-danger: #b62326;
-  --color-danger-active: #c93d40;
   --color-focus-ring: #b04fd4;
+}
+
+:root[data-accent='subtle'] {
+  --color-accent: #8d70aa;
+  --color-accent-hover: #7a5c99;
+  --color-accent-bright: #a488bf;
+  --color-focus-ring: #8d70aa;
+}
+
+:root[data-accent='strong'] {
+  --color-accent: #ae4ee0;
+  --color-accent-hover: #982fd4;
+  --color-accent-bright: #c064ec;
+  --color-focus-ring: #ae4ee0;
+}
+
+:root[data-custom-accent='true'] {
+  --color-accent: var(--preference-accent-color);
+  --color-accent-hover: color-mix(
+    in srgb,
+    var(--preference-accent-color) 82%,
+    black
+  );
+  --color-accent-bright: color-mix(
+    in srgb,
+    var(--preference-accent-color) 76%,
+    white
+  );
+  --color-focus-ring: color-mix(
+    in srgb,
+    var(--preference-accent-color) 86%,
+    white
+  );
+}
+
+:root[data-custom-accent='true'][data-accent='subtle'] {
+  --color-accent: color-mix(
+    in srgb,
+    var(--preference-accent-color) 66%,
+    var(--color-text-muted)
+  );
+  --color-accent-hover: color-mix(
+    in srgb,
+    var(--preference-accent-color) 72%,
+    var(--color-background)
+  );
+  --color-accent-bright: color-mix(
+    in srgb,
+    var(--preference-accent-color) 58%,
+    white
+  );
+  --color-focus-ring: color-mix(
+    in srgb,
+    var(--preference-accent-color) 68%,
+    white
+  );
+}
+
+:root[data-custom-accent='true'][data-accent='strong'] {
+  --color-accent: color-mix(
+    in srgb,
+    var(--preference-accent-color) 88%,
+    white
+  );
+  --color-accent-hover: color-mix(
+    in srgb,
+    var(--preference-accent-color) 86%,
+    black
+  );
+  --color-accent-bright: color-mix(
+    in srgb,
+    var(--preference-accent-color) 68%,
+    white
+  );
+  --color-focus-ring: color-mix(
+    in srgb,
+    var(--preference-accent-color) 90%,
+    white
+  );
+}
+
+:root[data-interface-font='system'] {
+  --font-interface: var(--font-system);
+}
+
+:root[data-border-contrast='strong'] {
+  --color-border: #48464f;
 }

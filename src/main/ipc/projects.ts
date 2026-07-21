@@ -1,5 +1,6 @@
 import {
   BrowserWindow,
+  clipboard,
   dialog,
   ipcMain,
   shell,
@@ -10,16 +11,31 @@ import {
 import {
   PROJECT_IPC_CHANNELS,
   isCreateProjectNodeRequest,
+  isChangeProjectPagePasswordRequest,
   isCreateProjectRequest,
   isGetProjectNodeRequest,
+  isGetProjectPagePropertiesRequest,
   isListProjectChildrenRequest,
+  isListProjectBacklinksRequest,
   isMoveProjectNodeRequest,
+  isMoveProjectNodesRequest,
+  isProjectPathRequest,
+  isProjectPathsRequest,
   isReadMarkdownDocumentRequest,
+  isProjectInternalLinkRequest,
+  isProjectSearchRequest,
+  isLockProjectPageRequest,
+  isProtectProjectPageRequest,
+  isRemoveProjectPagePasswordRequest,
   isRenameProjectNodeRequest,
   isRestoreProjectRequest,
   isSaveMarkdownDocumentRequest,
+  isSetProjectPageReadOnlyRequest,
   isTrashProjectNodeRequest,
+  isTrashProjectNodesRequest,
+  isUnlockProjectPageRequest,
   projectFailure,
+  projectSuccess,
 } from '../../shared/contracts';
 import type { ProjectService } from '../projects';
 import { validateTrustedMainFrame } from './trusted-sender';
@@ -39,6 +55,8 @@ export interface RegisterProjectHandlersOptions {
   isAllowedUrl: (url: string) => boolean;
   projectService: ProjectService;
   selectDirectory?: SelectProjectDirectory;
+  copyPathToClipboard?: (absolutePath: string) => void;
+  revealPathInFileManager?: (absolutePath: string) => void;
 }
 
 async function selectDirectoryWithDialog(
@@ -64,9 +82,11 @@ async function selectDirectoryWithDialog(
 }
 
 export function registerProjectHandlers({
+  copyPathToClipboard = (absolutePath) => clipboard.writeText(absolutePath),
   dialogLabels,
   isAllowedUrl,
   projectService,
+  revealPathInFileManager = (absolutePath) => shell.showItemInFolder(absolutePath),
   selectDirectory = (purpose, window) =>
     selectDirectoryWithDialog(purpose, window, dialogLabels),
 }: RegisterProjectHandlersOptions): () => void {
@@ -206,6 +226,19 @@ export function registerProjectHandlers({
   );
 
   ipcMain.handle(
+    PROJECT_IPC_CHANNELS.moveNodes,
+    async (event, value: unknown) => {
+      const { senderKey } = trustedSender(event, 'Project content batch move');
+
+      if (!isMoveProjectNodesRequest(value)) {
+        throw new TypeError('Invalid project nodes move request.');
+      }
+
+      return projectService.moveNodes(senderKey, value);
+    },
+  );
+
+  ipcMain.handle(
     PROJECT_IPC_CHANNELS.trashNode,
     async (event, value: unknown) => {
       const { senderKey } = trustedSender(event, 'Project content deletion');
@@ -215,6 +248,109 @@ export function registerProjectHandlers({
       }
 
       return projectService.trashNode(senderKey, value);
+    },
+  );
+
+  ipcMain.handle(
+    PROJECT_IPC_CHANNELS.trashNodes,
+    async (event, value: unknown) => {
+      const { senderKey } = trustedSender(
+        event,
+        'Project content batch deletion',
+      );
+
+      if (!isTrashProjectNodesRequest(value)) {
+        throw new TypeError('Invalid project nodes trash request.');
+      }
+
+      return projectService.trashNodes(senderKey, value);
+    },
+  );
+
+  ipcMain.handle(
+    PROJECT_IPC_CHANNELS.revealPath,
+    async (event, value: unknown) => {
+      const { senderKey } = trustedSender(event, 'Project path reveal');
+
+      if (!isProjectPathRequest(value)) {
+        throw new TypeError('Invalid project path request.');
+      }
+
+      const resolved = await projectService.resolvePath(senderKey, value);
+      if (!resolved.ok) {
+        return resolved;
+      }
+
+      try {
+        revealPathInFileManager(resolved.value);
+        return projectSuccess(null);
+      } catch {
+        return projectFailure(
+          'io-error',
+          'The project path could not be shown in the file manager.',
+        );
+      }
+    },
+  );
+
+  ipcMain.handle(
+    PROJECT_IPC_CHANNELS.copyPath,
+    async (event, value: unknown) => {
+      const { senderKey } = trustedSender(event, 'Project path copy');
+
+      if (!isProjectPathRequest(value)) {
+        throw new TypeError('Invalid project path request.');
+      }
+
+      const resolved = await projectService.resolvePath(senderKey, value);
+      if (!resolved.ok) {
+        return resolved;
+      }
+
+      try {
+        copyPathToClipboard(resolved.value);
+        return projectSuccess(null);
+      } catch {
+        return projectFailure(
+          'io-error',
+          'The project path could not be copied.',
+        );
+      }
+    },
+  );
+
+  ipcMain.handle(
+    PROJECT_IPC_CHANNELS.copyPaths,
+    async (event, value: unknown) => {
+      const { senderKey } = trustedSender(event, 'Project paths copy');
+
+      if (!isProjectPathsRequest(value)) {
+        throw new TypeError('Invalid project paths request.');
+      }
+
+      const resolved = await Promise.all(
+        value.nodeIds.map((nodeId) =>
+          projectService.resolvePath(senderKey, { nodeId }),
+        ),
+      );
+      const failed = resolved.find((result) => !result.ok);
+      if (failed && !failed.ok) {
+        return failed;
+      }
+
+      try {
+        copyPathToClipboard(
+          resolved
+            .flatMap((result) => result.ok ? [result.value] : [])
+            .join(process.platform === 'win32' ? '\r\n' : '\n'),
+        );
+        return projectSuccess(null);
+      } catch {
+        return projectFailure(
+          'io-error',
+          'The project paths could not be copied.',
+        );
+      }
     },
   );
 
@@ -243,6 +379,114 @@ export function registerProjectHandlers({
       return projectService.saveMarkdown(senderKey, value);
     },
   );
+
+  ipcMain.handle(PROJECT_IPC_CHANNELS.listLinkTargets, (event) => {
+    const { senderKey } = trustedSender(event, 'Project link target listing');
+    return projectService.listLinkTargets(senderKey);
+  });
+
+  ipcMain.handle(PROJECT_IPC_CHANNELS.getGraph, (event) => {
+    const { senderKey } = trustedSender(event, 'Project graph');
+    return projectService.getGraph(senderKey);
+  });
+
+  ipcMain.handle(
+    PROJECT_IPC_CHANNELS.resolveInternalLink,
+    (event, value: unknown) => {
+      const { senderKey } = trustedSender(event, 'Project link resolution');
+      if (!isProjectInternalLinkRequest(value)) {
+        throw new TypeError('Invalid project internal link request.');
+      }
+      return projectService.resolveInternalLink(senderKey, value);
+    },
+  );
+
+  ipcMain.handle(
+    PROJECT_IPC_CHANNELS.listBacklinks,
+    (event, value: unknown) => {
+      const { senderKey } = trustedSender(event, 'Project backlink listing');
+      if (!isListProjectBacklinksRequest(value)) {
+        throw new TypeError('Invalid project backlink request.');
+      }
+      return projectService.listBacklinks(senderKey, value);
+    },
+  );
+
+  ipcMain.handle(PROJECT_IPC_CHANNELS.search, (event, value: unknown) => {
+    const { senderKey } = trustedSender(event, 'Project search');
+    if (!isProjectSearchRequest(value)) {
+      throw new TypeError('Invalid project search request.');
+    }
+    return projectService.searchProject(senderKey, value);
+  });
+
+  ipcMain.handle(
+    PROJECT_IPC_CHANNELS.getPageProperties,
+    (event, value: unknown) => {
+      const { senderKey } = trustedSender(event, 'Project page properties');
+      if (!isGetProjectPagePropertiesRequest(value)) {
+        throw new TypeError('Invalid project page properties request.');
+      }
+      return projectService.getPageProperties(senderKey, value);
+    },
+  );
+
+  ipcMain.handle(
+    PROJECT_IPC_CHANNELS.setPageReadOnly,
+    (event, value: unknown) => {
+      const { senderKey } = trustedSender(event, 'Project page read-only policy');
+      if (!isSetProjectPageReadOnlyRequest(value)) {
+        throw new TypeError('Invalid project page read-only request.');
+      }
+      return projectService.setPageReadOnly(senderKey, value);
+    },
+  );
+
+  ipcMain.handle(PROJECT_IPC_CHANNELS.protectPage, (event, value: unknown) => {
+    const { senderKey } = trustedSender(event, 'Project page protection');
+    if (!isProtectProjectPageRequest(value)) {
+      throw new TypeError('Invalid project page protection request.');
+    }
+    return projectService.protectPage(senderKey, value);
+  });
+
+  ipcMain.handle(
+    PROJECT_IPC_CHANNELS.changePagePassword,
+    (event, value: unknown) => {
+      const { senderKey } = trustedSender(event, 'Project page password change');
+      if (!isChangeProjectPagePasswordRequest(value)) {
+        throw new TypeError('Invalid project page password change request.');
+      }
+      return projectService.changePagePassword(senderKey, value);
+    },
+  );
+
+  ipcMain.handle(
+    PROJECT_IPC_CHANNELS.removePagePassword,
+    (event, value: unknown) => {
+      const { senderKey } = trustedSender(event, 'Project page protection removal');
+      if (!isRemoveProjectPagePasswordRequest(value)) {
+        throw new TypeError('Invalid project page password removal request.');
+      }
+      return projectService.removePagePassword(senderKey, value);
+    },
+  );
+
+  ipcMain.handle(PROJECT_IPC_CHANNELS.unlockPage, (event, value: unknown) => {
+    const { senderKey } = trustedSender(event, 'Project page unlock');
+    if (!isUnlockProjectPageRequest(value)) {
+      throw new TypeError('Invalid project page unlock request.');
+    }
+    return projectService.unlockPage(senderKey, value);
+  });
+
+  ipcMain.handle(PROJECT_IPC_CHANNELS.lockPage, (event, value: unknown) => {
+    const { senderKey } = trustedSender(event, 'Project page lock');
+    if (!isLockProjectPageRequest(value)) {
+      throw new TypeError('Invalid project page lock request.');
+    }
+    return projectService.lockPage(senderKey, value);
+  });
 
   const channels = Object.values(PROJECT_IPC_CHANNELS);
 

@@ -29,6 +29,9 @@ export interface SpellcheckService {
   getAvailableLanguages(): readonly string[];
   getActiveLanguages(): readonly string[];
   setActiveLanguages(languages: readonly string[]): void;
+  addWordToDictionary(word: string): boolean | Promise<boolean>;
+  checkWords(words: readonly string[]): Promise<readonly string[]>;
+  getSuggestions(word: string): Promise<readonly string[]>;
   onDictionaryDownload(
     listener: SpellcheckDictionaryEventListener,
   ): UnsubscribeSpellcheckDictionaryEvents;

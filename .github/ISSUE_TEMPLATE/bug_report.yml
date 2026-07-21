@@ -1,0 +1,61 @@
+name: Relatar um problema
+description: Registre um comportamento reproduzível do Flyoff.
+title: "fix: "
+body:
+  - type: markdown
+    attributes:
+      value: Informe apenas o necessário para reproduzir e avaliar o impacto.
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Plataforma
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Mais de uma plataforma
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Versão ou commit
+      placeholder: v0.1.0 ou a1b2c3d
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Como reproduzir
+      placeholder: |
+        1. Abra...
+        2. Clique...
+        3. Observe...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Resultado esperado
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Resultado observado
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnóstico adicional
+      description: Anexe logs sem dados privados, capturas ou um projeto mínimo.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Confirmações
+      options:
+        - label: Verifiquei que não existe uma issue aberta para o mesmo problema.
+          required: true
+        - label: Removi senhas, caminhos privados e conteúdo pessoal dos anexos.
+          required: true

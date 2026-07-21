@@ -4,7 +4,10 @@ import {
   isBootstrapState,
   isApplicationMenuCommand,
   isNativeCoreMessage,
+  isOpenExternalLinkRequest,
+  isOpenExternalLinkResult,
   isSpellcheckCapabilities,
+  isSpellcheckWordRequest,
   isUiLocale,
   isWindowControlAction,
   isWindowState,
@@ -125,6 +128,12 @@ describe('shared contract guards', () => {
     ).toBe(true);
   });
 
+  it('accepts only bounded single-word spellcheck requests', () => {
+    expect(isSpellcheckWordRequest({ word: 'configura\u00e7\u00e3o' })).toBe(true);
+    expect(isSpellcheckWordRequest({ word: ' duas palavras ' })).toBe(false);
+    expect(isSpellcheckWordRequest({ word: '' })).toBe(false);
+  });
+
   it('accepts only known menu command identifiers', () => {
     expect(isApplicationMenuCommand('file.closeWindow')).toBe(true);
     expect(isApplicationMenuCommand('edit.copy')).toBe(true);
@@ -139,6 +148,18 @@ describe('shared contract guards', () => {
     expect(isWindowControlAction('move')).toBe(false);
     expect(isWindowState({ maximized: true })).toBe(true);
     expect(isWindowState({ maximized: 'yes' })).toBe(false);
+  });
+
+  it('bounds external link requests and results', () => {
+    expect(isOpenExternalLinkRequest({ url: 'https://example.com' })).toBe(true);
+    expect(isOpenExternalLinkRequest({ url: '' })).toBe(false);
+    expect(isOpenExternalLinkRequest({ url: 'x'.repeat(4_097) })).toBe(false);
+    expect(isOpenExternalLinkRequest({ url: 4 })).toBe(false);
+    expect(isOpenExternalLinkResult({ ok: true })).toBe(true);
+    expect(
+      isOpenExternalLinkResult({ ok: false, error: 'unsupported-scheme' }),
+    ).toBe(true);
+    expect(isOpenExternalLinkResult({ ok: false, error: 'unknown' })).toBe(false);
   });
 
   it('validates native-core ready and error messages', () => {

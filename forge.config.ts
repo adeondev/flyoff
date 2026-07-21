@@ -16,6 +16,7 @@ const config: ForgeConfig = {
     appBundleId: 'com.flyoff.app',
     asar: true,
     executableName: 'Flyoff',
+    extraResource: ['./public/images/twemoji'],
     icon: './resources/icons/flyoff',
   },
   rebuildConfig: {},
@@ -65,8 +66,10 @@ const config: ForgeConfig = {
     },
   },
   makers: [
-    new MakerSquirrel({}),
-    new MakerZIP({}, ['darwin']),
+    new MakerSquirrel({
+      authors: 'Flyoff',
+    }),
+    new MakerZIP({}, ['darwin', 'win32']),
     new MakerRpm({}),
     new MakerDeb({}),
   ],

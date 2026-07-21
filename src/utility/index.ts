@@ -1,4 +1,4 @@
-import { health } from '@flyoff/native-core';
+import type * as NativeCore from '@flyoff/native-core';
 
 import {
   isNativeCoreHealth,
@@ -29,6 +29,13 @@ function postError(
 }
 
 try {
+  // Load the native addon lazily, inside this try, so a failure to load the
+  // compiled binary (wrong platform, ABI mismatch, missing file) surfaces as a
+  // clean LOAD_FAILED message. A static `import` is hoisted above the guard, so
+  // a load failure would instead crash the utility process with a raw stack.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const { health } = require('@flyoff/native-core') as typeof NativeCore;
+
   const nativeHealth: unknown = health();
 
   if (!isNativeCoreHealth(nativeHealth)) {

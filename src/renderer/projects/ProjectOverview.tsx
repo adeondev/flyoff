@@ -1,4 +1,8 @@
+import folderIcon from '../../../public/images/icons/instances/folder-solid.svg';
+import noteIcon from '../../../public/images/icons/instances/note-solid.svg';
+import { TwemojiText } from '../components/twemoji';
 import type { ProjectSummary } from '../../shared/contracts';
+import { MaskedIcon } from '../components/MaskedIcon';
 import type { Translate } from '../pages/page-types';
 
 export interface ProjectOverviewProps {
@@ -21,16 +25,16 @@ export function ProjectOverview({
           <p className="project-overview__eyebrow">
             {translate('projects.overview')}
           </p>
-          <h1>{project.name}</h1>
+          <h1><TwemojiText text={project.name} /></h1>
           <p>{translate('projects.overviewDescription')}</p>
         </div>
         <div className="project-overview__actions">
           <button onClick={onNewMarkdown} type="button">
-            <span aria-hidden="true">+</span>
+            <MaskedIcon icon={noteIcon} />
             {translate('projects.newNote')}
           </button>
           <button onClick={onNewFolder} type="button">
-            <span aria-hidden="true">+</span>
+            <MaskedIcon icon={folderIcon} />
             {translate('projects.newFolder')}
           </button>
         </div>

@@ -17,6 +17,8 @@ vi.mock('electron', () => ({
 
 class FakeUtilityProcess extends EventEmitter {
   readonly kill = vi.fn(() => true);
+  readonly stdout = new EventEmitter();
+  readonly stderr = new EventEmitter();
 }
 
 const readyMessage = {
@@ -58,7 +60,7 @@ describe('NativeCoreClient', () => {
     expect(client.health).toEqual(readyMessage.payload);
     expect(electronMocks.fork).toHaveBeenCalledWith('utility.js', [], {
       serviceName: 'Flyoff Native Core',
-      stdio: 'ignore',
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
   });
 
@@ -134,5 +136,21 @@ describe('NativeCoreClient', () => {
     expect(child.kill).toHaveBeenCalledOnce();
     expect(client.health).toBeUndefined();
     expect(onUnexpectedExit).not.toHaveBeenCalled();
+  });
+
+  it('reports why the native core died instead of only its exit code', async () => {
+    const child = new FakeUtilityProcess();
+    const { client } = createClient(child);
+    const started = client.start();
+
+    child.stderr.emit(
+      'data',
+      'Error: The specified module could not be found.',
+    );
+    child.emit('exit', 1);
+
+    await expect(started).rejects.toThrow(
+      /exited with code 1[\s\S]*specified module could not be found/,
+    );
   });
 });

@@ -17,15 +17,17 @@ export interface TabPresentation {
 }
 
 export interface PageRenderProps {
+  active: boolean;
   descriptor: TabDescriptor;
   title: string;
   translate: Translate;
   onStateChange: (state: PageSessionState) => void;
-  onScrollChange: (scrollTop: number) => void;
+  onScrollChange: (scrollTop: number, settled?: boolean) => void;
 }
 
 export interface InternalPageProps extends PageRenderProps {
   descriptor: TabDescriptor & { target: InternalTabTarget };
+  icon?: string;
 }
 
 export type PageRenderer = (props: PageRenderProps) => ReactNode;

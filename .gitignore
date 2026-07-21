@@ -1,11 +1,20 @@
 node_modules/
 .webpack/
 out/
+artifacts/
 coverage/
 test-results/
 playwright-report/
 *.log
 *.tsbuildinfo
+
+# Packaged app output / manual build backups
+/Flyoff-*-x64*/
+/Flyoff-*-arm64*/
+
+# Stray scratch directories
+/newicons/
+/.agents/
 
 .env
 .env.*

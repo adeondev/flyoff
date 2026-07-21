@@ -1,0 +1,29 @@
+[
+  {
+    "date": "2026-07-15",
+    "macrostructure": "Long Document",
+    "theme": "custom",
+    "theme_axes": "dark / system-native / chromatic-other (purple)",
+    "vibe": "desktop-native, quiet, open, durable",
+    "enrichment": "real product screenshot",
+    "brief": "Flyoff landing rebuilt from the real app"
+  },
+  {
+    "date": "2026-07-15",
+    "macrostructure": "Workbench",
+    "theme": "custom",
+    "theme_axes": "dark / mono / chromatic-other (purple)",
+    "vibe": "dark, quiet, utilitarian, purple",
+    "enrichment": "none",
+    "brief": "Flyoff public landing page"
+  },
+  {
+    "date": "2026-07-15",
+    "macrostructure": "Split Studio",
+    "theme": "custom",
+    "theme_axes": "dark / system-native / chromatic-other (purple)",
+    "vibe": "quiet, direct, purple, familiar",
+    "enrichment": "brand assets",
+    "brief": "Flyoff public landing page redesign"
+  }
+]

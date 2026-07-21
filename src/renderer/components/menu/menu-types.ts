@@ -5,7 +5,10 @@ export interface MenuActionItem {
   id: string;
   label: string;
   shortcut?: string;
+  keyShortcut?: string;
   disabled?: boolean;
+  checked?: boolean;
+  icon?: string;
   tone?: MenuItemTone;
 }
 
@@ -14,15 +17,26 @@ export interface MenuSeparatorItem {
   id: string;
 }
 
+export interface MenuLabelItem {
+  kind: 'label';
+  id: string;
+  label: string;
+}
+
 export interface MenuSubmenuItem {
   kind: 'submenu';
   id: string;
   label: string;
   children: readonly MenuItem[];
   disabled?: boolean;
+  icon?: string;
 }
 
-export type MenuItem = MenuActionItem | MenuSeparatorItem | MenuSubmenuItem;
+export type MenuItem =
+  | MenuActionItem
+  | MenuLabelItem
+  | MenuSeparatorItem
+  | MenuSubmenuItem;
 
 export interface MenuBarItem {
   id: string;

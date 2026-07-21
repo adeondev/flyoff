@@ -6,8 +6,8 @@ import type {
   TrashProjectNodeRequest,
   TrashProjectNodeOutcome,
 } from '../../shared/contracts';
+import { Dialog } from '../components/dialog';
 import type { Translate } from '../pages/page-types';
-import { ProjectDialog } from './ProjectDialog';
 
 export interface TrashProjectNodeDialogProps {
   node: ProjectTreeNode;
@@ -47,22 +47,25 @@ export function TrashProjectNodeDialog({
   }
 
   return (
-    <ProjectDialog
+    <Dialog
       busy={pending}
+      closeLabel={translate('windowControls.close')}
       description={
         node.kind === 'folder'
           ? translate('projects.deleteFolderDescription')
           : translate('projects.deletePageDescription')
       }
-      onCancel={onCancel}
-      title={translate('projects.deleteTitle')}
-    >
-      {error ? (
-        <p className="project-dialog__error" role="alert">
-          {error}
-        </p>
-      ) : null}
-      <div className="project-dialog__actions">
+      footerEnd={
+        <button
+          className="flyoff-dialog__button--danger"
+          disabled={pending}
+          onClick={() => void confirm()}
+          type="button"
+        >
+          {translate('projects.delete')}
+        </button>
+      }
+      footerStart={
         <button
           data-dialog-initial-focus
           disabled={pending}
@@ -71,15 +74,15 @@ export function TrashProjectNodeDialog({
         >
           {translate('projects.cancel')}
         </button>
-        <button
-          className="project-dialog__danger"
-          disabled={pending}
-          onClick={() => void confirm()}
-          type="button"
-        >
-          {translate('projects.delete')}
-        </button>
-      </div>
-    </ProjectDialog>
+      }
+      onCancel={onCancel}
+      title={translate('projects.deleteTitle')}
+    >
+      {error ? (
+        <p className="flyoff-dialog__error" role="alert">
+          {error}
+        </p>
+      ) : null}
+    </Dialog>
   );
 }

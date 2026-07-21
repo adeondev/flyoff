@@ -1,27 +1,33 @@
-import { useEffect, useReducer, useState, type FormEvent } from 'react';
+import { useEffect, useId, useReducer, useState, type FormEvent } from 'react';
 
+import chevronRightIcon from '../../../public/images/icons/actions/chevron-right.svg';
+import folderOpenIcon from '../../../public/images/icons/instances/folder-open-solid.svg';
+import folderIcon from '../../../public/images/icons/instances/folder-solid.svg';
+import noteIcon from '../../../public/images/icons/instances/note-solid.svg';
 import type {
   MoveProjectNodeRequest,
   ProjectResult,
   ProjectTreeNode,
 } from '../../shared/contracts';
+import { MaskedIcon } from '../components/MaskedIcon';
+import { Dialog } from '../components/dialog';
+import { TwemojiText } from '../components/twemoji';
 import type { Translate } from '../pages/page-types';
-import { ProjectDialog } from './ProjectDialog';
 import { projectNodeDisplayName } from './project-node-name';
 import type { ProjectTreeController } from './project-tree-controller';
 
 interface FolderBranchProps {
   controller: ProjectTreeController;
-  excludedNodeId: string;
+  excludedNodeIds: ReadonlySet<string>;
   parentId: string | null;
   selectedId: string | null | undefined;
   translate: Translate;
   onSelect: (nodeId: string) => void;
 }
 
-function FolderBranch({
+export function ProjectFolderPickerBranch({
   controller,
-  excludedNodeId,
+  excludedNodeIds,
   onSelect,
   parentId,
   selectedId,
@@ -29,7 +35,7 @@ function FolderBranch({
 }: FolderBranchProps) {
   const branch = controller.getBranch(parentId);
   const folders = branch.nodes.filter(
-    (node) => node.kind === 'folder' && node.nodeId !== excludedNodeId,
+    (node) => node.canContainChildren && !excludedNodeIds.has(node.nodeId),
   );
 
   return (
@@ -44,27 +50,46 @@ function FolderBranch({
               role="treeitem"
             >
               <button
-                aria-expanded={expanded}
-                aria-label={`${expanded ? '−' : '+'} ${projectNodeDisplayName(folder)}`}
+                aria-expanded={folder.hasChildren ? expanded : undefined}
+                aria-label={`${translate(
+                  expanded
+                    ? 'projects.collapseItem'
+                    : 'projects.expandItem',
+                )} ${projectNodeDisplayName(folder)}`}
                 className="project-folder-picker__expand"
+                disabled={!folder.hasChildren}
                 onClick={() => void controller.toggle(folder.nodeId)}
                 type="button"
               >
-                <span aria-hidden="true">{expanded ? '⌄' : '›'}</span>
+                <MaskedIcon
+                  className={`project-folder-picker__chevron${
+                    expanded ? ' project-folder-picker__chevron--expanded' : ''
+                  }`}
+                  icon={chevronRightIcon}
+                />
               </button>
               <button
                 className="project-folder-picker__select"
                 onClick={() => onSelect(folder.nodeId)}
                 type="button"
               >
-                <span aria-hidden="true" className="project-tree__kind project-tree__kind--folder" />
-                {projectNodeDisplayName(folder)}
+                <MaskedIcon
+                  className="project-tree__kind"
+                  icon={
+                    folder.kind === 'folder'
+                      ? expanded
+                        ? folderOpenIcon
+                        : folderIcon
+                      : noteIcon
+                  }
+                />
+                <TwemojiText text={projectNodeDisplayName(folder)} />
               </button>
             </div>
-            {expanded ? (
-              <FolderBranch
+            {folder.hasChildren && expanded ? (
+              <ProjectFolderPickerBranch
                 controller={controller}
-                excludedNodeId={excludedNodeId}
+                excludedNodeIds={excludedNodeIds}
                 onSelect={onSelect}
                 parentId={folder.nodeId}
                 selectedId={selectedId}
@@ -97,6 +122,7 @@ export interface MoveProjectNodeDialogProps {
   node: ProjectTreeNode;
   translate: Translate;
   onCancel: () => void;
+  onError?: (message: string) => void;
   onMove: (
     request: MoveProjectNodeRequest,
   ) => Promise<ProjectResult<ProjectTreeNode>>;
@@ -107,16 +133,17 @@ export function MoveProjectNodeDialog({
   controller,
   node,
   onCancel,
+  onError,
   onMove,
   onMoved,
   translate,
 }: MoveProjectNodeDialogProps) {
+  const formId = useId();
   const [, renderVersion] = useReducer((version: number) => version + 1, 0);
   const [destination, setDestination] = useState<string | null | undefined>(
     node.parentId,
   );
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string>();
 
   useEffect(() => controller.subscribe(renderVersion), [controller]);
   useEffect(() => {
@@ -130,30 +157,51 @@ export function MoveProjectNodeDialog({
     }
 
     setPending(true);
-    setError(undefined);
     try {
       const result = await onMove({ nodeId: node.nodeId, parentId: destination });
       if (result.ok) {
         await controller.refreshParents([node.parentId, destination]);
         onMoved(result.value);
       } else {
-        setError(result.error.message);
+        onError?.(result.error.message);
       }
     } catch (operationError) {
-      setError(String(operationError));
+      onError?.(String(operationError));
     } finally {
       setPending(false);
     }
   }
 
   return (
-    <ProjectDialog
+    <Dialog
       busy={pending}
+      closeLabel={translate('windowControls.close')}
       description={translate('projects.selectDestination')}
+      footerEnd={
+        <button
+          className="flyoff-dialog__button--primary"
+          disabled={
+            pending || destination === undefined || destination === node.parentId
+          }
+          form={formId}
+          type="submit"
+        >
+          {pending ? translate('projects.moving') : translate('projects.move')}
+        </button>
+      }
+      footerStart={
+        <button disabled={pending} onClick={onCancel} type="button">
+          {translate('projects.cancel')}
+        </button>
+      }
       onCancel={onCancel}
       title={translate('projects.moveTitle')}
     >
-      <form className="project-dialog__form" onSubmit={(event) => void submit(event)}>
+      <form
+        className="flyoff-dialog__form"
+        id={formId}
+        onSubmit={(event) => void submit(event)}
+      >
         <div
           aria-label={translate('projects.selectDestination')}
           className="project-folder-picker"
@@ -167,38 +215,19 @@ export function MoveProjectNodeDialog({
             role="treeitem"
             type="button"
           >
-            <span aria-hidden="true" className="project-tree__kind project-tree__kind--folder" />
+            <MaskedIcon className="project-tree__kind" icon={folderIcon} />
             {translate('projects.rootFolder')}
           </button>
-          <FolderBranch
+          <ProjectFolderPickerBranch
             controller={controller}
-            excludedNodeId={node.nodeId}
+            excludedNodeIds={new Set([node.nodeId])}
             onSelect={setDestination}
             parentId={null}
             selectedId={destination}
             translate={translate}
           />
         </div>
-        {error ? (
-          <p className="project-dialog__error" role="alert">
-            {error}
-          </p>
-        ) : null}
-        <div className="project-dialog__actions">
-          <button disabled={pending} onClick={onCancel} type="button">
-            {translate('projects.cancel')}
-          </button>
-          <button
-            className="project-dialog__primary"
-            disabled={
-              pending || destination === undefined || destination === node.parentId
-            }
-            type="submit"
-          >
-            {pending ? translate('projects.moving') : translate('projects.move')}
-          </button>
-        </div>
       </form>
-    </ProjectDialog>
+    </Dialog>
   );
 }

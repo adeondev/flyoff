@@ -13,6 +13,9 @@ import {
   type MutableRefObject,
 } from 'react';
 
+import chevronRightIcon from '../../../../public/images/icons/actions/chevron-right.svg';
+import { MaskedIcon } from '../MaskedIcon';
+import { TwemojiText } from '../twemoji';
 import { calculateMenuPosition, type MenuPlacement } from './menu-position';
 import type { MenuItem } from './menu-types';
 
@@ -21,13 +24,15 @@ type Direction = 'next' | 'previous';
 
 interface MenuTreeProps {
   anchor: HTMLElement;
-  ariaLabelledBy: string;
+  ariaLabel?: string;
+  ariaLabelledBy?: string;
   id: string;
   initialFocus: InitialFocus;
   items: readonly MenuItem[];
   onAction: (id: string) => void;
   onClose: (restoreFocus: boolean) => void;
   onNavigateMenu?: (direction: Direction) => void;
+  placement?: MenuPlacement;
 }
 
 interface MenuSurfaceProps extends MenuTreeProps {
@@ -46,15 +51,17 @@ interface OpenSubmenu {
 
 function isInteractive(
   item: MenuItem,
-): item is Exclude<MenuItem, { kind: 'separator' }> {
-  return item.kind !== 'separator';
+): item is Extract<MenuItem, { kind: 'action' | 'submenu' }> {
+  return item.kind === 'action' || item.kind === 'submenu';
 }
 
 function isDisabled(item: MenuItem): boolean {
-  return item.kind !== 'separator' && Boolean(item.disabled);
+  return isInteractive(item) && Boolean(item.disabled);
 }
 
-function itemId(item: Exclude<MenuItem, { kind: 'separator' }>): string {
+function itemId(
+  item: Extract<MenuItem, { kind: 'action' | 'submenu' }>,
+): string {
   return item.id;
 }
 
@@ -63,11 +70,7 @@ function focusElement(element: HTMLElement | undefined): void {
 }
 
 function ChevronRight() {
-  return (
-    <svg aria-hidden="true" viewBox="0 0 12 12">
-      <path d="m4 2 4 4-4 4" />
-    </svg>
-  );
+  return <MaskedIcon icon={chevronRightIcon} />;
 }
 
 function useMenuPosition(
@@ -140,6 +143,7 @@ function useMenuPosition(
 
 function MenuSurface({
   anchor,
+  ariaLabel,
   ariaLabelledBy,
   id,
   initialFocus,
@@ -287,7 +291,7 @@ function MenuSurface({
   }
 
   function activateItem(
-    item: Exclude<MenuItem, { kind: 'separator' }>,
+    item: Extract<MenuItem, { kind: 'action' | 'submenu' }>,
     element: HTMLButtonElement,
   ): void {
     if (isDisabled(item)) {
@@ -299,13 +303,13 @@ function MenuSurface({
       return;
     }
 
-    onClose(true);
     onAction(item.id);
+    onClose(true);
   }
 
   function handleItemKeyDown(
     event: KeyboardEvent<HTMLButtonElement>,
-    item: Exclude<MenuItem, { kind: 'separator' }>,
+    item: Extract<MenuItem, { kind: 'action' | 'submenu' }>,
   ): void {
     if (handleTypeahead(event)) {
       return;
@@ -371,6 +375,7 @@ function MenuSurface({
 
   return (
     <div
+      aria-label={ariaLabel}
       aria-labelledby={ariaLabelledBy}
       className="flyoff-menu"
       data-positioned={positioned}
@@ -392,6 +397,13 @@ function MenuSurface({
             />
           );
         }
+        if (item.kind === 'label') {
+          return (
+            <div className="flyoff-menu__label" key={item.id} role="presentation">
+              <TwemojiText text={item.label} />
+            </div>
+          );
+        }
 
         const disabled = isDisabled(item);
         const hasSubmenu = item.kind === 'submenu';
@@ -399,10 +411,20 @@ function MenuSurface({
 
         return (
           <button
+            aria-checked={
+              item.kind === 'action' && item.checked !== undefined
+                ? item.checked
+                : undefined
+            }
             aria-disabled={disabled || undefined}
             aria-controls={hasSubmenu ? `${id}-${item.id}` : undefined}
             aria-expanded={hasSubmenu ? isSubmenuOpen : undefined}
             aria-haspopup={hasSubmenu ? 'menu' : undefined}
+            aria-keyshortcuts={
+              item.kind === 'action'
+                ? item.keyShortcut ?? item.shortcut
+                : undefined
+            }
             className={`flyoff-menu__item${
               item.kind === 'action' && item.tone === 'danger'
                 ? ' flyoff-menu__item--danger'
@@ -427,16 +449,36 @@ function MenuSurface({
                 itemRefs.current.delete(item.id);
               }
             }}
-            role="menuitem"
+            role={
+              item.kind === 'action' && item.checked !== undefined
+                ? 'menuitemcheckbox'
+                : 'menuitem'
+            }
             tabIndex={activeId === item.id ? 0 : -1}
             type="button"
           >
-            <span className="flyoff-menu__item-label">{item.label}</span>
+            <span aria-hidden="true" className="flyoff-menu__check">
+              {!(item.kind === 'action' && item.checked) && item.icon ? (
+                <MaskedIcon
+                  className="flyoff-menu__item-icon"
+                  icon={item.icon}
+                />
+              ) : null}
+            </span>
+            <TwemojiText
+              className="flyoff-menu__item-label"
+              text={item.label}
+            />
             {item.kind === 'action' && item.shortcut ? (
-              <span className="flyoff-menu__shortcut">{item.shortcut}</span>
+              <span aria-hidden="true" className="flyoff-menu__shortcut">
+                {item.shortcut}
+              </span>
             ) : null}
             {hasSubmenu ? (
-              <span className="flyoff-menu__submenu-indicator">
+              <span
+                aria-hidden="true"
+                className="flyoff-menu__submenu-indicator"
+              >
                 <ChevronRight />
               </span>
             ) : null}
@@ -463,6 +505,7 @@ function MenuSurface({
 
 export function MenuTree({
   anchor,
+  ariaLabel,
   ariaLabelledBy,
   id,
   initialFocus,
@@ -470,6 +513,7 @@ export function MenuTree({
   onAction,
   onClose,
   onNavigateMenu,
+  placement = 'bottom-start',
 }: MenuTreeProps) {
   const rootRef = useRef<HTMLDivElement | null>(null);
 
@@ -487,8 +531,20 @@ export function MenuTree({
       onClose(false);
     };
     const closeForWindowBlur = () => onClose(false);
+    const closeForEscape = (event: globalThis.KeyboardEvent) => {
+      // A focused menu item already handles Escape (closing a submenu or the
+      // whole menu) and marks the event handled. This covers the case where the
+      // menu is open but focus never landed on an item, so Escape would
+      // otherwise do nothing.
+      if (event.key !== 'Escape' || event.defaultPrevented) {
+        return;
+      }
+      event.preventDefault();
+      onClose(true);
+    };
 
     document.addEventListener('pointerdown', closeForExternalInteraction, true);
+    document.addEventListener('keydown', closeForEscape);
     window.addEventListener('blur', closeForWindowBlur);
 
     return () => {
@@ -497,6 +553,7 @@ export function MenuTree({
         closeForExternalInteraction,
         true,
       );
+      document.removeEventListener('keydown', closeForEscape);
       window.removeEventListener('blur', closeForWindowBlur);
     };
   }, [anchor, onClose]);
@@ -504,6 +561,7 @@ export function MenuTree({
   return createPortal(
     <MenuSurface
       anchor={anchor}
+      ariaLabel={ariaLabel}
       ariaLabelledBy={ariaLabelledBy}
       id={id}
       initialFocus={initialFocus}
@@ -514,7 +572,7 @@ export function MenuTree({
       onRootElement={(element) => {
         rootRef.current = element;
       }}
-      placement="bottom-start"
+      placement={placement}
     />,
     document.body,
   );

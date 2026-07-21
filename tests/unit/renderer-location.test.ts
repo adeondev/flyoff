@@ -1,8 +1,12 @@
+import path from 'node:path';
+
 import { describe, expect, it, vi } from 'vitest';
 
 import {
   createRendererLocation,
   FLYOFF_RENDERER_URL,
+  FLYOFF_TWEMOJI_URL,
+  resolveTwemojiAssetPath,
 } from '../../src/main/security/protocol';
 
 vi.mock('electron/main', () => ({
@@ -43,5 +47,39 @@ describe('renderer URL policy', () => {
     expect(() => createRendererLocation(FLYOFF_RENDERER_URL, false)).toThrow(
       'must use HTTP or HTTPS',
     );
+  });
+});
+
+describe('Twemoji asset location', () => {
+  const root = path.resolve('twemoji-assets');
+
+  it('resolves only canonical SVG filenames inside the asset root', () => {
+    expect(
+      resolveTwemojiAssetPath(`${FLYOFF_TWEMOJI_URL}1f44b-1f3fd.svg`, root),
+    ).toBe(path.join(root, '1f44b-1f3fd.svg'));
+    expect(
+      resolveTwemojiAssetPath(`${FLYOFF_TWEMOJI_URL}00a9.svg`, root),
+    ).toBe(path.join(root, '00a9.svg'));
+  });
+
+  it('rejects traversal, alternate hosts, queries, and malformed names', () => {
+    expect(
+      resolveTwemojiAssetPath(
+        `${FLYOFF_TWEMOJI_URL}..%2fsecret.svg`,
+        root,
+      ),
+    ).toBeNull();
+    expect(
+      resolveTwemojiAssetPath(
+        'flyoff-asset://attacker/twemoji/1f600.svg',
+        root,
+      ),
+    ).toBeNull();
+    expect(
+      resolveTwemojiAssetPath(`${FLYOFF_TWEMOJI_URL}1F600.svg`, root),
+    ).toBeNull();
+    expect(
+      resolveTwemojiAssetPath(`${FLYOFF_TWEMOJI_URL}1f600.svg?other=1`, root),
+    ).toBeNull();
   });
 });

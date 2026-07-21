@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import {
   existsSync,
   mkdtempSync,
@@ -58,7 +59,7 @@ describe('ProjectRepository', () => {
 
     expect(manifest).toMatchObject({
       format: 'flyoff-project',
-      formatVersion: 1,
+      formatVersion: 2,
       projectId: repository.summary.projectId,
       name: 'Meu Projeto',
     });
@@ -91,6 +92,321 @@ describe('ProjectRepository', () => {
         path.join(repository.rootPath, 'Arquivo', 'Planejamento.md'),
       ),
     ).toBe(true);
+  });
+
+  it('uses alphabetical order until a branch is manually reordered', async () => {
+    const repository = await createRepository();
+    const alpha = await repository.createMarkdownPage(null, 'Alpha');
+    await repository.createFolder(null, 'Beta');
+    const zulu = await repository.createMarkdownPage(null, 'Zulu');
+
+    expect((await repository.listChildren(null)).map(({ name }) => name)).toEqual([
+      'Alpha',
+      'Beta',
+      'Notas',
+      'Zulu',
+    ]);
+
+    await repository.moveNode(zulu.nodeId, null, alpha.nodeId);
+    await repository.renameNode(zulu.nodeId, 'Ômega');
+    await repository.createMarkdownPage(null, 'Antes');
+    writeFileSync(
+      path.join(repository.rootPath, 'Externo.md'),
+      '# arquivo externo',
+      'utf8',
+    );
+
+    expect((await repository.listChildren(null)).map(({ name }) => name)).toEqual([
+      'Ômega',
+      'Alpha',
+      'Beta',
+      'Notas',
+      'Antes',
+      'Externo',
+    ]);
+
+    const reopened = await ProjectRepository.open(repository.rootPath);
+    expect((await reopened.listChildren(null)).map(({ name }) => name)).toEqual([
+      'Ômega',
+      'Alpha',
+      'Beta',
+      'Notas',
+      'Antes',
+      'Externo',
+    ]);
+  });
+
+  it('loads a v1 content index and persists v4 on the first mutation', async () => {
+    const repository = await createRepository();
+    const note = await repository.createMarkdownPage(null, 'Legado');
+    const indexPath = path.join(
+      repository.rootPath,
+      '.flyoff',
+      'content-index.json',
+    );
+    const legacy = JSON.parse(readFileSync(indexPath, 'utf8')) as {
+      formatVersion: number;
+      entries: Array<Record<string, unknown>>;
+    };
+    legacy.formatVersion = 1;
+    for (const entry of legacy.entries) {
+      delete entry.sortOrder;
+    }
+    writeFileSync(indexPath, JSON.stringify(legacy), 'utf8');
+
+    const reopened = await ProjectRepository.open(repository.rootPath);
+    expect(await reopened.getNode(note.nodeId)).toMatchObject({
+      nodeId: note.nodeId,
+      name: 'Legado',
+    });
+    expect(
+      (JSON.parse(readFileSync(indexPath, 'utf8')) as { formatVersion: number })
+        .formatVersion,
+    ).toBe(1);
+
+    const renamed = await reopened.renameNode(note.nodeId, 'Legado atualizado');
+    expect(renamed.nodeId).toBe(note.nodeId);
+    expect(
+      (JSON.parse(readFileSync(indexPath, 'utf8')) as { formatVersion: number })
+        .formatVersion,
+    ).toBe(4);
+  });
+
+  it('moves selected notes as a contiguous ordered block', async () => {
+    const repository = await createRepository();
+    const source = await repository.createFolder(null, 'Origem');
+    const destination = await repository.createFolder(null, 'Destino');
+    const first = await repository.createMarkdownPage(source.nodeId, 'Primeira');
+    const second = await repository.createMarkdownPage(source.nodeId, 'Segunda');
+    const marker = await repository.createMarkdownPage(
+      destination.nodeId,
+      'Marcador',
+    );
+
+    const moved = await repository.moveNodes(
+      [second.nodeId, first.nodeId],
+      destination.nodeId,
+      marker.nodeId,
+    );
+
+    expect(moved.map(({ nodeId }) => nodeId)).toEqual([
+      second.nodeId,
+      first.nodeId,
+    ]);
+    expect(
+      (await repository.listChildren(destination.nodeId)).map(
+        ({ nodeId }) => nodeId,
+      ),
+    ).toEqual([second.nodeId, first.nodeId, marker.nodeId]);
+  });
+
+  it('organizes content under a Markdown note without moving it on disk', async () => {
+    const repository = await createRepository();
+    const container = await repository.createMarkdownPage(null, 'Container');
+    const storageFolder = await repository.createFolder(null, 'Arquivos');
+    const child = await repository.createMarkdownPage(
+      storageFolder.nodeId,
+      'Filha',
+    );
+    const originalPath = path.join(
+      repository.rootPath,
+      'Arquivos',
+      'Filha.md',
+    );
+
+    const organized = await repository.moveNode(
+      child.nodeId,
+      container.nodeId,
+    );
+
+    expect(organized.parentId).toBe(container.nodeId);
+    expect(existsSync(originalPath)).toBe(true);
+    expect(repository.projectRelativePath(child.nodeId)).toBe(
+      'Arquivos/Filha.md',
+    );
+    expect(await repository.listChildren(container.nodeId)).toContainEqual(
+      organized,
+    );
+    expect((await repository.getNode(container.nodeId)).hasChildren).toBe(
+      true,
+    );
+
+    const reopened = await ProjectRepository.open(repository.rootPath);
+    expect(await reopened.getNode(child.nodeId)).toMatchObject({
+      nodeId: child.nodeId,
+      parentId: container.nodeId,
+    });
+    expect(reopened.projectRelativePath(child.nodeId)).toBe(
+      'Arquivos/Filha.md',
+    );
+
+    const restored = await reopened.moveNode(child.nodeId, null);
+
+    expect(restored.parentId).toBeNull();
+    expect(existsSync(originalPath)).toBe(false);
+    expect(existsSync(path.join(repository.rootPath, 'Filha.md'))).toBe(true);
+    expect(reopened.projectRelativePath(child.nodeId)).toBe('Filha.md');
+  });
+
+  it('rejects mixed physical and visual hierarchy cycles', async () => {
+    const repository = await createRepository();
+    const folder = await repository.createFolder(null, 'Pasta');
+    const container = await repository.createMarkdownPage(
+      folder.nodeId,
+      'Container',
+    );
+
+    await expect(
+      repository.moveNode(folder.nodeId, container.nodeId),
+    ).rejects.toMatchObject({ code: 'invalid-operation' });
+    expect((await repository.getNode(folder.nodeId)).parentId).toBeNull();
+  });
+
+  it('returns orphaned visual children to their physical parent', async () => {
+    const repository = await createRepository();
+    const storageFolder = await repository.createFolder(null, 'Arquivos');
+    const container = await repository.createMarkdownPage(null, 'Container');
+    const child = await repository.createMarkdownPage(
+      storageFolder.nodeId,
+      'Filha',
+    );
+    await repository.moveNode(child.nodeId, container.nodeId);
+    const indexPath = path.join(
+      repository.rootPath,
+      '.flyoff',
+      'content-index.json',
+    );
+    const index = JSON.parse(readFileSync(indexPath, 'utf8')) as {
+      entries: Array<Record<string, unknown>>;
+    };
+    index.entries.find(
+      ({ nodeId }) => nodeId === child.nodeId,
+    )!.displayParentId = randomUUID();
+    writeFileSync(indexPath, JSON.stringify(index), 'utf8');
+
+    const reopened = await ProjectRepository.open(repository.rootPath);
+
+    expect(await reopened.getNode(child.nodeId)).toMatchObject({
+      nodeId: child.nodeId,
+      parentId: storageFolder.nodeId,
+    });
+  });
+
+  it('promotes visual children when their note container is deleted', async () => {
+    const repository = await createRepository();
+    const storageFolder = await repository.createFolder(null, 'Arquivos');
+    const container = await repository.createMarkdownPage(null, 'Container');
+    const child = await repository.createMarkdownPage(
+      storageFolder.nodeId,
+      'Filha',
+    );
+    await repository.moveNode(child.nodeId, container.nodeId);
+
+    expect(await repository.trashNode(container.nodeId)).toEqual([
+      container.nodeId,
+    ]);
+
+    expect(await repository.getNode(child.nodeId)).toMatchObject({
+      nodeId: child.nodeId,
+      parentId: null,
+    });
+    expect(
+      existsSync(
+        path.join(repository.rootPath, 'Arquivos', 'Filha.md'),
+      ),
+    ).toBe(true);
+  });
+
+  it('preflights batch name collisions before moving any note', async () => {
+    const repository = await createRepository();
+    const left = await repository.createFolder(null, 'Esquerda');
+    const right = await repository.createFolder(null, 'Direita');
+    const destination = await repository.createFolder(null, 'Destino');
+    const first = await repository.createMarkdownPage(left.nodeId, 'Igual');
+    const second = await repository.createMarkdownPage(right.nodeId, 'Igual');
+
+    await expect(
+      repository.moveNodes(
+        [first.nodeId, second.nodeId],
+        destination.nodeId,
+      ),
+    ).rejects.toMatchObject({ code: 'collision' });
+    expect((await repository.getNode(first.nodeId)).parentId).toBe(left.nodeId);
+    expect((await repository.getNode(second.nodeId)).parentId).toBe(right.nodeId);
+  });
+
+  it('moves mixed roots and ignores descendants selected with their folder', async () => {
+    const repository = await createRepository();
+    const source = await repository.createFolder(null, 'Origem mista');
+    const nested = await repository.createFolder(source.nodeId, 'Subpasta');
+    const nestedNote = await repository.createMarkdownPage(
+      nested.nodeId,
+      'Interna',
+    );
+    const looseNote = await repository.createMarkdownPage(
+      source.nodeId,
+      'Solta',
+    );
+    const destination = await repository.createFolder(null, 'Destino misto');
+
+    const moved = await repository.moveNodes(
+      [nestedNote.nodeId, nested.nodeId, looseNote.nodeId],
+      destination.nodeId,
+    );
+
+    expect(moved.map(({ nodeId }) => nodeId)).toEqual([
+      nested.nodeId,
+      looseNote.nodeId,
+    ]);
+    expect((await repository.getNode(nestedNote.nodeId)).parentId).toBe(
+      nested.nodeId,
+    );
+    expect((await repository.getNode(nested.nodeId)).parentId).toBe(
+      destination.nodeId,
+    );
+  });
+
+  it('rejects moving a selected folder into its descendant before disk changes', async () => {
+    const repository = await createRepository();
+    const parent = await repository.createFolder(null, 'Pai em lote');
+    const child = await repository.createFolder(parent.nodeId, 'Filha em lote');
+
+    await expect(
+      repository.moveNodes([parent.nodeId], child.nodeId),
+    ).rejects.toMatchObject({ code: 'invalid-operation' });
+    expect((await repository.getNode(parent.nodeId)).parentId).toBeNull();
+  });
+
+  it('preserves indexed custom page types when their adapter is unavailable', async () => {
+    const repository = await createRepository();
+    const note = await repository.createMarkdownPage(null, 'Plugin');
+    const indexPath = path.join(
+      repository.rootPath,
+      '.flyoff',
+      'content-index.json',
+    );
+    const index = JSON.parse(readFileSync(indexPath, 'utf8')) as {
+      entries: Array<Record<string, unknown>>;
+    };
+    const entry = index.entries.find(({ nodeId }) => nodeId === note.nodeId)!;
+    entry.pageType = 'example-plugin:canvas';
+    entry.locator = 'Plugin.canvas';
+    renameSync(
+      path.join(repository.rootPath, 'Plugin.md'),
+      path.join(repository.rootPath, 'Plugin.canvas'),
+    );
+    writeFileSync(indexPath, JSON.stringify(index), 'utf8');
+
+    const reopened = await ProjectRepository.open(repository.rootPath);
+    expect(await reopened.listChildren(null)).toContainEqual({
+      canContainChildren: false,
+      hasChildren: false,
+      nodeId: note.nodeId,
+      parentId: null,
+      name: 'Plugin',
+      kind: 'page',
+      pageType: 'example-plugin:canvas',
+    });
   });
 
   it('reads and saves UTF-8 Markdown with revision conflicts', async () => {
@@ -215,6 +531,106 @@ describe('ProjectRepository', () => {
     await expect(repository.getNode(folder.nodeId)).rejects.toBeInstanceOf(
       ProjectOperationError,
     );
+  });
+
+  it('trashes selected notes as one staged transaction', async () => {
+    const trashed: string[] = [];
+    const repository = await createRepository(async (absolutePath) => {
+      trashed.push(absolutePath);
+      await rm(absolutePath, { recursive: true, force: true });
+    });
+    const first = await repository.createMarkdownPage(null, 'Primeira');
+    const second = await repository.createMarkdownPage(null, 'Segunda');
+
+    const removed = await repository.trashNodes([first.nodeId, second.nodeId]);
+
+    expect(removed).toEqual([first.nodeId, second.nodeId]);
+    expect(trashed).toHaveLength(1);
+    expect(path.dirname(trashed[0]!)).toBe(
+      path.join(repository.rootPath, '.flyoff', 'trash-transactions'),
+    );
+    await expect(repository.getNode(first.nodeId)).rejects.toMatchObject({
+      code: 'not-found',
+    });
+    await expect(repository.getNode(second.nodeId)).rejects.toMatchObject({
+      code: 'not-found',
+    });
+  });
+
+  it('restores every selected note when transactional trash fails', async () => {
+    const repository = await createRepository(async () => {
+      throw new Error('trash unavailable');
+    });
+    const first = await repository.createMarkdownPage(null, 'Primeira');
+    const second = await repository.createMarkdownPage(null, 'Segunda');
+
+    await expect(
+      repository.trashNodes([first.nodeId, second.nodeId]),
+    ).rejects.toMatchObject({ code: 'io-error' });
+    expect(await repository.getNode(first.nodeId)).toMatchObject(first);
+    expect(await repository.getNode(second.nodeId)).toMatchObject(second);
+    expect(
+      existsSync(path.join(repository.rootPath, 'Primeira.md')),
+    ).toBe(true);
+    expect(
+      existsSync(path.join(repository.rootPath, 'Segunda.md')),
+    ).toBe(true);
+  });
+
+  it('trashes mixed roots once and returns every removed descendant', async () => {
+    const trashed: string[] = [];
+    const repository = await createRepository(async (absolutePath) => {
+      trashed.push(absolutePath);
+      await rm(absolutePath, { recursive: true, force: true });
+    });
+    const folder = await repository.createFolder(null, 'Grupo');
+    const nested = await repository.createFolder(folder.nodeId, 'Dentro');
+    const nestedNote = await repository.createMarkdownPage(
+      nested.nodeId,
+      'Nota interna',
+    );
+    const looseNote = await repository.createMarkdownPage(null, 'Nota solta');
+
+    const removed = await repository.trashNodes([
+      nestedNote.nodeId,
+      folder.nodeId,
+      looseNote.nodeId,
+    ]);
+
+    expect(new Set(removed)).toEqual(
+      new Set([
+        folder.nodeId,
+        nested.nodeId,
+        nestedNote.nodeId,
+        looseNote.nodeId,
+      ]),
+    );
+    expect(trashed).toHaveLength(1);
+  });
+
+  it('restores a folder subtree when transactional trash fails', async () => {
+    const repository = await createRepository(async () => {
+      throw new Error('trash unavailable');
+    });
+    const folder = await repository.createFolder(null, 'Restaurar grupo');
+    const note = await repository.createMarkdownPage(folder.nodeId, 'Interna');
+
+    await expect(repository.trashNodes([folder.nodeId])).rejects.toMatchObject({
+      code: 'io-error',
+    });
+    expect(await repository.getNode(folder.nodeId)).toMatchObject({
+      nodeId: folder.nodeId,
+      name: folder.name,
+      parentId: null,
+    });
+    expect(await repository.getNode(note.nodeId)).toMatchObject({
+      nodeId: note.nodeId,
+      name: note.name,
+      parentId: folder.nodeId,
+    });
+    expect(
+      existsSync(path.join(repository.rootPath, 'Restaurar grupo', 'Interna.md')),
+    ).toBe(true);
   });
 
   it('rejects project roots opened through symbolic links', async () => {

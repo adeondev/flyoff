@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 
 import type { Translate } from '../../pages/page-types';
@@ -13,6 +14,25 @@ export function SessionRestoreToast({
   onIgnore,
   onRestore,
 }: SessionRestoreToastProps) {
+  useEffect(() => {
+    const handleEscape = (event: KeyboardEvent): void => {
+      if (
+        event.key !== 'Escape' ||
+        event.defaultPrevented ||
+        document.querySelector(
+          '[role="dialog"][aria-modal="true"], .add-instance-popover[role="dialog"], .external-link-popover[role="dialog"], [role="menu"][data-positioned="true"]',
+        )
+      ) {
+        return;
+      }
+      event.preventDefault();
+      onIgnore();
+    };
+
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [onIgnore]);
+
   return createPortal(
     <aside
       aria-live="polite"
