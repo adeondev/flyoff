@@ -41,7 +41,13 @@ export interface TranslationCatalog {
     navigation: string;
     project: string;
     graph: string;
+    orbit: string;
+    canvas: string;
     media: string;
+    calendar: string;
+    models: string;
+    spreadsheet: string;
+    properties: string;
     settings: string;
     comingSoon: string;
   };
@@ -50,7 +56,8 @@ export interface TranslationCatalog {
     canvas: string;
     centerStrength: string;
     closeFolder: string;
-    closeSettings: string;
+    closeGraphSettings: string;
+    closeOrbitSettings: string;
     damping: string;
     edgeScale: string;
     empty: string;
@@ -63,14 +70,17 @@ export interface TranslationCatalog {
     modeOrbit: string;
     nodeDistance: string;
     nodeScale: string;
-    openInTab: string;
-    openSettings: string;
+    openGraphInTab: string;
+    openOrbitInTab: string;
+    openGraphSettings: string;
+    openOrbitSettings: string;
     orbitTitle: string;
     refresh: string;
     refreshing: string;
     repulsion: string;
     resetSettings: string;
-    settings: string;
+    graphSettings: string;
+    orbitSettings: string;
     simulation: string;
     simulationSpeed: string;
     springStrength: string;
@@ -570,7 +580,13 @@ export const ptBR = {
     navigation: 'Seções da toca',
     project: 'Toca',
     graph: 'Grafo',
+    orbit: 'Órbita',
+    canvas: 'Canvas',
     media: 'Mídia',
+    calendar: 'Calendário',
+    models: 'Modelos',
+    spreadsheet: 'Planilha',
+    properties: 'Propriedades',
     settings: 'Configurações',
     comingSoon: 'Em breve.',
   },
@@ -579,7 +595,8 @@ export const ptBR = {
     canvas: 'Grafo de conexões entre notas',
     centerStrength: 'Força de centralização',
     closeFolder: 'Fechar pasta',
-    closeSettings: 'Fechar ajustes do grafo',
+    closeGraphSettings: 'Fechar ajustes do Grafo',
+    closeOrbitSettings: 'Fechar ajustes da Órbita',
     damping: 'Amortecimento',
     edgeScale: 'Espessura das conexões',
     empty: 'Nenhuma conexão para mostrar.',
@@ -592,14 +609,17 @@ export const ptBR = {
     modeOrbit: 'Órbita',
     nodeDistance: 'Distância entre nós',
     nodeScale: 'Tamanho dos nós',
-    openInTab: 'Abrir grafo em uma aba',
-    openSettings: 'Ajustar grafo',
+    openGraphInTab: 'Abrir Grafo em uma aba',
+    openOrbitInTab: 'Abrir Órbita em uma aba',
+    openGraphSettings: 'Ajustar Grafo',
+    openOrbitSettings: 'Ajustar Órbita',
     orbitTitle: 'Órbita',
     refresh: 'Atualizar grafo',
     refreshing: 'Atualizando grafo',
     repulsion: 'Repulsão',
     resetSettings: 'Restaurar padrões',
-    settings: 'Ajustes do grafo',
+    graphSettings: 'Ajustes do Grafo',
+    orbitSettings: 'Ajustes da Órbita',
     simulation: 'Simulação',
     simulationSpeed: 'Velocidade',
     springStrength: 'Elasticidade',
@@ -1157,7 +1177,13 @@ export const enUS = {
     navigation: 'Den sections',
     project: 'Den',
     graph: 'Graph',
+    orbit: 'Orbit',
+    canvas: 'Canvas',
     media: 'Media',
+    calendar: 'Calendar',
+    models: 'Templates',
+    spreadsheet: 'Spreadsheet',
+    properties: 'Properties',
     settings: 'Settings',
     comingSoon: 'Coming soon.',
   },
@@ -1166,7 +1192,8 @@ export const enUS = {
     canvas: 'Graph of connections between notes',
     centerStrength: 'Centering force',
     closeFolder: 'Close folder',
-    closeSettings: 'Close graph settings',
+    closeGraphSettings: 'Close Graph settings',
+    closeOrbitSettings: 'Close Orbit settings',
     damping: 'Damping',
     edgeScale: 'Connection thickness',
     empty: 'No connections to show.',
@@ -1179,14 +1206,17 @@ export const enUS = {
     modeOrbit: 'Orbit',
     nodeDistance: 'Node distance',
     nodeScale: 'Node size',
-    openInTab: 'Open graph in a tab',
-    openSettings: 'Adjust graph',
+    openGraphInTab: 'Open Graph in a tab',
+    openOrbitInTab: 'Open Orbit in a tab',
+    openGraphSettings: 'Adjust Graph',
+    openOrbitSettings: 'Adjust Orbit',
     orbitTitle: 'Orbit View',
     refresh: 'Refresh graph',
     refreshing: 'Refreshing graph',
     repulsion: 'Repulsion',
     resetSettings: 'Restore defaults',
-    settings: 'Graph settings',
+    graphSettings: 'Graph settings',
+    orbitSettings: 'Orbit settings',
     simulation: 'Simulation',
     simulationSpeed: 'Speed',
     springStrength: 'Elasticity',

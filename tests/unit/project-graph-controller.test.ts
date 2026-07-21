@@ -64,6 +64,19 @@ describe('project graph controller', () => {
     expect(controller.viewState().layoutMode).toBe('force');
   });
 
+  it('preserves the orbit clock without publishing renderer state', () => {
+    const controller = new ProjectGraphController();
+    const listener = vi.fn();
+    controller.subscribe(listener);
+
+    controller.setOrbitClock(42.5);
+    expect(controller.getOrbitClock()).toBe(42.5);
+    expect(listener).not.toHaveBeenCalled();
+
+    controller.setOrbitClock(Number.NaN);
+    expect(controller.getOrbitClock()).toBe(42.5);
+  });
+
   it('publishes validated settings without rebuilding the layout', async () => {
     const controller = new ProjectGraphController();
     await controller.refresh({}, async () => ({ ok: true, value: graph }), vi.fn());

@@ -2,15 +2,18 @@ import {
   useCallback,
   useEffect,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
   type KeyboardEvent,
 } from 'react';
 
-import expandIcon from '../../../public/images/icons/actions/expand-outline.svg';
+import openInTabIcon from '../../../newicons/nova aba.svg';
 import refreshIcon from '../../../public/images/icons/actions/refresh.svg';
 import settingsIcon from '../../../public/images/icons/actions/settings-outline.svg';
+import folderIcon from '../../../public/images/icons/instances/folder.svg';
+import noteIcon from '../../../public/images/icons/instances/note.svg';
 import type {
   ProjectGraphNode,
   ProjectGraphSnapshot,
@@ -19,6 +22,7 @@ import type {
 import { TwemojiText } from '../components/twemoji';
 import type { Translate } from '../pages/page-types';
 import { MaskedIcon } from '../components/MaskedIcon';
+import { ContextMenu, type MenuItem } from '../components/menu';
 import { getTooltipTargetProps } from '../components/tooltip';
 import type { ProjectGraphController } from './project-graph-controller';
 import { ProjectGraphSettingsPanel } from './ProjectGraphSettingsPanel';
@@ -38,6 +42,15 @@ import {
   type ProjectGraphOrbitBody,
   type ProjectGraphOrbitLayout,
 } from './project-graph-orbit';
+import {
+  advanceMeteorCursor,
+  buildProjectGraphMeteorTour,
+  cubicBezierPoint,
+  orbitArcPoint,
+  shortestOrbitSweep,
+  type ProjectGraphMeteorCursor,
+  type ProjectGraphMeteorPoint,
+} from './project-graph-meteor';
 import {
   DEFAULT_PROJECT_GRAPH_SETTINGS,
   type ProjectGraphSettings,
@@ -82,11 +95,7 @@ interface GraphPalette {
   label: string;
   node: string;
   nodeMuted: string;
-}
-
-interface OrbitSpark {
-  edgePos: number;
-  t: number;
+  surface: string;
 }
 
 interface GraphRuntime {
@@ -99,6 +108,9 @@ interface GraphRuntime {
   lastFrame: number;
   layoutFrames: number;
   labels: ReadonlyMap<string, HTMLElement>;
+  meteorTours: readonly string[][];
+  meteors: ProjectGraphMeteorCursor[];
+  meteorTrails: ProjectGraphMeteorPoint[][];
   mode: ProjectGraphLayoutMode;
   orbit: ProjectGraphOrbitLayout;
   orbitClock: number;
@@ -107,7 +119,6 @@ interface GraphRuntime {
   particlesActive: boolean;
   pointer?: PointerSession;
   raf?: number;
-  sparks: Map<string, OrbitSpark>;
   selected?: ProjectGraphLayoutNode;
   selectedId: string | null;
   settings: ProjectGraphSettings;
@@ -133,6 +144,7 @@ function graphPalette(): GraphPalette {
     label: color('--color-text', '#e8e2ee'),
     node: color('--color-accent', '#9c43d7'),
     nodeMuted: color('--color-text-muted', '#a39aa8'),
+    surface: color('--color-surface', '#29292e'),
   };
 }
 
@@ -243,10 +255,6 @@ function drawEdgeParticles(
     }
     const x = source.x + dx * travel;
     const y = source.y + dy * travel;
-    context.globalAlpha = alpha * 0.28;
-    context.beginPath();
-    context.arc(x, y, radius * 2.1, 0, Math.PI * 2);
-    context.fill();
     context.globalAlpha = alpha;
     context.beginPath();
     context.arc(x, y, radius, 0, Math.PI * 2);
@@ -382,12 +390,188 @@ function drawGraph(
 
 // ---- Orbit (solar system) mode ----
 
-// Laps per second a spark travels along one connection before hopping to the
-// next connection of its system.
-const SPARK_LAP_SPEED = 0.4;
-// Base glow radius (world px at zoom 1) of the travelling spark's head.
-const SPARK_HEAD = 3.2;
+const METEOR_HEAD_RADIUS = 2.7;
 const SPARK_BUDGET = 200;
+// World units a meteor travels per second. Constant, so the pace stays even
+// whether a hop is short or long; on screen it scales with zoom, as expected.
+const METEOR_WORLD_SPEED = 68;
+// Gap between a planet's surface and the arc the meteor traces around it, so
+// the loop clearly encircles the planet instead of grazing its edge.
+const METEOR_LOOP_MARGIN = 12;
+// Control-handle length as a fraction of the transfer chord; laid along the arc
+// tangents so the swing out of one planet flows into the next without a kink.
+const METEOR_TRANSFER_TENSION = 0.34;
+// The transfer chord between two notes cuts inside their orbit ring; bowing the
+// control points outward (away from the sun) keeps the meteor in the lane
+// between orbits instead of crossing over the sun and other planets.
+const METEOR_TRANSFER_BOW = 0.2;
+const METEOR_TRANSFER_BOW_MAX = 64;
+// A short, clean trail: the head's recent world positions, capped to a fixed
+// world length (no soft gradient or halo). History-based so it stays continuous
+// across arc/transfer boundaries instead of collapsing at each segment start.
+const METEOR_TRAIL_WORLD = 26;
+const METEOR_TRAIL_MAX_POINTS = 48;
+
+interface MeteorWaypoint {
+  center: ProjectGraphMeteorPoint;
+  entryAngle: number;
+  entryPoint: ProjectGraphMeteorPoint;
+  entryTangent: ProjectGraphMeteorPoint;
+  exitPoint: ProjectGraphMeteorPoint;
+  exitTangent: ProjectGraphMeteorPoint;
+  radius: number;
+  sweep: number;
+}
+
+// Resolves a system's planet tour into per-planet arc geometry (in world space),
+// reading the planets' current positions so the path tracks them as they orbit.
+// Returns null when any planet is missing or the tour is too short.
+function meteorWaypoints(
+  tour: readonly string[],
+  byId: ProjectGraphOrbitLayout['byId'],
+): MeteorWaypoint[] | null {
+  const count = tour.length;
+  if (count < 2) {
+    return null;
+  }
+  const bodies = tour.map((id) => byId.get(id));
+  const waypoints: MeteorWaypoint[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const current = bodies[index];
+    const previous = bodies[(index - 1 + count) % count];
+    const next = bodies[(index + 1) % count];
+    if (!current || !previous || !next) {
+      return null;
+    }
+    const center = { x: current.x, y: current.y };
+    const radius = current.radius + METEOR_LOOP_MARGIN;
+    const entryAngle = Math.atan2(previous.y - center.y, previous.x - center.x);
+    const exitAim = Math.atan2(next.y - center.y, next.x - center.x);
+    const sweep = shortestOrbitSweep(entryAngle, exitAim);
+    const exitAngle = entryAngle + sweep;
+    const direction = sweep < 0 ? -1 : 1;
+    waypoints.push({
+      center,
+      entryAngle,
+      entryPoint: orbitArcPoint(center, radius, entryAngle, sweep, 0),
+      entryTangent: {
+        x: -Math.sin(entryAngle) * direction,
+        y: Math.cos(entryAngle) * direction,
+      },
+      exitPoint: orbitArcPoint(center, radius, entryAngle, sweep, 1),
+      exitTangent: {
+        x: -Math.sin(exitAngle) * direction,
+        y: Math.cos(exitAngle) * direction,
+      },
+      radius,
+      sweep,
+    });
+  }
+  return waypoints;
+}
+
+// Even segments are the arc around planet i; odd segments are the transfer from
+// that arc's exit to the next planet's arc entry. `sunCenter` is the system's
+// sun (world space) — the transfer bows away from it so it rides the outer lane.
+function meteorSegmentPoint(
+  waypoints: readonly MeteorWaypoint[],
+  segIndex: number,
+  t: number,
+  sunCenter: ProjectGraphMeteorPoint,
+): ProjectGraphMeteorPoint {
+  const count = waypoints.length;
+  const index = Math.floor(segIndex / 2) % count;
+  const waypoint = waypoints[index]!;
+  if (segIndex % 2 === 0) {
+    return orbitArcPoint(
+      waypoint.center,
+      waypoint.radius,
+      waypoint.entryAngle,
+      waypoint.sweep,
+      t,
+    );
+  }
+  const next = waypoints[(index + 1) % count]!;
+  const chord = Math.hypot(
+    next.entryPoint.x - waypoint.exitPoint.x,
+    next.entryPoint.y - waypoint.exitPoint.y,
+  );
+  const handle = Math.max(1, chord * METEOR_TRANSFER_TENSION);
+  const midX = (waypoint.exitPoint.x + next.entryPoint.x) / 2;
+  const midY = (waypoint.exitPoint.y + next.entryPoint.y) / 2;
+  const radialX = midX - sunCenter.x;
+  const radialY = midY - sunCenter.y;
+  const radialLength = Math.hypot(radialX, radialY) || 1;
+  const bow = Math.min(METEOR_TRANSFER_BOW_MAX, chord * METEOR_TRANSFER_BOW);
+  const bowX = (radialX / radialLength) * bow;
+  const bowY = (radialY / radialLength) * bow;
+  const control1 = {
+    x: waypoint.exitPoint.x + waypoint.exitTangent.x * handle + bowX,
+    y: waypoint.exitPoint.y + waypoint.exitTangent.y * handle + bowY,
+  };
+  const control2 = {
+    x: next.entryPoint.x - next.entryTangent.x * handle + bowX,
+    y: next.entryPoint.y - next.entryTangent.y * handle + bowY,
+  };
+  return cubicBezierPoint(
+    waypoint.exitPoint,
+    control1,
+    control2,
+    next.entryPoint,
+    t,
+  );
+}
+
+function meteorSegmentLength(
+  waypoints: readonly MeteorWaypoint[],
+  segIndex: number,
+  sunCenter: ProjectGraphMeteorPoint,
+): number {
+  if (segIndex % 2 === 0) {
+    const waypoint = waypoints[Math.floor(segIndex / 2) % waypoints.length]!;
+    return waypoint.radius * Math.abs(waypoint.sweep);
+  }
+  let length = 0;
+  let previous = meteorSegmentPoint(waypoints, segIndex, 0, sunCenter);
+  const samples = 6;
+  for (let step = 1; step <= samples; step += 1) {
+    const point = meteorSegmentPoint(waypoints, segIndex, step / samples, sunCenter);
+    length += Math.hypot(point.x - previous.x, point.y - previous.y);
+    previous = point;
+  }
+  return length;
+}
+
+// Draws the flat head plus its short constant-alpha trail. Points are screen
+// space, ordered tail-first with the head last.
+function drawMeteor(
+  context: CanvasRenderingContext2D,
+  points: readonly ProjectGraphMeteorPoint[],
+  radius: number,
+  palette: GraphPalette,
+): void {
+  const head = points[points.length - 1];
+  if (!head) {
+    return;
+  }
+  if (points.length >= 2) {
+    context.lineCap = 'round';
+    context.lineWidth = Math.max(1, radius * 0.7);
+    context.strokeStyle = palette.accent;
+    context.globalAlpha = 0.5;
+    context.beginPath();
+    context.moveTo(points[0]!.x, points[0]!.y);
+    for (let index = 1; index < points.length; index += 1) {
+      context.lineTo(points[index]!.x, points[index]!.y);
+    }
+    context.stroke();
+  }
+  context.globalAlpha = 1;
+  context.fillStyle = palette.accent;
+  context.beginPath();
+  context.arc(head.x, head.y, radius, 0, Math.PI * 2);
+  context.fill();
+}
 
 function setupCanvas(
   canvas: HTMLCanvasElement,
@@ -442,21 +626,12 @@ function hitOrbitBody(
   return undefined;
 }
 
-function advanceSparks(runtime: GraphRuntime, elapsed: number): void {
-  for (const system of runtime.orbit.systems) {
-    const spark = runtime.sparks.get(system.sun.id);
-    if (!spark || system.edgeIndices.length === 0) {
-      continue;
-    }
-    spark.t += SPARK_LAP_SPEED * elapsed;
-    while (spark.t >= 1) {
-      spark.t -= 1;
-      spark.edgePos = (spark.edgePos + 1) % system.edgeIndices.length;
-    }
-  }
-}
-
-function drawOrbit(canvas: HTMLCanvasElement, runtime: GraphRuntime): void {
+function drawOrbit(
+  canvas: HTMLCanvasElement,
+  runtime: GraphRuntime,
+  elapsed: number,
+  reduced: boolean,
+): void {
   const context = setupCanvas(canvas, runtime);
   if (!context) {
     return;
@@ -475,6 +650,30 @@ function drawOrbit(canvas: HTMLCanvasElement, runtime: GraphRuntime): void {
     point.y >= -margin &&
     point.y <= height + margin;
 
+  context.strokeStyle = palette.edge;
+  context.lineWidth = 1;
+  context.globalAlpha = 0.24;
+  const drawRing = (center: { x: number; y: number }, radius: number) => {
+    if (radius < 4 || !onScreen(center, radius)) {
+      return;
+    }
+    context.beginPath();
+    context.arc(center.x, center.y, radius, 0, Math.PI * 2);
+    context.stroke();
+  };
+  for (const sun of orbit.suns) {
+    const center = projectGraphWorldToScreen(sun, camera, width, height);
+    const note = orbit.byId.get(sun.memberNoteIds[0] ?? '');
+    const childSun = orbit.byId.get(sun.childSunIds[0] ?? '');
+    const noteRadius = (note?.orbitRadius ?? 0) * zoom;
+    const childSunRadius = (childSun?.orbitRadius ?? 0) * zoom;
+    drawRing(center, noteRadius);
+    if (Math.abs(childSunRadius - noteRadius) >= 0.5) {
+      drawRing(center, childSunRadius);
+    }
+  }
+  context.globalAlpha = 1;
+
   // Connections between notes (faint).
   context.lineCap = 'round';
   context.strokeStyle = palette.edge;
@@ -489,7 +688,7 @@ function drawOrbit(canvas: HTMLCanvasElement, runtime: GraphRuntime): void {
     ) {
       continue;
     }
-    context.globalAlpha = Math.min(0.5, 0.16 + edge.weight * 0.06);
+    context.globalAlpha = Math.min(0.34, 0.1 + edge.weight * 0.045);
     context.lineWidth =
       Math.min(2, 0.6 + Math.log2(edge.weight + 1) * 0.35) *
       runtime.settings.edgeScale;
@@ -500,7 +699,7 @@ function drawOrbit(canvas: HTMLCanvasElement, runtime: GraphRuntime): void {
   }
   context.globalAlpha = 1;
 
-  // Suns (folders): glow + core + label.
+  // Suns (folders): core + label.
   context.textAlign = 'center';
   context.textBaseline = 'top';
   for (const sun of orbit.suns) {
@@ -509,28 +708,16 @@ function drawOrbit(canvas: HTMLCanvasElement, runtime: GraphRuntime): void {
     if (!onScreen(screen, radius + 120)) {
       continue;
     }
-    const glow = context.createRadialGradient(
-      screen.x,
-      screen.y,
-      radius * 0.3,
-      screen.x,
-      screen.y,
-      radius * 2.6,
-    );
-    glow.addColorStop(0, palette.accent);
-    glow.addColorStop(1, 'transparent');
-    context.globalAlpha = 0.22;
-    context.fillStyle = glow;
-    context.beginPath();
-    context.arc(screen.x, screen.y, radius * 2.6, 0, Math.PI * 2);
-    context.fill();
-    context.globalAlpha = 1;
-    context.fillStyle = palette.node;
+    context.fillStyle = sun.parentId === null ? palette.accent : palette.node;
     context.beginPath();
     context.arc(screen.x, screen.y, radius, 0, Math.PI * 2);
     context.fill();
 
     context.font = '600 12px system-ui, -apple-system, sans-serif';
+    context.lineJoin = 'round';
+    context.strokeStyle = palette.surface;
+    context.lineWidth = 3;
+    context.strokeText(sun.name, screen.x, screen.y + radius + 5, 180);
     context.fillStyle = palette.label;
     context.fillText(sun.name, screen.x, screen.y + radius + 5, 180);
   }
@@ -554,65 +741,83 @@ function drawOrbit(canvas: HTMLCanvasElement, runtime: GraphRuntime): void {
     context.arc(screen.x, screen.y, radius, 0, Math.PI * 2);
     context.fill();
     if (highlighted || zoom >= runtime.settings.labelZoom) {
+      context.lineJoin = 'round';
+      context.strokeStyle = palette.surface;
+      context.lineWidth = 3;
+      context.strokeText(note.name, screen.x, screen.y + radius + 4, 160);
       context.fillStyle = palette.label;
       context.fillText(note.name, screen.x, screen.y + radius + 4, 160);
     }
   }
 
-  // One spark per connected system, flying along that system's connections:
-  // a bright accent-coloured head trailing a short comet tail.
+  // Meteors are pure motion decoration, so they stay frozen (and unpainted)
+  // when the user prefers reduced motion.
+  if (reduced) {
+    return;
+  }
   let sparksDrawn = 0;
-  const head = Math.max(2, SPARK_HEAD * Math.min(1.6, zoom));
-  const tail = head * 5;
-  for (const system of orbit.systems) {
+  const headRadius = Math.max(
+    1.8,
+    METEOR_HEAD_RADIUS * Math.min(1.45, zoom),
+  );
+  const toScreen = (point: ProjectGraphMeteorPoint) =>
+    projectGraphWorldToScreen(point, camera, width, height);
+  for (let systemIndex = 0; systemIndex < orbit.systems.length; systemIndex += 1) {
+    const system = orbit.systems[systemIndex]!;
+    const waypoints = meteorWaypoints(
+      runtime.meteorTours[systemIndex] ?? [],
+      orbit.byId,
+    );
+    if (!waypoints) {
+      continue;
+    }
+    const sunCenter = { x: system.sun.x, y: system.sun.y };
+    const segmentCount = waypoints.length * 2;
+    const segmentLengths: number[] = [];
+    for (let segment = 0; segment < segmentCount; segment += 1) {
+      segmentLengths.push(meteorSegmentLength(waypoints, segment, sunCenter));
+    }
+    const cursor = advanceMeteorCursor(
+      runtime.meteors[systemIndex] ?? { segIndex: 0, t: 0 },
+      METEOR_WORLD_SPEED * elapsed,
+      segmentLengths,
+    );
+    runtime.meteors[systemIndex] = cursor;
+
+    // Record the head's world position and keep a short, capped tail behind it.
+    // History-based, so the trail follows the real path across segment
+    // boundaries instead of collapsing at each arc/transfer start.
+    const headWorld = meteorSegmentPoint(waypoints, cursor.segIndex, cursor.t, sunCenter);
+    const trail = runtime.meteorTrails[systemIndex] ?? [];
+    runtime.meteorTrails[systemIndex] = trail;
+    trail.push(headWorld);
+    let trailLength = 0;
+    let keepFrom = trail.length - 1;
+    for (let index = trail.length - 1; index > 0; index -= 1) {
+      trailLength += Math.hypot(
+        trail[index]!.x - trail[index - 1]!.x,
+        trail[index]!.y - trail[index - 1]!.y,
+      );
+      keepFrom = index - 1;
+      if (trailLength >= METEOR_TRAIL_WORLD) {
+        break;
+      }
+    }
+    if (keepFrom > 0) {
+      trail.splice(0, keepFrom);
+    }
+    if (trail.length > METEOR_TRAIL_MAX_POINTS) {
+      trail.splice(0, trail.length - METEOR_TRAIL_MAX_POINTS);
+    }
+
     if (sparksDrawn >= SPARK_BUDGET) {
-      break;
-    }
-    const state = runtime.sparks.get(system.sun.id);
-    if (!state) {
       continue;
     }
-    const edge = orbit.edges[system.edgeIndices[state.edgePos]!];
-    if (!edge) {
+    const head = toScreen(headWorld);
+    if (!onScreen(head, 120)) {
       continue;
     }
-    const source = projectGraphWorldToScreen(edge.source, camera, width, height);
-    const target = projectGraphWorldToScreen(edge.target, camera, width, height);
-    const x = source.x + (target.x - source.x) * state.t;
-    const y = source.y + (target.y - source.y) * state.t;
-    if (!onScreen({ x, y }, tail)) {
-      continue;
-    }
-    const length = Math.hypot(target.x - source.x, target.y - source.y) || 1;
-    const dirX = (target.x - source.x) / length;
-    const dirY = (target.y - source.y) / length;
-    const tailX = x - dirX * tail;
-    const tailY = y - dirY * tail;
-
-    const trail = context.createLinearGradient(tailX, tailY, x, y);
-    trail.addColorStop(0, 'transparent');
-    trail.addColorStop(1, palette.accent);
-    context.strokeStyle = trail;
-    context.lineWidth = head * 0.9;
-    context.beginPath();
-    context.moveTo(tailX, tailY);
-    context.lineTo(x, y);
-    context.stroke();
-
-    const glow = context.createRadialGradient(x, y, 0, x, y, head * 1.8);
-    glow.addColorStop(0, palette.accent);
-    glow.addColorStop(1, 'transparent');
-    context.globalAlpha = 0.85;
-    context.fillStyle = glow;
-    context.beginPath();
-    context.arc(x, y, head * 1.8, 0, Math.PI * 2);
-    context.fill();
-    context.globalAlpha = 1;
-
-    context.fillStyle = palette.label;
-    context.beginPath();
-    context.arc(x, y, Math.max(1.2, head * 0.42), 0, Math.PI * 2);
-    context.fill();
+    drawMeteor(context, trail.map(toScreen), headRadius, palette);
     sparksDrawn += 1;
   }
 }
@@ -662,6 +867,53 @@ export function ProjectGraphPanel({
     graphState.layoutMode === 'orbit'
       ? translate('graph.orbitTitle')
       : translate('rail.graph');
+  const openInTabLabel = translate(
+    graphState.layoutMode === 'orbit'
+      ? 'graph.openOrbitInTab'
+      : 'graph.openGraphInTab',
+  );
+  const openSettingsLabel = translate(
+    graphState.layoutMode === 'orbit'
+      ? 'graph.openOrbitSettings'
+      : 'graph.openGraphSettings',
+  );
+  const folderMenuItems = useMemo<readonly MenuItem[]>(() => {
+    if (!folderPopup) {
+      return [];
+    }
+    const count = folderPopup.notes.length + folderPopup.subfolders.length;
+    const items: MenuItem[] = [
+      {
+        id: 'folder-summary',
+        kind: 'label',
+        label: `${folderPopup.name} · ${count}`,
+      },
+    ];
+    folderPopup.subfolders.forEach((folder, index) => {
+      items.push({
+        id: `folder-${index}`,
+        icon: folderIcon,
+        kind: 'action',
+        label: folder.name,
+      });
+    });
+    folderPopup.notes.forEach((note, index) => {
+      items.push({
+        id: `note-${index}`,
+        icon: noteIcon,
+        kind: 'action',
+        label: note.name,
+      });
+    });
+    if (count === 0) {
+      items.push({
+        id: 'folder-empty',
+        kind: 'label',
+        label: translate('graph.folderEmpty'),
+      });
+    }
+    return items;
+  }, [folderPopup, translate]);
 
   useLayoutEffect(() => {
     controller.restoreView(initialViewState);
@@ -845,10 +1097,6 @@ export function ProjectGraphPanel({
     }
     const layout = graphState.layout;
     const orbit = buildProjectGraphOrbit(graphState.graph, { rootName });
-    const sparks = new Map<string, OrbitSpark>();
-    orbit.systems.forEach((system, index) => {
-      sparks.set(system.sun.id, { edgePos: 0, t: (index * 0.37) % 1 });
-    });
     const runtime: GraphRuntime = {
       camera: controller.camera,
       dirty: true,
@@ -857,14 +1105,18 @@ export function ProjectGraphPanel({
       lastFrame: performance.now(),
       layoutFrames: 0,
       labels: new Map(labelRefs.current),
+      meteorTours: orbit.systems.map((system) =>
+        buildProjectGraphMeteorTour(system.edgeIndices, orbit.edges),
+      ),
+      meteors: orbit.systems.map(() => ({ segIndex: 0, t: 0 })),
+      meteorTrails: orbit.systems.map(() => []),
       mode: controller.getLayoutMode(),
       orbit,
-      orbitClock: 0,
+      orbitClock: controller.getOrbitClock(),
       palette: graphPalette(),
       particlePhase: 0,
       particlesActive: false,
       selectedId: controller.getSelectedNodeId(),
-      sparks,
       settings: controller.getSnapshot().settings,
       visible: true,
       width: canvas.clientWidth,
@@ -901,7 +1153,7 @@ export function ProjectGraphPanel({
       if (runtime.mode === 'orbit') {
         if (!reduced) {
           runtime.orbitClock = (runtime.orbitClock + elapsed) % 100_000;
-          advanceSparks(runtime, elapsed);
+          controller.setOrbitClock(runtime.orbitClock);
           moving = true;
         }
         positionProjectGraphOrbit(runtime.orbit, runtime.orbitClock, reduced);
@@ -959,7 +1211,7 @@ export function ProjectGraphPanel({
 
       if (runtime.dirty || moving) {
         if (runtime.mode === 'orbit') {
-          drawOrbit(canvas, runtime);
+          drawOrbit(canvas, runtime, elapsed, reduced);
         } else {
           drawGraph(canvas, runtime);
         }
@@ -1130,13 +1382,7 @@ export function ProjectGraphPanel({
         if (kind === 'note') {
           onOpenNodeRef.current(orbitBodyToGraphNode(body));
         } else {
-          const screen = projectGraphWorldToScreen(
-            body,
-            runtime.camera,
-            runtime.width,
-            runtime.height,
-          );
-          onOpenSystemRef.current?.(body, screen.x, screen.y);
+          onOpenSystemRef.current?.(body, event.clientX, event.clientY);
         }
       } else if (pointer.node) {
         pointer.node.pinned = false;
@@ -1209,6 +1455,7 @@ export function ProjectGraphPanel({
     wake();
 
     return () => {
+      controller.setOrbitClock(runtime.orbitClock);
       if (runtime.raf !== undefined) {
         window.cancelAnimationFrame(runtime.raf);
       }
@@ -1287,6 +1534,7 @@ export function ProjectGraphPanel({
       aria-busy={graphState.refreshing}
       aria-label={surfaceName}
       className={`${variant === 'sidebar' ? 'home__sidebar ' : ''}project-graph`}
+      data-mode={graphState.layoutMode}
       data-variant={variant}
     >
       <header className="project-graph__header">
@@ -1294,13 +1542,13 @@ export function ProjectGraphPanel({
         <div className="project-graph__actions">
           {onOpenInTab ? (
             <button
-              aria-label={translate('graph.openInTab')}
+              aria-label={openInTabLabel}
               className="project-graph__action"
               onClick={onOpenInTab}
               type="button"
-              {...getTooltipTargetProps(translate('graph.openInTab'), 'bottom')}
+              {...getTooltipTargetProps(openInTabLabel, 'bottom')}
             >
-              <MaskedIcon icon={expandIcon} />
+              <MaskedIcon icon={openInTabIcon} />
             </button>
           ) : null}
           <button
@@ -1320,13 +1568,13 @@ export function ProjectGraphPanel({
           {variant === 'page' ? (
             <button
               aria-expanded={settingsOpen}
-              aria-label={translate('graph.openSettings')}
+              aria-label={openSettingsLabel}
               className="project-graph__action"
               onClick={() => setSettingsOpen((open) => !open)}
               ref={settingsButtonRef}
               type="button"
               {...getTooltipTargetProps(
-                translate('graph.openSettings'),
+                openSettingsLabel,
                 'bottom',
               )}
             >
@@ -1367,71 +1615,29 @@ export function ProjectGraphPanel({
             <p className="project-graph__empty">{translate('graph.empty')}</p>
           ) : null}
           {folderPopup ? (
-            <>
-              <button
-                aria-label={translate('graph.closeFolder')}
-                className="project-graph__folder-backdrop"
-                onClick={() => setFolderPopup(null)}
-                tabIndex={-1}
-                type="button"
-              />
-              <div
-                aria-label={folderPopup.name}
-                className="project-graph__folder"
-                onKeyDown={(event) => {
-                  if (event.key === 'Escape') {
-                    event.preventDefault();
-                    setFolderPopup(null);
+            <ContextMenu
+              ariaLabel={folderPopup.name}
+              items={folderMenuItems}
+              onAction={(actionId) => {
+                const [kind, indexValue] = actionId.split('-');
+                const index = Number(indexValue);
+                if (kind === 'folder') {
+                  const folder = folderPopup.subfolders[index];
+                  if (folder) {
+                    focusOrbitBody(folder.id);
                   }
-                }}
-                role="dialog"
-                style={{
-                  left: `${folderPopup.x}px`,
-                  top: `${folderPopup.y}px`,
-                }}
-              >
-                <header className="project-graph__folder-header">
-                  <h3>
-                    <TwemojiText text={folderPopup.name} />
-                  </h3>
-                  <span>{folderPopup.notes.length + folderPopup.subfolders.length}</span>
-                </header>
-                <ul className="project-graph__folder-list">
-                  {folderPopup.subfolders.map((folder) => (
-                    <li key={folder.id}>
-                      <button
-                        className="project-graph__folder-item"
-                        data-kind="folder"
-                        onClick={() => focusOrbitBody(folder.id)}
-                        type="button"
-                      >
-                        <TwemojiText text={`📁 ${folder.name}`} />
-                      </button>
-                    </li>
-                  ))}
-                  {folderPopup.notes.map((note) => (
-                    <li key={note.nodeId}>
-                      <button
-                        className="project-graph__folder-item"
-                        data-kind="note"
-                        onClick={() => {
-                          setFolderPopup(null);
-                          onOpenNode(note);
-                        }}
-                        type="button"
-                      >
-                        <TwemojiText text={note.name} />
-                      </button>
-                    </li>
-                  ))}
-                  {folderPopup.notes.length + folderPopup.subfolders.length === 0 ? (
-                    <li className="project-graph__folder-empty">
-                      {translate('graph.folderEmpty')}
-                    </li>
-                  ) : null}
-                </ul>
-              </div>
-            </>
+                  return;
+                }
+                const note = folderPopup.notes[index];
+                if (kind === 'note' && note) {
+                  setFolderPopup(null);
+                  onOpenNode(note);
+                }
+              }}
+              onClose={() => setFolderPopup(null)}
+              x={folderPopup.x}
+              y={folderPopup.y}
+            />
           ) : null}
         </div>
         {variant === 'page' && settingsOpen ? (

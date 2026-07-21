@@ -47,6 +47,7 @@ export class ProjectGraphController {
   readonly camera = createCamera();
 
   private cameraReady = false;
+  private orbitClock = 0;
   private lastRefreshSignal: unknown;
   private listeners = new Set<() => void>();
   private refreshSequence = 0;
@@ -95,6 +96,19 @@ export class ProjectGraphController {
 
   getLayoutMode(): ProjectGraphLayoutMode {
     return this.snapshot.layoutMode;
+  }
+
+  getLayoutModeSnapshot = (): ProjectGraphLayoutMode =>
+    this.snapshot.layoutMode;
+
+  getOrbitClock(): number {
+    return this.orbitClock;
+  }
+
+  setOrbitClock(orbitClock: number): void {
+    if (Number.isFinite(orbitClock)) {
+      this.orbitClock = Math.max(0, orbitClock % 100_000);
+    }
   }
 
   setLayoutMode(layoutMode: ProjectGraphLayoutMode): void {

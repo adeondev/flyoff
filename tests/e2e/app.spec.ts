@@ -543,13 +543,17 @@ test.describe('Flyoff desktop shell', () => {
       document.documentElement.lang === 'en-US'
         ? {
             chooseLocation: 'Choose location',
+            canvas: 'Canvas',
+            closeOrbitSettings: 'Close Orbit settings',
             closePrefix: 'Close tab',
             closeProject: 'Close den',
             create: 'Create',
             editor: 'Markdown editor',
-            graph: 'Graph',
+            graph: 'Orbit',
             graphCanvas: 'Graph of connections between notes',
-            graphInTab: 'Open graph in a tab',
+            graphInTab: 'Open Orbit in a tab',
+            openOrbitSettings: 'Adjust Orbit',
+            orbitSettings: 'Orbit settings',
             home: 'Home',
             name: 'Name',
             newNote: 'New note',
@@ -565,13 +569,17 @@ test.describe('Flyoff desktop shell', () => {
           }
         : {
             chooseLocation: 'Escolher local',
+            canvas: 'Canvas',
+            closeOrbitSettings: 'Fechar ajustes da Órbita',
             closePrefix: 'Fechar aba',
             closeProject: 'Fechar toca',
             create: 'Criar',
             editor: 'Editor Markdown',
-            graph: 'Grafo',
+            graph: 'Órbita',
             graphCanvas: 'Grafo de conexões entre notas',
-            graphInTab: 'Abrir grafo em uma aba',
+            graphInTab: 'Abrir Órbita em uma aba',
+            openOrbitSettings: 'Ajustar Órbita',
+            orbitSettings: 'Ajustes da Órbita',
             home: 'Início',
             name: 'Nome',
             newNote: 'Nova nota',
@@ -672,7 +680,7 @@ test.describe('Flyoff desktop shell', () => {
     const rail = page.getByRole('navigation', {
       name: labels.projectSections,
     });
-    await expect(rail.getByRole('button')).toHaveCount(5);
+    await expect(rail.getByRole('button')).toHaveCount(9);
     const graphResult = await page.evaluate(() => window.flyoff.getProjectGraph());
     expect(graphResult.ok).toBe(true);
     if (graphResult.ok) {
@@ -687,9 +695,64 @@ test.describe('Flyoff desktop shell', () => {
       page.getByRole('img', { name: labels.graphCanvas }),
     ).toBeVisible();
     await page.getByRole('button', { name: labels.graphInTab }).click();
-    await expect(
-      page.getByRole('tab', { exact: true, name: labels.graph }),
-    ).toHaveAttribute('aria-selected', 'true');
+    const graphTab = page.getByRole('tab', {
+      exact: true,
+      name: labels.graph,
+    });
+    const graphRailButton = rail.getByRole('button', {
+      exact: true,
+      name: labels.graph,
+    });
+    await expect(graphTab).toHaveAttribute('aria-selected', 'true');
+    await expect(graphRailButton).toHaveAttribute('aria-current', 'page');
+    await expect
+      .poll(async () => {
+        const [tabIcon, railIcon] = await Promise.all([
+          graphTab.locator('.page-tab__icon').getAttribute('style'),
+          graphRailButton.locator('.icon-rail__icon').getAttribute('style'),
+        ]);
+        return tabIcon === railIcon;
+      })
+      .toBe(true);
+    const graphViewport = page.locator(
+      '.project-graph[data-variant="page"] .project-graph__viewport',
+    );
+    const viewportWidth = await graphViewport.evaluate(
+      (element) => element.getBoundingClientRect().width,
+    );
+    await page
+      .getByRole('button', { name: labels.openOrbitSettings })
+      .click();
+    const graphSettings = page.getByRole('complementary', {
+      name: labels.orbitSettings,
+    });
+    await expect(graphSettings).toBeVisible();
+    expect(
+      await graphSettings.evaluate((element) => getComputedStyle(element).position),
+    ).toBe('absolute');
+    await expect
+      .poll(() =>
+        graphViewport.evaluate((element) => element.getBoundingClientRect().width),
+      )
+      .toBe(viewportWidth);
+    await graphSettings
+      .getByRole('button', { name: labels.closeOrbitSettings })
+      .click();
+    await expect(graphSettings).toHaveCount(0);
+    const canvasRailButton = rail.getByRole('button', {
+      exact: true,
+      name: labels.canvas,
+    });
+    await canvasRailButton.click();
+    await expect(canvasRailButton).toHaveAttribute('aria-current', 'page');
+    await expect(graphRailButton).not.toHaveAttribute('aria-current');
+    const projectRailButton = rail.getByRole('button', {
+      exact: true,
+      name: labels.projectRail,
+    });
+    await projectRailButton.click();
+    await expect(projectRailButton).toHaveAttribute('aria-current', 'page');
+    await expect(graphRailButton).not.toHaveAttribute('aria-current');
     await expect(
       page.getByRole('img', { name: labels.graphCanvas }),
     ).toBeVisible();
@@ -701,9 +764,7 @@ test.describe('Flyoff desktop shell', () => {
         name: `${labels.closePrefix}: ${labels.graph}`,
       })
       .click();
-    await rail
-      .getByRole('button', { exact: true, name: labels.projectRail })
-      .click();
+    await projectRailButton.click();
     await page.getByRole('tab', { exact: true, name: noteName }).click();
     const search = page.getByRole('searchbox', {
       name: labels.searchProject,
