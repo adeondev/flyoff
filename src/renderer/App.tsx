@@ -5,6 +5,7 @@ import {
   useReducer,
   useRef,
   useState,
+  useSyncExternalStore,
   type CSSProperties,
 } from 'react';
 import { flushSync } from 'react-dom';
@@ -17,7 +18,8 @@ import infoMenuIcon from '../../public/images/icons/actions/info.svg';
 import refreshMenuIcon from '../../public/images/icons/actions/refresh.svg';
 import markdownPageIcon from '../../public/images/icons/instances/note-solid.svg';
 import projectOverviewIcon from '../../public/images/icons/instances/project.svg';
-import projectGraphIcon from '../../public/images/icons/navigation/graph.svg';
+import projectGraphIcon from '../../newicons/grafo.svg';
+import projectOrbitIcon from '../../newicons/orbita.svg';
 import {
   APPLICATION_MENU_COMMANDS,
   APPLICATION_MENU_DEFINITIONS,
@@ -79,8 +81,8 @@ import { PanelResizer, useWorkspaceLayout } from './components/layout';
 import {
   IconRail,
   PlaceholderPanel,
-  RAIL_VIEWS,
   RAIL_VIEW_IDS,
+  createRailViews,
   resolveRailView,
 } from './components/rail';
 import { GlobalSidebar } from './components/Sidebar';
@@ -138,6 +140,7 @@ import {
   createProjectGraphPageState,
   projectNodeDisplayName,
   projectNodeLogicalPath,
+  projectTreeNodeEqual,
   readProjectGraphViewState,
   resolveProjectNodeLineage,
   useProjectPageProperties,
@@ -504,6 +507,10 @@ export function App() {
     { kind: 'markdown'; nodeId: string } | { kind: 'native' }
   >(undefined);
   const layout = useWorkspaceLayout();
+  const [railSelection, setRailSelection] = useState<{
+    tabId: string | null;
+    viewId: string;
+  }>();
   const preferencesController = useFlyoffPreferencesController();
   const setRailViewId = layout.setRailViewId;
   const adjustNoteFontScale = layout.adjustNoteFontScale;
@@ -553,6 +560,15 @@ export function App() {
   const projectGraphController = useMemo(
     () => new ProjectGraphController(project?.projectId),
     [project?.projectId],
+  );
+  const graphLayoutMode = useSyncExternalStore(
+    projectGraphController.subscribe,
+    projectGraphController.getLayoutModeSnapshot,
+    projectGraphController.getLayoutModeSnapshot,
+  );
+  const railViews = useMemo(
+    () => createRailViews(graphLayoutMode),
+    [graphLayoutMode],
   );
 
   useEffect(() => {
@@ -606,7 +622,15 @@ export function App() {
 
   const cacheProjectNodes = useCallback(
     (nodes: readonly ProjectTreeNode[]): void => {
-      const next = new Map(projectNodesRef.current);
+      const current = projectNodesRef.current;
+      const unchanged = nodes.every((node) => {
+        const existing = current.get(node.nodeId);
+        return existing !== undefined && projectTreeNodeEqual(existing, node);
+      });
+      if (unchanged) {
+        return;
+      }
+      const next = new Map(current);
       for (const node of nodes) {
         next.set(node.nodeId, node);
       }
@@ -1104,6 +1128,10 @@ export function App() {
   // instead of duplicating it in the sidebar.
   const selectRailView = useCallback(
     (railViewId: string) => {
+      setRailSelection({
+        tabId: selectActiveTabs(workspaceStateRef.current).activeTabId,
+        viewId: railViewId,
+      });
       if (railViewId === RAIL_VIEW_IDS.graph) {
         const projectWorkspace = workspaceStateRef.current.project;
         const openGraphTab =
@@ -2558,8 +2586,11 @@ export function App() {
 
       if (target.type === 'project-graph') {
         return {
-          title: translate('graph.orbitTitle'),
-          icon: projectGraphIcon,
+          title: translate(
+            graphLayoutMode === 'orbit' ? 'graph.orbitTitle' : 'rail.graph',
+          ),
+          icon:
+            graphLayoutMode === 'orbit' ? projectOrbitIcon : projectGraphIcon,
         };
       }
 
@@ -2573,7 +2604,7 @@ export function App() {
           markdownPageIcon,
       };
     },
-    [project, projectNodes, translate],
+    [graphLayoutMode, project, projectNodes, translate],
   );
 
   const frequentNewTabNotes = useMemo(() => {
@@ -2755,6 +2786,13 @@ export function App() {
       : INTERNAL_PAGE_IDS.home;
   const activeProjectTarget =
     activeTab?.target.type !== 'internal' ? activeTab?.target : undefined;
+  const graphTabActive = activeProjectTarget?.type === 'project-graph';
+  const activeRailViewId =
+    railSelection && railSelection.tabId === activeTab?.tabId
+      ? railSelection.viewId
+      : graphTabActive
+        ? RAIL_VIEW_IDS.graph
+        : layout.railViewId;
   const activeProjectNodePath = useMemo(() => {
     if (activeProjectTarget?.type !== 'project-content') {
       return [];
@@ -2811,12 +2849,12 @@ export function App() {
           />
         ) : (
           <IconRail
-            activeViewId={layout.railViewId}
+            activeViewId={activeRailViewId}
             onSelect={selectRailView}
             onToggleSidebar={layout.toggleCollapsed}
             sidebarCollapsed={layout.collapsed}
             translate={translate}
-            views={RAIL_VIEWS}
+            views={railViews}
           />
         )}
         {project ? (
@@ -2876,7 +2914,6 @@ export function App() {
             onTrashNode={trashProjectNode}
             onTrashNodes={trashProjectNodes}
             overviewActive={
-              layout.railViewId !== RAIL_VIEW_IDS.settings &&
               activeProjectTarget?.type === 'project-overview'
             }
             project={project}
@@ -2918,8 +2955,10 @@ export function App() {
         layout.railViewId !== RAIL_VIEW_IDS.graph ? (
           <PlaceholderPanel
             hint={translate('rail.comingSoon')}
-            icon={resolveRailView(layout.railViewId).icon}
-            title={translate(resolveRailView(layout.railViewId).labelKey)}
+            icon={resolveRailView(layout.railViewId, graphLayoutMode).icon}
+            title={translate(
+              resolveRailView(layout.railViewId, graphLayoutMode).labelKey,
+            )}
           />
         ) : null}
         <div className="page-workspace">

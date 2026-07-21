@@ -342,6 +342,85 @@ describe('tab components', () => {
     expect(screen.queryByTestId(content.tabId)).toBeNull();
   });
 
+  it('surfaces a page crash with its message and recovers on retry', () => {
+    const consoleError = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
+    const state = { throwing: true };
+    const CrashingPage = (): null => {
+      if (state.throwing) {
+        throw new Error('boom in note');
+      }
+      return null;
+    };
+    const properties = {
+      tabs: [home, content],
+      translate: (key: string) => key,
+      getPresentation: (tab: TabDescriptor) => ({
+        title: tab.tabId,
+        icon: 'page.svg',
+      }),
+      renderPage: ({ descriptor }: { descriptor: TabDescriptor }) =>
+        descriptor.tabId === content.tabId ? (
+          <CrashingPage />
+        ) : (
+          <div data-testid={descriptor.tabId}>{descriptor.tabId}</div>
+        ),
+      onPageStateChange: vi.fn(),
+      onScrollChange: vi.fn(),
+    };
+    render(<PageHost activeTabId={content.tabId} {...properties} />);
+
+    expect(screen.getByText('pages.failed')).toBeTruthy();
+    expect(screen.getByText('boom in note')).toBeTruthy();
+
+    state.throwing = false;
+    fireEvent.click(screen.getByRole('button', { name: 'pages.retry' }));
+
+    expect(screen.queryByText('pages.failed')).toBeNull();
+    consoleError.mockRestore();
+  });
+
+  it('clears a page crash when the tab is reactivated', () => {
+    const consoleError = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
+    const state = { throwing: true };
+    const CrashingPage = (): null => {
+      if (state.throwing) {
+        throw new Error('boom');
+      }
+      return null;
+    };
+    const properties = {
+      tabs: [home, content],
+      translate: (key: string) => key,
+      getPresentation: (tab: TabDescriptor) => ({
+        title: tab.tabId,
+        icon: 'page.svg',
+      }),
+      renderPage: ({ descriptor }: { descriptor: TabDescriptor }) =>
+        descriptor.tabId === content.tabId ? (
+          <CrashingPage />
+        ) : (
+          <div data-testid={descriptor.tabId}>{descriptor.tabId}</div>
+        ),
+      onPageStateChange: vi.fn(),
+      onScrollChange: vi.fn(),
+    };
+    const view = render(
+      <PageHost activeTabId={content.tabId} {...properties} />,
+    );
+    expect(screen.getByText('pages.failed')).toBeTruthy();
+
+    state.throwing = false;
+    view.rerender(<PageHost activeTabId={home.tabId} {...properties} />);
+    view.rerender(<PageHost activeTabId={content.tabId} {...properties} />);
+
+    expect(screen.queryByText('pages.failed')).toBeNull();
+    consoleError.mockRestore();
+  });
+
   it('keeps the real tab mounted until its 120 ms exit finishes', async () => {
     const animations = installElementAnimations();
     const presentations = new Map([
