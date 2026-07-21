@@ -13,7 +13,7 @@ playwright-report/
 /Flyoff-*-arm64*/
 
 # Stray scratch directories
-/newicons/
+/newicons/paleta.svg
 /.agents/
 
 .env

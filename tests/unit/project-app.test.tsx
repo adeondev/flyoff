@@ -1521,13 +1521,13 @@ describe('project workspace integration', () => {
     const rail = screen.getByRole('navigation', {
       name: 'Den sections',
     });
-    expect(within(rail).getAllByRole('button')).toHaveLength(5);
+    expect(within(rail).getAllByRole('button')).toHaveLength(9);
     expect(screen.getByRole('searchbox', { name: 'Search this den' })).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'About Flyoff' }));
     expect(api.executeMenuCommand).toHaveBeenCalledWith('help.about');
 
-    fireEvent.click(within(rail).getByRole('button', { name: 'Settings' }));
+    fireEvent.click(within(rail).getByRole('button', { name: 'Properties' }));
     expect(await screen.findByText('Coming soon.')).toBeTruthy();
     expect(
       screen.queryByRole('complementary', { name: 'Den contents' }),

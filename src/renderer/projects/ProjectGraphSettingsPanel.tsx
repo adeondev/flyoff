@@ -1,4 +1,5 @@
 import closeIcon from '../../../public/images/icons/actions/close-pane.svg';
+import type { CSSProperties } from 'react';
 import { MaskedIcon } from '../components/MaskedIcon';
 import { getTooltipTargetProps } from '../components/tooltip';
 import type { Translate } from '../pages/page-types';
@@ -140,6 +141,15 @@ function GraphSettingsGroup({
                 onChange(definition.key, event.currentTarget.valueAsNumber)
               }
               step={limits.step}
+              style={
+                {
+                  '--graph-setting-progress': `${
+                    ((value - limits.minimum) /
+                      (limits.maximum - limits.minimum)) *
+                    100
+                  }%`,
+                } as CSSProperties
+              }
               type="range"
               value={value}
             />
@@ -168,9 +178,17 @@ export function ProjectGraphSettingsPanel({
   settings,
   translate,
 }: ProjectGraphSettingsPanelProps) {
+  const title = translate(
+    layoutMode === 'orbit' ? 'graph.orbitSettings' : 'graph.graphSettings',
+  );
+  const closeLabel = translate(
+    layoutMode === 'orbit'
+      ? 'graph.closeOrbitSettings'
+      : 'graph.closeGraphSettings',
+  );
   return (
     <aside
-      aria-label={translate('graph.settings')}
+      aria-label={title}
       className="project-graph-settings"
       onKeyDown={(event) => {
         if (event.key === 'Escape') {
@@ -180,13 +198,13 @@ export function ProjectGraphSettingsPanel({
       }}
     >
       <header className="project-graph-settings__header">
-        <h3>{translate('graph.settings')}</h3>
+        <h3>{title}</h3>
         <button
-          aria-label={translate('graph.closeSettings')}
-          className="project-graph__action"
+          aria-label={closeLabel}
+          className="project-graph-settings__close"
           onClick={onClose}
           type="button"
-          {...getTooltipTargetProps(translate('graph.closeSettings'), 'bottom')}
+          {...getTooltipTargetProps(closeLabel, 'bottom')}
         >
           <MaskedIcon icon={closeIcon} />
         </button>

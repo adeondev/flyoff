@@ -31,8 +31,14 @@ describe('project graph settings panel', () => {
       />,
     );
 
+    const distance = screen.getByRole('slider', {
+      name: 'graph.nodeDistance',
+    });
+    expect(distance.style.getPropertyValue('--graph-setting-progress')).not.toBe(
+      '',
+    );
     fireEvent.change(
-      screen.getByRole('slider', { name: 'graph.nodeDistance' }),
+      distance,
       { target: { value: '180' } },
     );
     expect(onChange).toHaveBeenCalledWith('nodeDistance', 180);
@@ -45,7 +51,7 @@ describe('project graph settings panel', () => {
       screen.getByRole('button', { name: 'graph.resetSettings' }),
     );
     fireEvent.keyDown(
-      screen.getByRole('complementary', { name: 'graph.settings' }),
+      screen.getByRole('complementary', { name: 'graph.orbitSettings' }),
       { key: 'Escape' },
     );
 

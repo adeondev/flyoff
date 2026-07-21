@@ -1264,8 +1264,32 @@ html[data-workspace-dragging] *::after {
   min-height: 100%;
   padding: 32px;
   place-items: center;
+  align-content: center;
+  gap: 12px;
   color: var(--color-text-muted);
   font-size: 14px;
+  text-align: center;
+}
+
+.page-error__detail {
+  max-width: 52ch;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  opacity: 0.85;
+  overflow-wrap: anywhere;
+}
+
+.page-error__retry {
+  padding: 6px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.page-error__retry:hover {
+  background: var(--color-surface-active);
 }
 
 .session-restore__actions {

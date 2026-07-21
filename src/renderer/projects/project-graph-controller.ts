@@ -7,6 +7,7 @@ import {
   type ProjectGraphCamera,
   type ProjectGraphLayout,
 } from './project-graph-layout';
+import { projectGraphSnapshotEqual } from './project-graph-snapshot';
 import {
   DEFAULT_PROJECT_GRAPH_SETTINGS,
   normalizeProjectGraphSettings,
@@ -47,6 +48,7 @@ export class ProjectGraphController {
   readonly camera = createCamera();
 
   private cameraReady = false;
+  private orbitClock = 0;
   private lastRefreshSignal: unknown;
   private listeners = new Set<() => void>();
   private refreshSequence = 0;
@@ -95,6 +97,19 @@ export class ProjectGraphController {
 
   getLayoutMode(): ProjectGraphLayoutMode {
     return this.snapshot.layoutMode;
+  }
+
+  getLayoutModeSnapshot = (): ProjectGraphLayoutMode =>
+    this.snapshot.layoutMode;
+
+  getOrbitClock(): number {
+    return this.orbitClock;
+  }
+
+  setOrbitClock(orbitClock: number): void {
+    if (Number.isFinite(orbitClock)) {
+      this.orbitClock = Math.max(0, orbitClock % 100_000);
+    }
   }
 
   setLayoutMode(layoutMode: ProjectGraphLayoutMode): void {
@@ -162,6 +177,12 @@ export class ProjectGraphController {
       }
       if (!result.ok) {
         onError(result.error.message);
+        return;
+      }
+      if (projectGraphSnapshotEqual(result.value, this.snapshot.graph)) {
+        // No structural change: keep the existing graph/layout references so
+        // subscribers (the panel runtime) don't rebuild. `finally` clears the
+        // refreshing flag while preserving those identities.
         return;
       }
       const layout = createProjectGraphLayout(
