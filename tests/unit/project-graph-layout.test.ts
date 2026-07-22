@@ -8,7 +8,7 @@ import {
   projectGraphWorldToScreen,
   stepProjectGraphLayout,
 } from '../../src/renderer/projects/project-graph-layout';
-import { DEFAULT_PROJECT_GRAPH_SETTINGS } from '../../src/renderer/projects/project-graph-settings';
+import { DEFAULT_PROJECT_GRAPH_FORCE_SETTINGS } from '../../src/renderer/projects/project-graph-settings';
 import type { ProjectGraphSnapshot } from '../../src/shared/contracts';
 
 const snapshot: ProjectGraphSnapshot = {
@@ -55,7 +55,7 @@ describe('project graph layout', () => {
     const energy = stepProjectGraphLayout(
       layout,
       1 / 60,
-      DEFAULT_PROJECT_GRAPH_SETTINGS,
+      DEFAULT_PROJECT_GRAPH_FORCE_SETTINGS,
     );
     expect(energy).toBeGreaterThan(0);
     expect(layout.nodes.map(({ x, y }) => ({ x, y }))).not.toEqual(before);
@@ -82,10 +82,10 @@ describe('project graph layout', () => {
     stepProjectGraphLayout(
       defaultLayout,
       1 / 60,
-      DEFAULT_PROJECT_GRAPH_SETTINGS,
+      DEFAULT_PROJECT_GRAPH_FORCE_SETTINGS,
     );
     stepProjectGraphLayout(expandedLayout, 1 / 60, {
-      ...DEFAULT_PROJECT_GRAPH_SETTINGS,
+      ...DEFAULT_PROJECT_GRAPH_FORCE_SETTINGS,
       nodeDistance: 220,
       repulsion: 14_000,
     });

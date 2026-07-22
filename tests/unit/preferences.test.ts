@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { PreferencesStore } from '../../src/main/preferences';
 import {
   createDefaultFlyoffPreferences,
+  DEFAULT_PROJECT_GRAPH_SETTINGS,
   isFlyoffPreferences,
   normalizeFlyoffPreferences,
   PREFERENCES_MAX_BYTES,
@@ -45,7 +46,8 @@ describe('Flyoff preferences', () => {
     expect(normalized.editor.fontSize).toBe(24);
     expect(normalized.editor.lineHeight).toBe(1.3);
     expect(normalized.spellcheck.languages).toEqual(['pt-BR']);
-    expect(normalized.version).toBe(7);
+    expect(normalized.version).toBe(8);
+    expect(normalized.graph).toEqual(DEFAULT_PROJECT_GRAPH_SETTINGS);
     expect(normalized.editor.emojiRecent).toEqual([]);
     expect(normalized.editor.emojiSkinTone).toBe(0);
     expect(normalized.appearance.accentColor).toBeNull();
@@ -80,7 +82,8 @@ describe('Flyoff preferences', () => {
 
     const migrated = normalizeFlyoffPreferences(previous);
 
-    expect(migrated.version).toBe(7);
+    expect(migrated.version).toBe(8);
+    expect(migrated.graph).toEqual(DEFAULT_PROJECT_GRAPH_SETTINGS);
     expect(migrated.editor.emojiRecent).toEqual([]);
     expect(migrated.editor.emojiSkinTone).toBe(0);
     expect(migrated.appearance.accentColor).toBeNull();
@@ -145,6 +148,9 @@ describe('Flyoff preferences', () => {
     preferences.appearance.theme = 'basalt';
     preferences.editor.defaultMode = 'split';
     preferences.editor.toolbarCollapsed = true;
+    preferences.graph.layoutMode = 'force';
+    preferences.graph.force.nodeDistance = 176;
+    preferences.graph.orbit.spacing = 1.35;
 
     store.save(preferences);
     expect(JSON.parse(readFileSync(store.filePath, 'utf8'))).toEqual(

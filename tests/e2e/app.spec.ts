@@ -554,6 +554,8 @@ test.describe('Flyoff desktop shell', () => {
             graphInTab: 'Open Orbit in a tab',
             openOrbitSettings: 'Adjust Orbit',
             orbitSettings: 'Orbit settings',
+            orbitSpacing: 'Orbit spacing',
+            nodeDistance: 'Node distance',
             home: 'Home',
             name: 'Name',
             newNote: 'New note',
@@ -580,6 +582,8 @@ test.describe('Flyoff desktop shell', () => {
             graphInTab: 'Abrir Órbita em uma aba',
             openOrbitSettings: 'Ajustar Órbita',
             orbitSettings: 'Ajustes da Órbita',
+            orbitSpacing: 'Espaçamento orbital',
+            nodeDistance: 'Distância entre nós',
             home: 'Início',
             name: 'Nome',
             newNote: 'Nova nota',
@@ -727,6 +731,48 @@ test.describe('Flyoff desktop shell', () => {
       name: labels.orbitSettings,
     });
     await expect(graphSettings).toBeVisible();
+    await expect(
+      graphSettings.getByRole('slider', { name: labels.orbitSpacing }),
+    ).toBeVisible();
+    await expect(
+      graphSettings.getByRole('slider', { name: labels.nodeDistance }),
+    ).toHaveCount(0);
+    const settingsAppearance = await graphSettings.evaluate((element) => {
+      const activeMode = element.querySelector<HTMLElement>(
+        '.project-graph-settings__mode[aria-checked="true"]',
+      );
+      const modeGroup = element.querySelector<HTMLElement>(
+        '.project-graph-settings__modes',
+      );
+      const rootStyles = getComputedStyle(document.documentElement);
+      const panelStyles = getComputedStyle(element);
+      const accent = rootStyles.getPropertyValue('--color-accent').trim();
+      const accentRgb = /^#[0-9a-f]{6}$/i.test(accent)
+        ? `rgb(${Number.parseInt(accent.slice(1, 3), 16)}, ${Number.parseInt(
+            accent.slice(3, 5),
+            16,
+          )}, ${Number.parseInt(accent.slice(5, 7), 16)})`
+        : accent;
+      return {
+        activeBackground: activeMode
+          ? getComputedStyle(activeMode).backgroundColor
+          : undefined,
+        accent: accentRgb,
+        borderRadius: panelStyles.borderRadius,
+        modeBorderRadius: activeMode
+          ? getComputedStyle(activeMode).borderRadius
+          : undefined,
+        modeGroupBorderRadius: modeGroup
+          ? getComputedStyle(modeGroup).borderRadius
+          : undefined,
+      };
+    });
+    expect(settingsAppearance).toMatchObject({
+      borderRadius: '7px',
+      modeBorderRadius: '999px',
+      modeGroupBorderRadius: '999px',
+    });
+    expect(settingsAppearance.activeBackground).toBe(settingsAppearance.accent);
     expect(
       await graphSettings.evaluate((element) => getComputedStyle(element).position),
     ).toBe('absolute');

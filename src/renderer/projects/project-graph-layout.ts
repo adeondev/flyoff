@@ -2,7 +2,7 @@ import type {
   ProjectGraphNode,
   ProjectGraphSnapshot,
 } from '../../shared/contracts';
-import type { ProjectGraphSettings } from './project-graph-settings';
+import type { ProjectGraphForceSettings } from './project-graph-settings';
 
 export interface ProjectGraphLayoutNode extends ProjectGraphNode {
   pinned: boolean;
@@ -103,7 +103,7 @@ export function createProjectGraphLayout(
 export function stepProjectGraphLayout(
   layout: ProjectGraphLayout,
   elapsedSeconds: number,
-  settings: ProjectGraphSettings,
+  settings: ProjectGraphForceSettings,
 ): number {
   const delta = Math.min(
     0.05,

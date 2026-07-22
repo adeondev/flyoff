@@ -24,6 +24,7 @@ import type { Translate } from '../pages/page-types';
 import { MaskedIcon } from '../components/MaskedIcon';
 import { ContextMenu, type MenuItem } from '../components/menu';
 import { getTooltipTargetProps } from '../components/tooltip';
+import { useFlyoffPreferences } from '../preferences';
 import type { ProjectGraphController } from './project-graph-controller';
 import { ProjectGraphSettingsPanel } from './ProjectGraphSettingsPanel';
 import {
@@ -43,16 +44,19 @@ import {
   type ProjectGraphOrbitLayout,
 } from './project-graph-orbit';
 import {
-  advanceMeteorCursor,
-  buildProjectGraphMeteorTour,
-  cubicBezierPoint,
-  orbitArcPoint,
-  shortestOrbitSweep,
-  type ProjectGraphMeteorCursor,
-  type ProjectGraphMeteorPoint,
-} from './project-graph-meteor';
+  beginProjectGraphOrbitDrag,
+  createProjectGraphOrbitMotion,
+  endProjectGraphOrbitDrag,
+  getProjectGraphOrbitPosition,
+  hasProjectGraphOrbitMotion,
+  moveProjectGraphOrbitBody,
+  stepProjectGraphOrbitMotion,
+  updateProjectGraphOrbitPositions,
+  type ProjectGraphOrbitMotion,
+} from './project-graph-orbit-motion';
 import {
-  DEFAULT_PROJECT_GRAPH_SETTINGS,
+  resetProjectGraphModeSettings,
+  type ProjectGraphForceSettings,
   type ProjectGraphSettings,
 } from './project-graph-settings';
 import type {
@@ -87,6 +91,8 @@ interface PointerSession {
   node?: ProjectGraphLayoutNode;
   orbitHit?: OrbitHit;
   pointerId: number;
+  startX: number;
+  startY: number;
 }
 
 interface GraphPalette {
@@ -108,12 +114,10 @@ interface GraphRuntime {
   lastFrame: number;
   layoutFrames: number;
   labels: ReadonlyMap<string, HTMLElement>;
-  meteorTours: readonly string[][];
-  meteors: ProjectGraphMeteorCursor[];
-  meteorTrails: ProjectGraphMeteorPoint[][];
   mode: ProjectGraphLayoutMode;
   orbit: ProjectGraphOrbitLayout;
-  orbitClock: number;
+  orbitFloatFrame: number;
+  orbitMotion: ProjectGraphOrbitMotion;
   palette: GraphPalette;
   particlePhase: number;
   particlesActive: boolean;
@@ -122,6 +126,7 @@ interface GraphRuntime {
   selected?: ProjectGraphLayoutNode;
   selectedId: string | null;
   settings: ProjectGraphSettings;
+  intersecting: boolean;
   visible: boolean;
   wake?: () => void;
   width: number;
@@ -133,6 +138,8 @@ function reducedMotion(): boolean {
     window.matchMedia('(prefers-reduced-motion: reduce)').matches
   );
 }
+
+const ORBIT_FLOAT_FRAME_INTERVAL = 1_000 / 30;
 
 function graphPalette(): GraphPalette {
   const styles = getComputedStyle(document.documentElement);
@@ -150,7 +157,7 @@ function graphPalette(): GraphPalette {
 
 function nodeRadius(
   node: ProjectGraphNode,
-  settings: ProjectGraphSettings,
+  settings: ProjectGraphForceSettings,
 ): number {
   return (
     (4.6 + Math.min(4.8, Math.sqrt(node.connectionCount) * 1.1)) *
@@ -161,8 +168,22 @@ function nodeRadius(
 function fitCamera(runtime: GraphRuntime, immediate = false): void {
   let points: readonly { x: number; y: number }[];
   if (runtime.mode === 'orbit') {
-    positionProjectGraphOrbit(runtime.orbit, runtime.orbitClock, reducedMotion());
-    points = runtime.orbit.bodies;
+    positionProjectGraphOrbit(runtime.orbit);
+    updateProjectGraphOrbitPositions(
+      runtime.orbitMotion,
+      0,
+      runtime.settings.orbit,
+      false,
+      runtime.camera.zoom,
+    );
+    points = runtime.orbit.bodies.flatMap((body) => {
+      const position = orbitBodyPosition(runtime, body);
+      const radius = body.radius * runtime.settings.orbit.bodyScale;
+      return [
+        { x: position.x - radius, y: position.y - radius },
+        { x: position.x + radius, y: position.y + radius },
+      ];
+    });
   } else {
     points = runtime.layout.nodes;
   }
@@ -201,7 +222,7 @@ function hitGraphNode(
     );
     const radius = Math.max(
       10,
-      nodeRadius(node, runtime.settings) * runtime.camera.zoom + 5,
+      nodeRadius(node, runtime.settings.force) * runtime.camera.zoom + 5,
     );
     if (Math.hypot(point.x - screen.x, point.y - screen.y) <= radius) {
       return node;
@@ -284,8 +305,9 @@ function drawGraph(
   context.clearRect(0, 0, runtime.width, runtime.height);
   context.lineCap = 'round';
   context.strokeStyle = runtime.palette.edge;
+  const settings = runtime.settings.force;
 
-  const particleDensity = runtime.settings.linkParticles;
+  const particleDensity = settings.linkParticles;
   const drawParticles = runtime.particlesActive && particleDensity > 0;
   let particlesDrawn = 0;
   let edgeIndex = 0;
@@ -316,7 +338,7 @@ function drawGraph(
     context.globalAlpha = Math.min(0.72, 0.26 + edge.weight * 0.08);
     context.lineWidth =
       Math.min(2.4, 0.75 + Math.log2(edge.weight + 1) * 0.45) *
-      runtime.settings.edgeScale;
+      settings.edgeScale;
     context.beginPath();
     context.moveTo(source.x, source.y);
     context.lineTo(target.x, target.y);
@@ -331,7 +353,7 @@ function drawGraph(
         runtime.particlePhase,
         index,
         particleDensity,
-        runtime.settings.edgeScale,
+        settings.edgeScale,
       );
     }
   }
@@ -348,8 +370,8 @@ function drawGraph(
     const radius = Math.max(
       3.2,
       Math.min(
-        11.5 * runtime.settings.nodeScale,
-        nodeRadius(node, runtime.settings) * runtime.camera.zoom,
+        11.5 * settings.nodeScale,
+        nodeRadius(node, settings) * runtime.camera.zoom,
       ),
     );
     if (
@@ -374,7 +396,7 @@ function drawGraph(
     context.arc(screen.x, screen.y, radius, 0, Math.PI * 2);
     context.fill();
 
-    if (highlighted || runtime.camera.zoom >= runtime.settings.labelZoom) {
+    if (highlighted || runtime.camera.zoom >= settings.labelZoom) {
       if (label) {
         label.hidden = false;
         label.dataset.highlighted = highlighted ? 'true' : 'false';
@@ -389,189 +411,6 @@ function drawGraph(
 }
 
 // ---- Orbit (solar system) mode ----
-
-const METEOR_HEAD_RADIUS = 2.7;
-const SPARK_BUDGET = 200;
-// World units a meteor travels per second. Constant, so the pace stays even
-// whether a hop is short or long; on screen it scales with zoom, as expected.
-const METEOR_WORLD_SPEED = 68;
-// Gap between a planet's surface and the arc the meteor traces around it, so
-// the loop clearly encircles the planet instead of grazing its edge.
-const METEOR_LOOP_MARGIN = 12;
-// Control-handle length as a fraction of the transfer chord; laid along the arc
-// tangents so the swing out of one planet flows into the next without a kink.
-const METEOR_TRANSFER_TENSION = 0.34;
-// The transfer chord between two notes cuts inside their orbit ring; bowing the
-// control points outward (away from the sun) keeps the meteor in the lane
-// between orbits instead of crossing over the sun and other planets.
-const METEOR_TRANSFER_BOW = 0.2;
-const METEOR_TRANSFER_BOW_MAX = 64;
-// A short, clean trail: the head's recent world positions, capped to a fixed
-// world length (no soft gradient or halo). History-based so it stays continuous
-// across arc/transfer boundaries instead of collapsing at each segment start.
-const METEOR_TRAIL_WORLD = 26;
-const METEOR_TRAIL_MAX_POINTS = 48;
-
-interface MeteorWaypoint {
-  center: ProjectGraphMeteorPoint;
-  entryAngle: number;
-  entryPoint: ProjectGraphMeteorPoint;
-  entryTangent: ProjectGraphMeteorPoint;
-  exitPoint: ProjectGraphMeteorPoint;
-  exitTangent: ProjectGraphMeteorPoint;
-  radius: number;
-  sweep: number;
-}
-
-// Resolves a system's planet tour into per-planet arc geometry (in world space),
-// reading the planets' current positions so the path tracks them as they orbit.
-// Returns null when any planet is missing or the tour is too short.
-function meteorWaypoints(
-  tour: readonly string[],
-  byId: ProjectGraphOrbitLayout['byId'],
-): MeteorWaypoint[] | null {
-  const count = tour.length;
-  if (count < 2) {
-    return null;
-  }
-  const bodies = tour.map((id) => byId.get(id));
-  const waypoints: MeteorWaypoint[] = [];
-  for (let index = 0; index < count; index += 1) {
-    const current = bodies[index];
-    const previous = bodies[(index - 1 + count) % count];
-    const next = bodies[(index + 1) % count];
-    if (!current || !previous || !next) {
-      return null;
-    }
-    const center = { x: current.x, y: current.y };
-    const radius = current.radius + METEOR_LOOP_MARGIN;
-    const entryAngle = Math.atan2(previous.y - center.y, previous.x - center.x);
-    const exitAim = Math.atan2(next.y - center.y, next.x - center.x);
-    const sweep = shortestOrbitSweep(entryAngle, exitAim);
-    const exitAngle = entryAngle + sweep;
-    const direction = sweep < 0 ? -1 : 1;
-    waypoints.push({
-      center,
-      entryAngle,
-      entryPoint: orbitArcPoint(center, radius, entryAngle, sweep, 0),
-      entryTangent: {
-        x: -Math.sin(entryAngle) * direction,
-        y: Math.cos(entryAngle) * direction,
-      },
-      exitPoint: orbitArcPoint(center, radius, entryAngle, sweep, 1),
-      exitTangent: {
-        x: -Math.sin(exitAngle) * direction,
-        y: Math.cos(exitAngle) * direction,
-      },
-      radius,
-      sweep,
-    });
-  }
-  return waypoints;
-}
-
-// Even segments are the arc around planet i; odd segments are the transfer from
-// that arc's exit to the next planet's arc entry. `sunCenter` is the system's
-// sun (world space) — the transfer bows away from it so it rides the outer lane.
-function meteorSegmentPoint(
-  waypoints: readonly MeteorWaypoint[],
-  segIndex: number,
-  t: number,
-  sunCenter: ProjectGraphMeteorPoint,
-): ProjectGraphMeteorPoint {
-  const count = waypoints.length;
-  const index = Math.floor(segIndex / 2) % count;
-  const waypoint = waypoints[index]!;
-  if (segIndex % 2 === 0) {
-    return orbitArcPoint(
-      waypoint.center,
-      waypoint.radius,
-      waypoint.entryAngle,
-      waypoint.sweep,
-      t,
-    );
-  }
-  const next = waypoints[(index + 1) % count]!;
-  const chord = Math.hypot(
-    next.entryPoint.x - waypoint.exitPoint.x,
-    next.entryPoint.y - waypoint.exitPoint.y,
-  );
-  const handle = Math.max(1, chord * METEOR_TRANSFER_TENSION);
-  const midX = (waypoint.exitPoint.x + next.entryPoint.x) / 2;
-  const midY = (waypoint.exitPoint.y + next.entryPoint.y) / 2;
-  const radialX = midX - sunCenter.x;
-  const radialY = midY - sunCenter.y;
-  const radialLength = Math.hypot(radialX, radialY) || 1;
-  const bow = Math.min(METEOR_TRANSFER_BOW_MAX, chord * METEOR_TRANSFER_BOW);
-  const bowX = (radialX / radialLength) * bow;
-  const bowY = (radialY / radialLength) * bow;
-  const control1 = {
-    x: waypoint.exitPoint.x + waypoint.exitTangent.x * handle + bowX,
-    y: waypoint.exitPoint.y + waypoint.exitTangent.y * handle + bowY,
-  };
-  const control2 = {
-    x: next.entryPoint.x - next.entryTangent.x * handle + bowX,
-    y: next.entryPoint.y - next.entryTangent.y * handle + bowY,
-  };
-  return cubicBezierPoint(
-    waypoint.exitPoint,
-    control1,
-    control2,
-    next.entryPoint,
-    t,
-  );
-}
-
-function meteorSegmentLength(
-  waypoints: readonly MeteorWaypoint[],
-  segIndex: number,
-  sunCenter: ProjectGraphMeteorPoint,
-): number {
-  if (segIndex % 2 === 0) {
-    const waypoint = waypoints[Math.floor(segIndex / 2) % waypoints.length]!;
-    return waypoint.radius * Math.abs(waypoint.sweep);
-  }
-  let length = 0;
-  let previous = meteorSegmentPoint(waypoints, segIndex, 0, sunCenter);
-  const samples = 6;
-  for (let step = 1; step <= samples; step += 1) {
-    const point = meteorSegmentPoint(waypoints, segIndex, step / samples, sunCenter);
-    length += Math.hypot(point.x - previous.x, point.y - previous.y);
-    previous = point;
-  }
-  return length;
-}
-
-// Draws the flat head plus its short constant-alpha trail. Points are screen
-// space, ordered tail-first with the head last.
-function drawMeteor(
-  context: CanvasRenderingContext2D,
-  points: readonly ProjectGraphMeteorPoint[],
-  radius: number,
-  palette: GraphPalette,
-): void {
-  const head = points[points.length - 1];
-  if (!head) {
-    return;
-  }
-  if (points.length >= 2) {
-    context.lineCap = 'round';
-    context.lineWidth = Math.max(1, radius * 0.7);
-    context.strokeStyle = palette.accent;
-    context.globalAlpha = 0.5;
-    context.beginPath();
-    context.moveTo(points[0]!.x, points[0]!.y);
-    for (let index = 1; index < points.length; index += 1) {
-      context.lineTo(points[index]!.x, points[index]!.y);
-    }
-    context.stroke();
-  }
-  context.globalAlpha = 1;
-  context.fillStyle = palette.accent;
-  context.beginPath();
-  context.arc(head.x, head.y, radius, 0, Math.PI * 2);
-  context.fill();
-}
 
 function setupCanvas(
   canvas: HTMLCanvasElement,
@@ -602,23 +441,41 @@ function orbitBodyToGraphNode(body: ProjectGraphOrbitBody): ProjectGraphNode {
   };
 }
 
+function orbitBodyPosition(
+  runtime: GraphRuntime,
+  body: ProjectGraphOrbitBody,
+): { x: number; y: number } {
+  return getProjectGraphOrbitPosition(runtime.orbitMotion, body);
+}
+
 function hitOrbitBody(
   runtime: GraphRuntime,
   point: { x: number; y: number },
 ): OrbitHit | undefined {
   const { camera, width, height, orbit } = runtime;
+  const { bodyScale } = runtime.settings.orbit;
   for (let index = orbit.notes.length - 1; index >= 0; index -= 1) {
     const body = orbit.notes[index]!;
-    const screen = projectGraphWorldToScreen(body, camera, width, height);
-    const radius = Math.max(9, body.radius * camera.zoom + 4);
+    const screen = projectGraphWorldToScreen(
+      orbitBodyPosition(runtime, body),
+      camera,
+      width,
+      height,
+    );
+    const radius = Math.max(9, body.radius * bodyScale * camera.zoom + 4);
     if (Math.hypot(point.x - screen.x, point.y - screen.y) <= radius) {
       return { body, kind: 'note' };
     }
   }
   for (let index = orbit.suns.length - 1; index >= 0; index -= 1) {
     const body = orbit.suns[index]!;
-    const screen = projectGraphWorldToScreen(body, camera, width, height);
-    const radius = Math.max(12, body.radius * camera.zoom);
+    const screen = projectGraphWorldToScreen(
+      orbitBodyPosition(runtime, body),
+      camera,
+      width,
+      height,
+    );
+    const radius = Math.max(12, body.radius * bodyScale * camera.zoom);
     if (Math.hypot(point.x - screen.x, point.y - screen.y) <= radius) {
       return { body, kind: 'sun' };
     }
@@ -626,18 +483,14 @@ function hitOrbitBody(
   return undefined;
 }
 
-function drawOrbit(
-  canvas: HTMLCanvasElement,
-  runtime: GraphRuntime,
-  elapsed: number,
-  reduced: boolean,
-): void {
+function drawOrbit(canvas: HTMLCanvasElement, runtime: GraphRuntime): void {
   const context = setupCanvas(canvas, runtime);
   if (!context) {
     return;
   }
   const { camera, width, height, orbit, palette } = runtime;
   const { zoom } = camera;
+  const settings = runtime.settings.orbit;
 
   // Orbit mode paints its own labels on the canvas; keep the DOM labels hidden.
   for (const label of runtime.labels.values()) {
@@ -662,11 +515,17 @@ function drawOrbit(
     context.stroke();
   };
   for (const sun of orbit.suns) {
-    const center = projectGraphWorldToScreen(sun, camera, width, height);
+    const center = projectGraphWorldToScreen(
+      orbitBodyPosition(runtime, sun),
+      camera,
+      width,
+      height,
+    );
     const note = orbit.byId.get(sun.memberNoteIds[0] ?? '');
     const childSun = orbit.byId.get(sun.childSunIds[0] ?? '');
-    const noteRadius = (note?.orbitRadius ?? 0) * zoom;
-    const childSunRadius = (childSun?.orbitRadius ?? 0) * zoom;
+    const noteRadius = (note?.orbitRadius ?? 0) * settings.spacing * zoom;
+    const childSunRadius =
+      (childSun?.orbitRadius ?? 0) * settings.spacing * zoom;
     drawRing(center, noteRadius);
     if (Math.abs(childSunRadius - noteRadius) >= 0.5) {
       drawRing(center, childSunRadius);
@@ -678,8 +537,21 @@ function drawOrbit(
   context.lineCap = 'round';
   context.strokeStyle = palette.edge;
   for (const edge of orbit.edges) {
-    const source = projectGraphWorldToScreen(edge.source, camera, width, height);
-    const target = projectGraphWorldToScreen(edge.target, camera, width, height);
+    if (settings.edgeScale === 0) {
+      break;
+    }
+    const source = projectGraphWorldToScreen(
+      orbitBodyPosition(runtime, edge.source),
+      camera,
+      width,
+      height,
+    );
+    const target = projectGraphWorldToScreen(
+      orbitBodyPosition(runtime, edge.target),
+      camera,
+      width,
+      height,
+    );
     if (
       Math.max(source.x, target.x) < -20 ||
       Math.min(source.x, target.x) > width + 20 ||
@@ -691,7 +563,7 @@ function drawOrbit(
     context.globalAlpha = Math.min(0.34, 0.1 + edge.weight * 0.045);
     context.lineWidth =
       Math.min(2, 0.6 + Math.log2(edge.weight + 1) * 0.35) *
-      runtime.settings.edgeScale;
+      settings.edgeScale;
     context.beginPath();
     context.moveTo(source.x, source.y);
     context.lineTo(target.x, target.y);
@@ -703,8 +575,13 @@ function drawOrbit(
   context.textAlign = 'center';
   context.textBaseline = 'top';
   for (const sun of orbit.suns) {
-    const screen = projectGraphWorldToScreen(sun, camera, width, height);
-    const radius = Math.max(3, sun.radius * zoom);
+    const screen = projectGraphWorldToScreen(
+      orbitBodyPosition(runtime, sun),
+      camera,
+      width,
+      height,
+    );
+    const radius = Math.max(3, sun.radius * settings.bodyScale * zoom);
     if (!onScreen(screen, radius + 120)) {
       continue;
     }
@@ -725,8 +602,16 @@ function drawOrbit(
   // Notes orbiting their sun.
   context.font = '11px system-ui, -apple-system, sans-serif';
   for (const note of orbit.notes) {
-    const screen = projectGraphWorldToScreen(note, camera, width, height);
-    const radius = Math.max(2.6, Math.min(9, note.radius * zoom));
+    const screen = projectGraphWorldToScreen(
+      orbitBodyPosition(runtime, note),
+      camera,
+      width,
+      height,
+    );
+    const radius = Math.max(
+      2.6,
+      Math.min(9 * settings.bodyScale, note.radius * settings.bodyScale * zoom),
+    );
     if (!onScreen(screen, radius + 90)) {
       continue;
     }
@@ -740,7 +625,7 @@ function drawOrbit(
     context.beginPath();
     context.arc(screen.x, screen.y, radius, 0, Math.PI * 2);
     context.fill();
-    if (highlighted || zoom >= runtime.settings.labelZoom) {
+    if (highlighted || zoom >= settings.labelZoom) {
       context.lineJoin = 'round';
       context.strokeStyle = palette.surface;
       context.lineWidth = 3;
@@ -748,77 +633,6 @@ function drawOrbit(
       context.fillStyle = palette.label;
       context.fillText(note.name, screen.x, screen.y + radius + 4, 160);
     }
-  }
-
-  // Meteors are pure motion decoration, so they stay frozen (and unpainted)
-  // when the user prefers reduced motion.
-  if (reduced) {
-    return;
-  }
-  let sparksDrawn = 0;
-  const headRadius = Math.max(
-    1.8,
-    METEOR_HEAD_RADIUS * Math.min(1.45, zoom),
-  );
-  const toScreen = (point: ProjectGraphMeteorPoint) =>
-    projectGraphWorldToScreen(point, camera, width, height);
-  for (let systemIndex = 0; systemIndex < orbit.systems.length; systemIndex += 1) {
-    const system = orbit.systems[systemIndex]!;
-    const waypoints = meteorWaypoints(
-      runtime.meteorTours[systemIndex] ?? [],
-      orbit.byId,
-    );
-    if (!waypoints) {
-      continue;
-    }
-    const sunCenter = { x: system.sun.x, y: system.sun.y };
-    const segmentCount = waypoints.length * 2;
-    const segmentLengths: number[] = [];
-    for (let segment = 0; segment < segmentCount; segment += 1) {
-      segmentLengths.push(meteorSegmentLength(waypoints, segment, sunCenter));
-    }
-    const cursor = advanceMeteorCursor(
-      runtime.meteors[systemIndex] ?? { segIndex: 0, t: 0 },
-      METEOR_WORLD_SPEED * elapsed,
-      segmentLengths,
-    );
-    runtime.meteors[systemIndex] = cursor;
-
-    // Record the head's world position and keep a short, capped tail behind it.
-    // History-based, so the trail follows the real path across segment
-    // boundaries instead of collapsing at each arc/transfer start.
-    const headWorld = meteorSegmentPoint(waypoints, cursor.segIndex, cursor.t, sunCenter);
-    const trail = runtime.meteorTrails[systemIndex] ?? [];
-    runtime.meteorTrails[systemIndex] = trail;
-    trail.push(headWorld);
-    let trailLength = 0;
-    let keepFrom = trail.length - 1;
-    for (let index = trail.length - 1; index > 0; index -= 1) {
-      trailLength += Math.hypot(
-        trail[index]!.x - trail[index - 1]!.x,
-        trail[index]!.y - trail[index - 1]!.y,
-      );
-      keepFrom = index - 1;
-      if (trailLength >= METEOR_TRAIL_WORLD) {
-        break;
-      }
-    }
-    if (keepFrom > 0) {
-      trail.splice(0, keepFrom);
-    }
-    if (trail.length > METEOR_TRAIL_MAX_POINTS) {
-      trail.splice(0, trail.length - METEOR_TRAIL_MAX_POINTS);
-    }
-
-    if (sparksDrawn >= SPARK_BUDGET) {
-      continue;
-    }
-    const head = toScreen(headWorld);
-    if (!onScreen(head, 120)) {
-      continue;
-    }
-    drawMeteor(context, trail.map(toScreen), headRadius, palette);
-    sparksDrawn += 1;
   }
 }
 
@@ -842,8 +656,16 @@ export function ProjectGraphPanel({
   const onOpenNodeRef = useRef(onOpenNode);
   const onViewStateChangeRef = useRef(onViewStateChange);
   const wheelSettleTimerRef = useRef<number | undefined>(undefined);
-  const settingsPublishFrameRef = useRef<number | undefined>(undefined);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const { preferences, update: updatePreferences } = useFlyoffPreferences();
+  const settings = preferences.graph;
+  const layoutMode = settings.layoutMode;
+  const settingsRef = useRef(settings);
+  const layoutModeRef = useRef(layoutMode);
+  useEffect(() => {
+    settingsRef.current = settings;
+    layoutModeRef.current = layoutMode;
+  }, [layoutMode, settings]);
   const graphState = useSyncExternalStore(
     controller.subscribe,
     controller.getSnapshot,
@@ -864,16 +686,16 @@ export function ProjectGraphPanel({
     ({ nodeId }) => nodeId === graphState.selectedNodeId,
   )?.path;
   const surfaceName =
-    graphState.layoutMode === 'orbit'
+    layoutMode === 'orbit'
       ? translate('graph.orbitTitle')
       : translate('rail.graph');
   const openInTabLabel = translate(
-    graphState.layoutMode === 'orbit'
+    layoutMode === 'orbit'
       ? 'graph.openOrbitInTab'
       : 'graph.openGraphInTab',
   );
   const openSettingsLabel = translate(
-    graphState.layoutMode === 'orbit'
+    layoutMode === 'orbit'
       ? 'graph.openOrbitSettings'
       : 'graph.openGraphSettings',
   );
@@ -948,8 +770,9 @@ export function ProjectGraphPanel({
     if (!runtime || !body) {
       return;
     }
-    runtime.camera.targetX = body.x;
-    runtime.camera.targetY = body.y;
+    const position = orbitBodyPosition(runtime, body);
+    runtime.camera.targetX = position.x;
+    runtime.camera.targetY = position.y;
     runtime.camera.targetZoom = clampProjectGraphZoom(
       Math.max(runtime.camera.targetZoom, 1.1),
     );
@@ -984,53 +807,39 @@ export function ProjectGraphPanel({
     onViewStateChangeRef.current?.(controller.viewState());
   }, [controller]);
 
-  const scheduleViewState = useCallback(() => {
-    if (settingsPublishFrameRef.current === undefined) {
-      settingsPublishFrameRef.current = window.requestAnimationFrame(() => {
-        settingsPublishFrameRef.current = undefined;
-        publishViewState();
-      });
-    }
-  }, [publishViewState]);
-
   const closeSettings = useCallback(() => {
     setSettingsOpen(false);
     window.requestAnimationFrame(() => settingsButtonRef.current?.focus());
   }, []);
 
   const changeSetting = useCallback(
-    (key: keyof ProjectGraphSettings, value: number) => {
-      controller.setSettings({
-        ...controller.getSnapshot().settings,
-        [key]: value,
-      });
-      scheduleViewState();
+    (nextSettings: ProjectGraphSettings) => {
+      updatePreferences((current) => ({
+        ...current,
+        graph: nextSettings,
+      }));
     },
-    [controller, scheduleViewState],
+    [updatePreferences],
   );
 
   const resetSettings = useCallback(() => {
-    controller.setSettings({ ...DEFAULT_PROJECT_GRAPH_SETTINGS });
-    scheduleViewState();
-  }, [controller, scheduleViewState]);
+    updatePreferences((current) => ({
+      ...current,
+      graph: resetProjectGraphModeSettings(
+        current.graph,
+        current.graph.layoutMode,
+      ),
+    }));
+  }, [updatePreferences]);
 
   const changeLayoutMode = useCallback(
     (mode: ProjectGraphLayoutMode) => {
-      controller.setLayoutMode(mode);
-      scheduleViewState();
+      updatePreferences((current) => ({
+        ...current,
+        graph: { ...current.graph, layoutMode: mode },
+      }));
     },
-    [controller, scheduleViewState],
-  );
-
-  useEffect(
-    () => () => {
-      if (settingsPublishFrameRef.current !== undefined) {
-        window.cancelAnimationFrame(settingsPublishFrameRef.current);
-        settingsPublishFrameRef.current = undefined;
-        publishViewState();
-      }
-    },
-    [publishViewState],
+    [updatePreferences],
   );
 
   useEffect(() => {
@@ -1048,15 +857,15 @@ export function ProjectGraphPanel({
 
   useEffect(() => {
     const runtime = runtimeRef.current;
-    if (!runtime || runtime.mode === graphState.layoutMode) {
+    if (!runtime || runtime.mode === layoutMode) {
       return;
     }
-    runtime.mode = graphState.layoutMode;
+    runtime.mode = layoutMode;
     setFolderPopup(null);
     fitRef.current();
     runtime.dirty = true;
     runtime.wake?.();
-  }, [graphState.layoutMode]);
+  }, [layoutMode]);
 
   useEffect(() => {
     const runtime = runtimeRef.current;
@@ -1064,20 +873,20 @@ export function ProjectGraphPanel({
       return;
     }
     const previous = runtime.settings;
-    runtime.settings = graphState.settings;
+    runtime.settings = settings;
     if (
-      previous.centerStrength !== graphState.settings.centerStrength ||
-      previous.damping !== graphState.settings.damping ||
-      previous.nodeDistance !== graphState.settings.nodeDistance ||
-      previous.repulsion !== graphState.settings.repulsion ||
-      previous.simulationSpeed !== graphState.settings.simulationSpeed ||
-      previous.springStrength !== graphState.settings.springStrength
+      previous.force.centerStrength !== settings.force.centerStrength ||
+      previous.force.damping !== settings.force.damping ||
+      previous.force.nodeDistance !== settings.force.nodeDistance ||
+      previous.force.repulsion !== settings.force.repulsion ||
+      previous.force.simulationSpeed !== settings.force.simulationSpeed ||
+      previous.force.springStrength !== settings.force.springStrength
     ) {
       runtime.layoutFrames = 0;
     }
     runtime.dirty = true;
     runtime.wake?.();
-  }, [graphState.settings]);
+  }, [settings]);
 
   const refresh = useCallback(async () => {
     await controller.refresh(refreshSignal, loadGraph, onError, true);
@@ -1097,27 +906,29 @@ export function ProjectGraphPanel({
     }
     const layout = graphState.layout;
     const orbit = buildProjectGraphOrbit(graphState.graph, { rootName });
+    // Orbit is a static layout — place every body once so it has world
+    // coordinates even when a saved camera skips the initial fit.
+    positionProjectGraphOrbit(orbit);
+    const orbitMotion = createProjectGraphOrbitMotion(orbit);
+    const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
     const runtime: GraphRuntime = {
       camera: controller.camera,
       dirty: true,
       height: canvas.clientHeight,
+      intersecting: true,
       layout,
       lastFrame: performance.now(),
       layoutFrames: 0,
       labels: new Map(labelRefs.current),
-      meteorTours: orbit.systems.map((system) =>
-        buildProjectGraphMeteorTour(system.edgeIndices, orbit.edges),
-      ),
-      meteors: orbit.systems.map(() => ({ segIndex: 0, t: 0 })),
-      meteorTrails: orbit.systems.map(() => []),
-      mode: controller.getLayoutMode(),
+      mode: layoutModeRef.current,
       orbit,
-      orbitClock: controller.getOrbitClock(),
+      orbitFloatFrame: Number.NEGATIVE_INFINITY,
+      orbitMotion,
       palette: graphPalette(),
       particlePhase: 0,
       particlesActive: false,
       selectedId: controller.getSelectedNodeId(),
-      settings: controller.getSnapshot().settings,
+      settings: settingsRef.current,
       visible: true,
       width: canvas.clientWidth,
     };
@@ -1147,16 +958,47 @@ export function ProjectGraphPanel({
       }
       const elapsed = Math.min(0.05, Math.max(0.001, (time - runtime.lastFrame) / 1_000));
       runtime.lastFrame = time;
-      const reduced = reducedMotion();
+      const reduced = motionQuery.matches;
       let moving = false;
+      let shouldDraw = runtime.dirty;
 
       if (runtime.mode === 'orbit') {
-        if (!reduced) {
-          runtime.orbitClock = (runtime.orbitClock + elapsed) % 100_000;
-          controller.setOrbitClock(runtime.orbitClock);
-          moving = true;
+        const hadMotion = hasProjectGraphOrbitMotion(runtime.orbitMotion);
+        const motionActive = hadMotion
+          ? stepProjectGraphOrbitMotion(
+              runtime.orbitMotion,
+              elapsed,
+              runtime.settings.orbit,
+            )
+          : false;
+        const floating =
+          !reduced && runtime.settings.orbit.floatStrength > 0;
+        const floatDue =
+          floating &&
+          time - runtime.orbitFloatFrame >= ORBIT_FLOAT_FRAME_INTERVAL;
+        if (floatDue) {
+          runtime.orbitFloatFrame = time;
         }
-        positionProjectGraphOrbit(runtime.orbit, runtime.orbitClock, reduced);
+        if (shouldDraw || hadMotion || floatDue) {
+          const worldMargin = 180 / runtime.camera.zoom;
+          const halfWidth = runtime.width / (runtime.camera.zoom * 2);
+          const halfHeight = runtime.height / (runtime.camera.zoom * 2);
+          updateProjectGraphOrbitPositions(
+            runtime.orbitMotion,
+            runtime.orbitFloatFrame / 1_000,
+            runtime.settings.orbit,
+            floating,
+            runtime.camera.zoom,
+            {
+              maximumX: runtime.camera.x + halfWidth + worldMargin,
+              maximumY: runtime.camera.y + halfHeight + worldMargin,
+              minimumX: runtime.camera.x - halfWidth - worldMargin,
+              minimumY: runtime.camera.y - halfHeight - worldMargin,
+            },
+          );
+          shouldDraw = true;
+        }
+        moving = motionActive || floating;
       } else if (
         runtime.layoutFrames < 720 &&
         runtime.layout.nodes.length > 1
@@ -1164,10 +1006,11 @@ export function ProjectGraphPanel({
         const energy = stepProjectGraphLayout(
           runtime.layout,
           elapsed,
-          runtime.settings,
+          runtime.settings.force,
         );
         runtime.layoutFrames += 1;
         moving = energy > 0.025 && runtime.layoutFrames < 720;
+        shouldDraw = true;
       }
 
       if (!runtime.pointer) {
@@ -1180,6 +1023,7 @@ export function ProjectGraphPanel({
           runtime.camera.targetX = runtime.camera.x;
           runtime.camera.targetY = runtime.camera.y;
           moving = true;
+          shouldDraw = true;
         } else {
           runtime.camera.vx = 0;
           runtime.camera.vy = 0;
@@ -1196,22 +1040,24 @@ export function ProjectGraphPanel({
         Math.abs(camera.targetY - camera.y) < 0.01 &&
         Math.abs(camera.targetZoom - camera.zoom) < 0.0001;
       moving ||= !cameraSettled;
+      shouldDraw ||= !cameraSettled;
 
       // Link particles keep the loop alive on their own; when the setting is
       // off (or the user prefers reduced motion) the canvas still sleeps once
       // the layout and camera settle. Orbit mode animates on its own instead.
       runtime.particlesActive =
         runtime.mode === 'force' &&
-        runtime.settings.linkParticles > 0 &&
+        runtime.settings.force.linkParticles > 0 &&
         !reduced;
       if (runtime.particlesActive) {
         runtime.particlePhase = (runtime.particlePhase + elapsed) % 1_000;
         moving = true;
+        shouldDraw = true;
       }
 
-      if (runtime.dirty || moving) {
+      if (shouldDraw) {
         if (runtime.mode === 'orbit') {
-          drawOrbit(canvas, runtime, elapsed, reduced);
+          drawOrbit(canvas, runtime);
         } else {
           drawGraph(canvas, runtime);
         }
@@ -1248,8 +1094,8 @@ export function ProjectGraphPanel({
     });
     resizeObserver.observe(canvas);
 
-    const intersectionObserver = new IntersectionObserver(([entry]) => {
-      runtime.visible = Boolean(entry?.isIntersecting);
+    const syncVisibility = () => {
+      runtime.visible = runtime.intersecting && !document.hidden;
       if (runtime.visible) {
         runtime.lastFrame = performance.now();
         wake();
@@ -1257,8 +1103,16 @@ export function ProjectGraphPanel({
         window.cancelAnimationFrame(runtime.raf);
         runtime.raf = undefined;
       }
+    };
+    const intersectionObserver = new IntersectionObserver(([entry]) => {
+      runtime.intersecting = Boolean(entry?.isIntersecting);
+      syncVisibility();
     });
     intersectionObserver.observe(canvas);
+    const handleVisibilityChange = () => syncVisibility();
+    const handleMotionPreferenceChange = () => wake();
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    motionQuery.addEventListener('change', handleMotionPreferenceChange);
 
     const themeObserver = new MutationObserver(() => {
       runtime.palette = graphPalette();
@@ -1287,12 +1141,17 @@ export function ProjectGraphPanel({
           moved: false,
           orbitHit,
           pointerId: event.pointerId,
+          startX: point.x,
+          startY: point.y,
         };
+        if (orbitHit) {
+          beginProjectGraphOrbitDrag(runtime.orbitMotion, orbitHit.body.id);
+        }
         if (orbitHit?.kind === 'note') {
           runtime.selectedId = orbitHit.body.id;
           controller.setSelectedNodeId(orbitHit.body.id);
         }
-        canvas.dataset.dragging = 'camera';
+        canvas.dataset.dragging = orbitHit ? 'node' : 'camera';
         wake();
         return;
       }
@@ -1305,6 +1164,8 @@ export function ProjectGraphPanel({
         moved: false,
         node,
         pointerId: event.pointerId,
+        startX: point.x,
+        startY: point.y,
       };
       if (node) {
         node.pinned = true;
@@ -1344,12 +1205,20 @@ export function ProjectGraphPanel({
         1 / 240,
         (performance.now() - pointer.lastTime) / 1_000,
       );
-      pointer.moved ||= Math.hypot(deltaX, deltaY) > 2;
+      pointer.moved ||=
+        Math.hypot(point.x - pointer.startX, point.y - pointer.startY) > 2;
       pointer.lastX = point.x;
       pointer.lastY = point.y;
       pointer.lastTime = performance.now();
 
-      if (pointer.node) {
+      if (pointer.orbitHit) {
+        moveProjectGraphOrbitBody(
+          runtime.orbitMotion,
+          pointer.orbitHit.body.id,
+          deltaX / runtime.camera.zoom,
+          deltaY / runtime.camera.zoom,
+        );
+      } else if (pointer.node) {
         const world = projectGraphScreenToWorld(
           point,
           runtime.camera,
@@ -1377,16 +1246,26 @@ export function ProjectGraphPanel({
       if (!pointer || pointer.pointerId !== event.pointerId) {
         return;
       }
-      if (runtime.mode === 'orbit' && !pointer.moved && pointer.orbitHit) {
-        const { body, kind } = pointer.orbitHit;
-        if (kind === 'note') {
-          onOpenNodeRef.current(orbitBodyToGraphNode(body));
-        } else {
-          onOpenSystemRef.current?.(body, event.clientX, event.clientY);
+      const cancelled = event.type === 'pointercancel';
+      if (runtime.mode === 'orbit') {
+        if (pointer.orbitHit) {
+          const { body, kind } = pointer.orbitHit;
+          endProjectGraphOrbitDrag(
+            runtime.orbitMotion,
+            body.id,
+            reducedMotion(),
+          );
+          if (!cancelled && !pointer.moved) {
+            if (kind === 'note') {
+              onOpenNodeRef.current(orbitBodyToGraphNode(body));
+            } else {
+              onOpenSystemRef.current?.(body, event.clientX, event.clientY);
+            }
+          }
         }
       } else if (pointer.node) {
         pointer.node.pinned = false;
-        if (!pointer.moved) {
+        if (!cancelled && !pointer.moved) {
           onOpenNodeRef.current(pointer.node);
         }
       }
@@ -1415,7 +1294,11 @@ export function ProjectGraphPanel({
       const zoom = clampProjectGraphZoom(
         runtime.camera.targetZoom *
           Math.exp(
-            -event.deltaY * 0.0015 * runtime.settings.zoomSensitivity,
+            -event.deltaY *
+              0.0015 *
+              (runtime.mode === 'orbit'
+                ? runtime.settings.orbit.zoomSensitivity
+                : runtime.settings.force.zoomSensitivity),
           ),
       );
       runtime.camera.targetZoom = zoom;
@@ -1455,13 +1338,14 @@ export function ProjectGraphPanel({
     wake();
 
     return () => {
-      controller.setOrbitClock(runtime.orbitClock);
       if (runtime.raf !== undefined) {
         window.cancelAnimationFrame(runtime.raf);
       }
       resizeObserver.disconnect();
       intersectionObserver.disconnect();
       themeObserver.disconnect();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      motionQuery.removeEventListener('change', handleMotionPreferenceChange);
       canvas.removeEventListener('pointerdown', handlePointerDown);
       canvas.removeEventListener('pointermove', handlePointerMove);
       canvas.removeEventListener('pointerup', endPointer);
@@ -1534,7 +1418,7 @@ export function ProjectGraphPanel({
       aria-busy={graphState.refreshing}
       aria-label={surfaceName}
       className={`${variant === 'sidebar' ? 'home__sidebar ' : ''}project-graph`}
-      data-mode={graphState.layoutMode}
+      data-mode={layoutMode}
       data-variant={variant}
     >
       <header className="project-graph__header">
@@ -1642,13 +1526,12 @@ export function ProjectGraphPanel({
         </div>
         {variant === 'page' && settingsOpen ? (
           <ProjectGraphSettingsPanel
-            layoutMode={graphState.layoutMode}
             onChange={changeSetting}
             onChangeMode={changeLayoutMode}
             onClose={closeSettings}
             onFit={() => fitRef.current()}
             onReset={resetSettings}
-            settings={graphState.settings}
+            settings={settings}
             translate={translate}
           />
         ) : null}

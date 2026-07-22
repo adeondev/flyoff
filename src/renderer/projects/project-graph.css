@@ -176,14 +176,23 @@
   z-index: 2;
   inset: 8px 8px 8px auto;
   display: grid;
-  width: min(316px, calc(100% - 16px));
+  width: min(292px, calc(100% - 16px));
   min-width: 0;
   min-height: 0;
-  grid-template-rows: 42px minmax(0, 1fr) auto;
+  grid-template-rows: 38px minmax(0, 1fr) auto;
   overflow: hidden;
   border: 1px solid var(--color-border);
-  border-radius: 16px;
+  border-radius: 7px;
   background: var(--color-titlebar);
+  box-shadow: var(--shadow-overlay);
+  opacity: 1;
+  transition: opacity var(--dur-overlay) linear;
+}
+
+@starting-style {
+  .project-graph-settings {
+    opacity: 0;
+  }
 }
 
 .project-graph-settings__header {
@@ -191,23 +200,23 @@
   min-width: 0;
   align-items: center;
   justify-content: space-between;
-  padding: 5px 6px 5px 12px;
-  border-bottom: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
+  padding: 4px 5px 4px 10px;
+  border-bottom: 1px solid var(--color-border);
 }
 
 .project-graph-settings__header h3 {
   margin: 0;
   color: var(--color-text);
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
 }
 
 .project-graph-settings__close {
   display: grid;
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   border: 0;
-  border-radius: 999px;
+  border-radius: 4px;
   outline: 0;
   background: transparent;
   color: var(--color-text-muted);
@@ -231,7 +240,7 @@
 .project-graph-settings__content {
   min-width: 0;
   min-height: 0;
-  padding: 2px 12px 10px;
+  padding: 0 8px 8px;
   overflow: auto;
   overscroll-behavior: contain;
 }
@@ -239,18 +248,18 @@
 .project-graph-settings__group {
   display: grid;
   min-width: 0;
-  gap: 12px;
+  gap: 10px;
   margin: 0;
-  padding: 14px 2px;
+  padding: 12px 2px;
   border: 0;
 }
 
 .project-graph-settings__group + .project-graph-settings__group {
-  border-top: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
+  border-top: 1px solid var(--color-border);
 }
 
 .project-graph-settings__group legend {
-  margin-bottom: 11px;
+  margin-bottom: 9px;
   padding: 0;
   color: var(--color-text);
   font-size: 12px;
@@ -260,7 +269,7 @@
 .project-graph-settings__field {
   display: grid;
   min-width: 0;
-  gap: 7px;
+  gap: 6px;
   color: var(--color-text-muted);
   font-size: 12px;
 }
@@ -291,8 +300,8 @@
 }
 
 .project-graph-settings__field input::-webkit-slider-runnable-track {
-  height: 5px;
-  border-radius: 999px;
+  height: 4px;
+  border-radius: 2px;
   background: linear-gradient(
     to right,
     var(--color-accent-bright) 0 var(--graph-setting-progress),
@@ -301,17 +310,17 @@
 }
 
 .project-graph-settings__field input::-webkit-slider-thumb {
-  width: 16px;
-  height: 16px;
-  margin-top: -5.5px;
+  width: 14px;
+  height: 14px;
+  margin-top: -5px;
   border: 0;
-  border-radius: 50%;
+  border-radius: 4px;
   appearance: none;
   background: var(--color-accent-bright);
 }
 
 .project-graph-settings__field input:hover::-webkit-slider-thumb {
-  background: var(--color-text);
+  background: var(--color-accent-hover);
 }
 
 .project-graph-settings__field input:focus-visible::-webkit-slider-thumb {
@@ -323,17 +332,17 @@
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 6px;
-  padding: 8px 10px 10px;
-  border-top: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
+  padding: 7px 8px 8px;
+  border-top: 1px solid var(--color-border);
 }
 
 .project-graph-settings__footer button {
-  min-height: 30px;
-  padding: 0 14px;
+  min-height: 28px;
+  padding: 0 10px;
   border: 0;
-  border-radius: 999px;
+  border-radius: 4px;
   outline: 0;
-  background: var(--color-surface-hover);
+  background: transparent;
   color: var(--color-text);
   font: inherit;
   font-size: 11px;
@@ -341,7 +350,7 @@
 }
 
 .project-graph-settings__footer button:hover {
-  background: var(--color-surface-active);
+  background: var(--color-surface-hover);
 }
 
 .project-graph-settings__footer button:focus-visible {
@@ -358,16 +367,19 @@
 .project-graph-settings__modes {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
+  gap: 4px;
+  padding: 3px;
+  border-radius: var(--radius-pill);
+  background: var(--color-surface);
 }
 
 .project-graph-settings__mode {
-  min-height: 32px;
-  padding: 0 12px;
+  min-height: 30px;
+  padding: 0 10px;
   border: 0;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   outline: 0;
-  background: var(--color-surface-hover);
+  background: transparent;
   color: var(--color-text-muted);
   font: inherit;
   font-size: 11px;
@@ -375,20 +387,29 @@
   cursor: pointer;
 }
 
-.project-graph-settings__mode[data-active='true'] {
-  background: color-mix(in srgb, var(--color-accent) 20%, var(--color-surface-hover));
-  color: var(--color-accent-bright);
+.project-graph-settings__mode[aria-checked='true'] {
+  background: var(--color-accent);
+  color: var(--color-accent-ink);
 }
 
-.project-graph-settings__mode:hover:not([data-active='true']) {
-  background: var(--color-surface-active);
+.project-graph-settings__mode[aria-checked='true']:hover {
+  background: var(--color-accent-hover);
+}
+
+.project-graph-settings__mode:hover:not([aria-checked='true']) {
+  background: var(--color-surface-hover);
 }
 
 .project-graph-settings__mode:focus-visible {
   box-shadow: inset 0 0 0 1px var(--color-focus-ring);
 }
 
+.project-graph-settings__mode:focus-visible:not([aria-checked='true']) {
+  background: var(--color-surface-hover);
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .project-graph-settings,
   .project-graph__action {
     transition: none;
   }

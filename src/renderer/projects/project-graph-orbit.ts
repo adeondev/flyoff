@@ -8,7 +8,6 @@ import type { ProjectGraphSnapshot } from '../../shared/contracts';
 export type ProjectGraphOrbitKind = 'note' | 'sun';
 
 export interface ProjectGraphOrbitBody {
-  angularSpeed: number;
   baseAngle: number;
   childSunIds: readonly string[];
   connectionCount: number;
@@ -61,10 +60,6 @@ const NOTE_MAX_RADIUS = 8;
 const NOTE_GAP = 26;
 const SUN_GAP = 40;
 const RING_MARGIN = 16;
-// A gentle orbital pace: inner notes finish a lap in roughly half a minute.
-const ORBIT_SPEED_BASE = 2.6;
-const SUN_SPEED_FACTOR = 0.35;
-
 const ROOT_ID = 'sun:';
 
 function hashString(value: string): number {
@@ -161,7 +156,6 @@ export function buildProjectGraphOrbit(
       ? options.rootName ?? 'Projeto'
       : parts[parts.length - 1]!;
     const body: ProjectGraphOrbitBody = {
-      angularSpeed: 0,
       baseAngle: 0,
       childSunIds: [],
       connectionCount: 0,
@@ -204,7 +198,6 @@ export function buildProjectGraphOrbit(
     const folderPath = parts.slice(0, -1).join('/');
     const parent = ensureSun(folderPath);
     const body: ProjectGraphOrbitBody = {
-      angularSpeed: 0,
       baseAngle: 0,
       childSunIds: [],
       connectionCount: node.connectionCount,
@@ -265,7 +258,6 @@ export function buildProjectGraphOrbit(
       note.orbitRadius = notesRing;
       note.baseAngle =
         noteOffset + (index / Math.max(1, sun.memberNotes.length)) * Math.PI * 2;
-      note.angularSpeed = orbitSpeed(notesRing, 'note');
     });
 
     const sunOffset = unitAngle(`${sun.body.id}:suns`);
@@ -273,7 +265,6 @@ export function buildProjectGraphOrbit(
       child.body.orbitRadius = sunsRing;
       child.body.baseAngle =
         sunOffset + (index / Math.max(1, sun.childSuns.length)) * Math.PI * 2;
-      child.body.angularSpeed = orbitSpeed(sunsRing, 'sun');
     });
 
     sun.body = {
@@ -333,23 +324,11 @@ export function buildProjectGraphOrbit(
   return { bodies, byId, edges, notes, rootId: ROOT_ID, suns, systems };
 }
 
-function orbitSpeed(orbitRadius: number, kind: ProjectGraphOrbitKind): number {
-  if (orbitRadius <= 0) {
-    return 0;
-  }
-  const speed = ORBIT_SPEED_BASE / Math.sqrt(orbitRadius);
-  return kind === 'sun' ? speed * SUN_SPEED_FACTOR : speed;
-}
-
-// Resolves every body's world position at a moment in time. Parents are
-// positioned before their children (bodies are depth-sorted), so nested suns
-// orbit their already-placed parent. Pass `frozen` for reduced motion.
+// Resolves the stable rest position of every body. Parents are positioned
+// before their children because bodies are depth-sorted.
 export function positionProjectGraphOrbit(
   layout: ProjectGraphOrbitLayout,
-  timeSeconds: number,
-  frozen = false,
 ): void {
-  const time = frozen ? 0 : timeSeconds;
   for (const body of layout.bodies) {
     if (body.parentId === null) {
       body.x = 0;
@@ -359,8 +338,7 @@ export function positionProjectGraphOrbit(
     const parent = layout.byId.get(body.parentId);
     const centerX = parent?.x ?? 0;
     const centerY = parent?.y ?? 0;
-    const angle = body.baseAngle + time * body.angularSpeed;
-    body.x = centerX + Math.cos(angle) * body.orbitRadius;
-    body.y = centerY + Math.sin(angle) * body.orbitRadius;
+    body.x = centerX + Math.cos(body.baseAngle) * body.orbitRadius;
+    body.y = centerY + Math.sin(body.baseAngle) * body.orbitRadius;
   }
 }

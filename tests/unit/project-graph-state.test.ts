@@ -5,72 +5,73 @@ import {
   migrateProjectGraphPageState,
   readProjectGraphViewState,
 } from '../../src/renderer/projects/project-graph-state';
-import {
-  DEFAULT_PROJECT_GRAPH_SETTINGS,
-  PROJECT_GRAPH_SETTING_LIMITS,
-} from '../../src/renderer/projects/project-graph-settings';
 
 describe('project graph page state', () => {
-  it('migrates version 1 camera and selection with default settings', () => {
-    const state = migrateProjectGraphPageState({
-      version: 1,
-      data: {
+  it.each([1, 2, 3])(
+    'migrates version %s camera and selection without legacy preferences',
+    (version) => {
+      const state = migrateProjectGraphPageState({
+        version,
+        data: {
+          camera: { x: 18, y: -9, zoom: 2.4 },
+          layoutMode: 'force',
+          selectedNodeId: 'note-1',
+          settings: {
+            force: { nodeDistance: 180 },
+            orbit: { spacing: 1.6 },
+          },
+        },
+      });
+
+      expect(state).toEqual({
+        version: 4,
+        data: {
+          camera: { x: 18, y: -9, zoom: 2.4 },
+          selectedNodeId: 'note-1',
+        },
+      });
+      expect(readProjectGraphViewState(state)).toEqual({
         camera: { x: 18, y: -9, zoom: 2.4 },
         selectedNodeId: 'note-1',
-      },
-    });
+      });
+    },
+  );
 
-    expect(state.version).toBe(2);
-    expect(readProjectGraphViewState(state)).toEqual({
-      camera: { x: 18, y: -9, zoom: 2.4 },
-      layoutMode: 'orbit',
-      selectedNodeId: 'note-1',
-      settings: DEFAULT_PROJECT_GRAPH_SETTINGS,
-    });
-  });
-
-  it('normalizes unsafe settings and zoom while preserving valid values', () => {
+  it('normalizes zoom and rejects an oversized selection', () => {
     const view = readProjectGraphViewState({
-      version: 2,
+      version: 4,
       data: {
         camera: { x: 0, y: 0, zoom: 99 },
-        selectedNodeId: null,
-        settings: {
-          nodeDistance: 180,
-          repulsion: -50,
-          springStrength: 'invalid',
-        },
+        selectedNodeId: 'x'.repeat(257),
       },
     });
 
-    expect(view?.camera.zoom).toBe(6);
-    expect(view?.settings.nodeDistance).toBe(180);
-    expect(view?.settings.repulsion).toBe(
-      PROJECT_GRAPH_SETTING_LIMITS.repulsion.minimum,
-    );
-    expect(view?.settings.springStrength).toBe(
-      DEFAULT_PROJECT_GRAPH_SETTINGS.springStrength,
-    );
+    expect(view).toEqual({
+      camera: { x: 0, y: 0, zoom: 6 },
+      selectedNodeId: null,
+    });
   });
 
-  it('creates a complete version 2 state for a new graph page', () => {
+  it('creates a compact version 4 state for a new graph page', () => {
     const state = createProjectGraphPageState();
-    expect(state.version).toBe(2);
-    expect(readProjectGraphViewState(state)).toEqual({
-      camera: { x: 0, y: 0, zoom: 1 },
-      layoutMode: 'orbit',
-      selectedNodeId: null,
-      settings: DEFAULT_PROJECT_GRAPH_SETTINGS,
+    expect(state).toEqual({
+      version: 4,
+      data: {
+        camera: { x: 0, y: 0, zoom: 1 },
+        selectedNodeId: null,
+      },
     });
   });
 
-  it('preserves an explicit force layout mode through a round trip', () => {
+  it('preserves camera and selection through a round trip', () => {
     const state = createProjectGraphPageState({
-      camera: { x: 0, y: 0, zoom: 1 },
-      layoutMode: 'force',
-      selectedNodeId: null,
-      settings: { ...DEFAULT_PROJECT_GRAPH_SETTINGS },
+      camera: { x: 24, y: -12, zoom: 1.7 },
+      selectedNodeId: 'note-2',
     });
-    expect(readProjectGraphViewState(state)?.layoutMode).toBe('force');
+
+    expect(readProjectGraphViewState(state)).toEqual({
+      camera: { x: 24, y: -12, zoom: 1.7 },
+      selectedNodeId: 'note-2',
+    });
   });
 });

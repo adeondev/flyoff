@@ -203,6 +203,49 @@ describe('settings page', () => {
     );
   });
 
+  it('shares and persists graph preferences through the global controller', async () => {
+    const initial = createDefaultFlyoffPreferences();
+    const savePreferences = vi.fn((preferences) =>
+      Promise.resolve(snapshot(preferences)),
+    );
+    Object.defineProperty(window, 'flyoff', {
+      configurable: true,
+      value: {
+        getPreferences: () => Promise.resolve(snapshot(initial)),
+        savePreferences,
+      },
+    });
+
+    const { result } = renderHook(() => useFlyoffPreferencesController());
+    await waitFor(() => expect(result.current.ready).toBe(true));
+
+    act(() => {
+      result.current.update((current) => ({
+        ...current,
+        graph: {
+          ...current.graph,
+          layoutMode: 'force',
+          orbit: { ...current.graph.orbit, spacing: 1.35 },
+        },
+      }));
+    });
+
+    expect(result.current.preferences.graph).toMatchObject({
+      layoutMode: 'force',
+      orbit: { spacing: 1.35 },
+    });
+    await waitFor(
+      () => {
+        expect(savePreferences).toHaveBeenCalledOnce();
+        expect(savePreferences.mock.calls[0]?.[0].graph).toMatchObject({
+          layoutMode: 'force',
+          orbit: { spacing: 1.35 },
+        });
+      },
+      { timeout: 1_000 },
+    );
+  });
+
   it('persists a GPU preference before requesting a protected restart', async () => {
     const initial = createDefaultFlyoffPreferences();
     const savePreferences = vi.fn((preferences) =>

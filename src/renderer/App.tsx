@@ -5,7 +5,6 @@ import {
   useReducer,
   useRef,
   useState,
-  useSyncExternalStore,
   type CSSProperties,
 } from 'react';
 import { flushSync } from 'react-dom';
@@ -560,11 +559,7 @@ export function App() {
     () => new ProjectGraphController(project?.projectId),
     [project?.projectId],
   );
-  const graphLayoutMode = useSyncExternalStore(
-    projectGraphController.subscribe,
-    projectGraphController.getLayoutModeSnapshot,
-    projectGraphController.getLayoutModeSnapshot,
-  );
+  const graphLayoutMode = preferencesController.preferences.graph.layoutMode;
   const railViews = useMemo(
     () => createRailViews(graphLayoutMode),
     [graphLayoutMode],

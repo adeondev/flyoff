@@ -60,16 +60,22 @@ export interface TranslationCatalog {
     closeOrbitSettings: string;
     damping: string;
     edgeScale: string;
+    elasticity: string;
     empty: string;
     fit: string;
+    floatSpeed: string;
+    floatStrength: string;
     folderEmpty: string;
     labelZoom: string;
+    layout: string;
     layoutMode: string;
     linkParticles: string;
     modeGraph: string;
     modeOrbit: string;
     nodeDistance: string;
     nodeScale: string;
+    orbitBodyScale: string;
+    orbitSpacing: string;
     openGraphInTab: string;
     openOrbitInTab: string;
     openGraphSettings: string;
@@ -81,6 +87,7 @@ export interface TranslationCatalog {
     resetSettings: string;
     graphSettings: string;
     orbitSettings: string;
+    motion: string;
     simulation: string;
     simulationSpeed: string;
     springStrength: string;
@@ -599,16 +606,22 @@ export const ptBR = {
     closeOrbitSettings: 'Fechar ajustes da Órbita',
     damping: 'Amortecimento',
     edgeScale: 'Espessura das conexões',
+    elasticity: 'Elasticidade',
     empty: 'Nenhuma conexão para mostrar.',
     fit: 'Ajustar à tela',
+    floatSpeed: 'Velocidade da flutuação',
+    floatStrength: 'Intensidade da flutuação',
     folderEmpty: 'Pasta vazia.',
     labelZoom: 'Exibição dos nomes',
+    layout: 'Organização',
     layoutMode: 'Modo de exibição',
     linkParticles: 'Partículas nas conexões',
     modeGraph: 'Grafo',
     modeOrbit: 'Órbita',
     nodeDistance: 'Distância entre nós',
     nodeScale: 'Tamanho dos nós',
+    orbitBodyScale: 'Tamanho dos corpos',
+    orbitSpacing: 'Espaçamento orbital',
     openGraphInTab: 'Abrir Grafo em uma aba',
     openOrbitInTab: 'Abrir Órbita em uma aba',
     openGraphSettings: 'Ajustar Grafo',
@@ -620,6 +633,7 @@ export const ptBR = {
     resetSettings: 'Restaurar padrões',
     graphSettings: 'Ajustes do Grafo',
     orbitSettings: 'Ajustes da Órbita',
+    motion: 'Movimento',
     simulation: 'Simulação',
     simulationSpeed: 'Velocidade',
     springStrength: 'Elasticidade',
@@ -1196,16 +1210,22 @@ export const enUS = {
     closeOrbitSettings: 'Close Orbit settings',
     damping: 'Damping',
     edgeScale: 'Connection thickness',
+    elasticity: 'Elasticity',
     empty: 'No connections to show.',
     fit: 'Fit to view',
+    floatSpeed: 'Floating speed',
+    floatStrength: 'Floating intensity',
     folderEmpty: 'Empty folder.',
     labelZoom: 'Label visibility',
+    layout: 'Layout',
     layoutMode: 'View mode',
     linkParticles: 'Connection particles',
     modeGraph: 'Graph',
     modeOrbit: 'Orbit',
     nodeDistance: 'Node distance',
     nodeScale: 'Node size',
+    orbitBodyScale: 'Body size',
+    orbitSpacing: 'Orbit spacing',
     openGraphInTab: 'Open Graph in a tab',
     openOrbitInTab: 'Open Orbit in a tab',
     openGraphSettings: 'Adjust Graph',
@@ -1217,6 +1237,7 @@ export const enUS = {
     resetSettings: 'Restore defaults',
     graphSettings: 'Graph settings',
     orbitSettings: 'Orbit settings',
+    motion: 'Motion',
     simulation: 'Simulation',
     simulationSpeed: 'Speed',
     springStrength: 'Elasticity',

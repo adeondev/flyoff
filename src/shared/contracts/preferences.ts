@@ -4,8 +4,14 @@ import {
   isSpellcheckCapabilities,
   type SpellcheckCapabilities,
 } from './spellcheck';
+import {
+  copyProjectGraphSettings,
+  DEFAULT_PROJECT_GRAPH_SETTINGS,
+  normalizeProjectGraphSettings,
+  type ProjectGraphSettings,
+} from './project-graph-settings';
 
-export const PREFERENCES_VERSION = 7 as const;
+export const PREFERENCES_VERSION = 8 as const;
 export const PREFERENCES_MAX_BYTES = 64 * 1_024;
 
 export const GET_PREFERENCES_CHANNEL = 'flyoff:preferences:get' as const;
@@ -99,6 +105,7 @@ export interface FlyoffPreferences {
     autosaveDelayMs: AutosaveDelay;
     hardwareAcceleration: boolean;
   };
+  graph: ProjectGraphSettings;
   appearance: {
     theme: FlyoffTheme;
     accentColor: string | null;
@@ -255,6 +262,7 @@ export function createDefaultFlyoffPreferences(): FlyoffPreferences {
       autosaveDelayMs: 500,
       hardwareAcceleration: true,
     },
+    graph: copyProjectGraphSettings(DEFAULT_PROJECT_GRAPH_SETTINGS),
     appearance: {
       theme: 'flyoff',
       accentColor: null,
@@ -324,6 +332,7 @@ export function normalizeFlyoffPreferences(value: unknown): FlyoffPreferences {
   }
 
   const general = isRecord(value.general) ? value.general : {};
+  const graph = isRecord(value.graph) ? value.graph : {};
   const appearance = isRecord(value.appearance) ? value.appearance : {};
   const editor = isRecord(value.editor) ? value.editor : {};
   const workspace = isRecord(value.workspace) ? value.workspace : {};
@@ -373,6 +382,7 @@ export function normalizeFlyoffPreferences(value: unknown): FlyoffPreferences {
           ? general.hardwareAcceleration
           : defaults.general.hardwareAcceleration,
     },
+    graph: normalizeProjectGraphSettings(graph),
     appearance: {
       theme: includes(FLYOFF_THEMES, appearance.theme)
         ? appearance.theme

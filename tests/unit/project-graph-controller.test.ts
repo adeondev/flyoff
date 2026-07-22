@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { ProjectGraphController } from '../../src/renderer/projects/project-graph-controller';
-import { DEFAULT_PROJECT_GRAPH_SETTINGS } from '../../src/renderer/projects/project-graph-settings';
 
 const graph = {
   edges: [],
@@ -33,9 +32,7 @@ describe('project graph controller', () => {
     const controller = new ProjectGraphController();
     controller.restoreView({
       camera: { x: 12, y: -8, zoom: 1.5 },
-      layoutMode: 'force',
       selectedNodeId: graph.nodes[0]!.nodeId,
-      settings: { ...DEFAULT_PROJECT_GRAPH_SETTINGS },
     });
 
     expect(controller.camera).toMatchObject({
@@ -48,51 +45,7 @@ describe('project graph controller', () => {
     });
     expect(controller.viewState()).toEqual({
       camera: { x: 12, y: -8, zoom: 1.5 },
-      layoutMode: 'force',
       selectedNodeId: graph.nodes[0]!.nodeId,
-      settings: DEFAULT_PROJECT_GRAPH_SETTINGS,
     });
-  });
-
-  it('defaults to orbit mode and toggles the layout mode', () => {
-    const controller = new ProjectGraphController();
-    expect(controller.getLayoutMode()).toBe('orbit');
-    expect(controller.viewState().layoutMode).toBe('orbit');
-
-    controller.setLayoutMode('force');
-    expect(controller.getLayoutMode()).toBe('force');
-    expect(controller.viewState().layoutMode).toBe('force');
-  });
-
-  it('preserves the orbit clock without publishing renderer state', () => {
-    const controller = new ProjectGraphController();
-    const listener = vi.fn();
-    controller.subscribe(listener);
-
-    controller.setOrbitClock(42.5);
-    expect(controller.getOrbitClock()).toBe(42.5);
-    expect(listener).not.toHaveBeenCalled();
-
-    controller.setOrbitClock(Number.NaN);
-    expect(controller.getOrbitClock()).toBe(42.5);
-  });
-
-  it('publishes validated settings without rebuilding the layout', async () => {
-    const controller = new ProjectGraphController();
-    await controller.refresh({}, async () => ({ ok: true, value: graph }), vi.fn());
-    const layout = controller.getSnapshot().layout;
-
-    controller.setSettings({
-      ...DEFAULT_PROJECT_GRAPH_SETTINGS,
-      nodeDistance: 180,
-      repulsion: 999_999,
-    });
-
-    expect(controller.getSnapshot().layout).toBe(layout);
-    expect(controller.getSnapshot().settings).toMatchObject({
-      nodeDistance: 180,
-      repulsion: 16_000,
-    });
-    expect(controller.viewState().settings.nodeDistance).toBe(180);
   });
 });

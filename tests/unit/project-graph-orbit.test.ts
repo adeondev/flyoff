@@ -60,9 +60,9 @@ describe('project graph orbit layout', () => {
     expect(systemA?.edgeIndices.length).toBe(2);
   });
 
-  it('positions the root at the origin and orbits children deterministically', () => {
+  it('positions the root and its children deterministically', () => {
     const orbit = buildProjectGraphOrbit(snapshot);
-    positionProjectGraphOrbit(orbit, 3.2);
+    positionProjectGraphOrbit(orbit);
     const root = orbit.byId.get('sun:')!;
     const note1 = orbit.byId.get(NOTE_1)!;
     const firstX = note1.x;
@@ -71,8 +71,8 @@ describe('project graph orbit layout', () => {
     expect(root.y).toBe(0);
     expect(Math.hypot(note1.x, note1.y)).toBeGreaterThan(0);
 
-    // Same clock → identical positions.
-    positionProjectGraphOrbit(orbit, 3.2);
+    // Repositioning keeps the stable layout unchanged.
+    positionProjectGraphOrbit(orbit);
     expect(note1.x).toBe(firstX);
     expect(note1.y).toBe(firstY);
   });

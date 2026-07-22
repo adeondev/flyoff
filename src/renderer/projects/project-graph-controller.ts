@@ -7,25 +7,13 @@ import {
   type ProjectGraphCamera,
   type ProjectGraphLayout,
 } from './project-graph-layout';
-import {
-  DEFAULT_PROJECT_GRAPH_SETTINGS,
-  normalizeProjectGraphSettings,
-  projectGraphSettingsEqual,
-  type ProjectGraphSettings,
-} from './project-graph-settings';
-import {
-  DEFAULT_PROJECT_GRAPH_LAYOUT_MODE,
-  type ProjectGraphLayoutMode,
-  type ProjectGraphViewState,
-} from './project-graph-state';
+import type { ProjectGraphViewState } from './project-graph-state';
 
 export interface ProjectGraphControllerSnapshot {
   graph: ProjectGraphSnapshot;
   layout: ProjectGraphLayout;
-  layoutMode: ProjectGraphLayoutMode;
   refreshing: boolean;
   selectedNodeId: string | null;
-  settings: ProjectGraphSettings;
 }
 
 const EMPTY_GRAPH: ProjectGraphSnapshot = { edges: [], nodes: [] };
@@ -47,17 +35,14 @@ export class ProjectGraphController {
   readonly camera = createCamera();
 
   private cameraReady = false;
-  private orbitClock = 0;
   private lastRefreshSignal: unknown;
   private listeners = new Set<() => void>();
   private refreshSequence = 0;
   private snapshot: ProjectGraphControllerSnapshot = {
     graph: EMPTY_GRAPH,
     layout: createProjectGraphLayout(EMPTY_GRAPH),
-    layoutMode: DEFAULT_PROJECT_GRAPH_LAYOUT_MODE,
     refreshing: false,
     selectedNodeId: null,
-    settings: { ...DEFAULT_PROJECT_GRAPH_SETTINGS },
   };
 
   constructor(readonly projectId?: string) {}
@@ -87,36 +72,6 @@ export class ProjectGraphController {
     }
   }
 
-  setSettings(settings: ProjectGraphSettings): void {
-    const normalized = normalizeProjectGraphSettings(settings);
-    if (!projectGraphSettingsEqual(normalized, this.snapshot.settings)) {
-      this.publish({ ...this.snapshot, settings: normalized });
-    }
-  }
-
-  getLayoutMode(): ProjectGraphLayoutMode {
-    return this.snapshot.layoutMode;
-  }
-
-  getLayoutModeSnapshot = (): ProjectGraphLayoutMode =>
-    this.snapshot.layoutMode;
-
-  getOrbitClock(): number {
-    return this.orbitClock;
-  }
-
-  setOrbitClock(orbitClock: number): void {
-    if (Number.isFinite(orbitClock)) {
-      this.orbitClock = Math.max(0, orbitClock % 100_000);
-    }
-  }
-
-  setLayoutMode(layoutMode: ProjectGraphLayoutMode): void {
-    if (layoutMode !== this.snapshot.layoutMode) {
-      this.publish({ ...this.snapshot, layoutMode });
-    }
-  }
-
   restoreView(view: ProjectGraphViewState | undefined): void {
     if (!view || this.cameraReady) {
       return;
@@ -134,9 +89,7 @@ export class ProjectGraphController {
     this.cameraReady = true;
     this.publish({
       ...this.snapshot,
-      layoutMode: view.layoutMode,
       selectedNodeId: view.selectedNodeId,
-      settings: normalizeProjectGraphSettings(view.settings),
     });
   }
 
@@ -147,9 +100,7 @@ export class ProjectGraphController {
         y: this.camera.targetY,
         zoom: this.camera.targetZoom,
       },
-      layoutMode: this.snapshot.layoutMode,
       selectedNodeId: this.snapshot.selectedNodeId,
-      settings: { ...this.snapshot.settings },
     };
   }
 
@@ -192,10 +143,8 @@ export class ProjectGraphController {
       this.publish({
         graph: result.value,
         layout,
-        layoutMode: this.snapshot.layoutMode,
         refreshing: false,
         selectedNodeId,
-        settings: this.snapshot.settings,
       });
     } catch (error) {
       if (sequence === this.refreshSequence) {
