@@ -10,5 +10,6 @@ export * from './project-note-activity';
 export * from './projects';
 export * from './spellcheck';
 export * from './tab-session';
+export * from './twine';
 export * from './ui-state';
 export * from './window-controls';

@@ -1,5 +1,6 @@
 @import './projects/projects.css';
 @import './projects/project-graph.css';
+@import './twine/twine.css';
 
 :root {
   font-family: var(--font-interface);
@@ -1150,7 +1151,7 @@ html[data-workspace-dragging] *::after {
 .home__action-list {
   display: grid;
   width: 100%;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 12px;
 }
 
@@ -1176,6 +1177,28 @@ html[data-workspace-dragging] *::after {
 .home__action-list .home__icon {
   width: 20px;
   height: 20px;
+}
+
+.home__action-image {
+  width: 22px;
+  height: 22px;
+  flex: none;
+  object-fit: contain;
+}
+
+.beta-badge {
+  display: inline-flex;
+  min-height: 18px;
+  align-items: center;
+  padding: 1px 6px;
+  border: 1px solid
+    color-mix(in srgb, var(--color-accent-bright) 55%, transparent);
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  color: var(--color-accent-bright);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .home__action-list button:first-child {

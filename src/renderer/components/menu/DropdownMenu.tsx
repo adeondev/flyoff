@@ -23,6 +23,7 @@ export interface DropdownMenuTriggerProps {
 }
 
 export interface DropdownMenuProps {
+  menuClassName?: string;
   items: readonly MenuItem[];
   onAction: (id: string) => void;
   placement?: MenuPlacement;
@@ -30,6 +31,7 @@ export interface DropdownMenuProps {
 }
 
 export function DropdownMenu({
+  menuClassName,
   items,
   onAction,
   placement = 'bottom-start',
@@ -93,6 +95,7 @@ export function DropdownMenu({
           id={menuId}
           initialFocus={initialFocus}
           items={items}
+          className={menuClassName}
           onAction={onAction}
           onClose={close}
           placement={placement}

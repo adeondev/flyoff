@@ -275,6 +275,44 @@ function renderBlocks(
         parent.appendChild(element);
         break;
       }
+      case 'table': {
+        const wrapper = document.createElement('div');
+        const table = document.createElement('table');
+        const head = document.createElement('thead');
+        const headRow = document.createElement('tr');
+        wrapper.className = 'markdown-view__table-scroll';
+        node.header.forEach((cell, index) => {
+          const element = document.createElement('th');
+          const alignment = node.alignments[index];
+          if (alignment) {
+            element.style.textAlign = alignment;
+          }
+          renderInline(cell, element);
+          headRow.appendChild(element);
+        });
+        head.appendChild(headRow);
+        table.appendChild(head);
+        if (node.rows.length > 0) {
+          const body = document.createElement('tbody');
+          for (const row of node.rows) {
+            const bodyRow = document.createElement('tr');
+            row.forEach((cell, index) => {
+              const element = document.createElement('td');
+              const alignment = node.alignments[index];
+              if (alignment) {
+                element.style.textAlign = alignment;
+              }
+              renderInline(cell, element);
+              bodyRow.appendChild(element);
+            });
+            body.appendChild(bodyRow);
+          }
+          table.appendChild(body);
+        }
+        wrapper.appendChild(table);
+        parent.appendChild(wrapper);
+        break;
+      }
     }
   }
 }

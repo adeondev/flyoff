@@ -16,6 +16,7 @@ const MAX_SPLIT_RATIO = 0.9;
 
 export const INTERNAL_PAGE_IDS = {
   home: 'home',
+  twine: 'twine',
   thisDevice: 'this-device',
   settings: 'settings',
   help: 'help',

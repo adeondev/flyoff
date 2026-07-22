@@ -6,6 +6,7 @@ import {
   dialog,
   Menu,
   nativeTheme,
+  safeStorage,
   session,
 } from 'electron';
 
@@ -27,6 +28,7 @@ import {
   registerProjectNoteActivityHandlers,
   registerProjectHandlers,
   registerTabSessionHandlers,
+  registerTwineHandlers,
   registerUiStateHandlers,
   registerWindowControlHandlers,
   type SelectProjectDirectory,
@@ -58,6 +60,11 @@ import {
   ElectronSpellcheckService,
 } from './services/spellcheck';
 import { TabSessionStore } from './session';
+import {
+  TwineConversationStore,
+  TwineCredentialStore,
+  TwineGenerationService,
+} from './twine';
 import {
   createMainWindow,
   applyWindowTheme,
@@ -117,6 +124,7 @@ let removePreferencesHandlers: (() => void) | undefined;
 let removeProjectNoteActivityHandlers: (() => void) | undefined;
 let removeProjectHandlers: (() => void) | undefined;
 let removeTabSessionHandlers: (() => void) | undefined;
+let removeTwineHandlers: (() => void) | undefined;
 let removeUiStateHandlers: (() => void) | undefined;
 let removeWindowControlHandlers: (() => void) | undefined;
 let translator: FlyoffTranslator | undefined;
@@ -163,6 +171,8 @@ function cleanupApplication(): void {
   removeProjectHandlers = undefined;
   removeTabSessionHandlers?.();
   removeTabSessionHandlers = undefined;
+  removeTwineHandlers?.();
+  removeTwineHandlers = undefined;
   removeUiStateHandlers?.();
   removeUiStateHandlers = undefined;
   removeWindowControlHandlers?.();
@@ -322,6 +332,14 @@ async function startApplication(): Promise<void> {
   bootstrapState = state;
 
   const { isAllowedUrl } = getRendererLocation();
+  const twineCredentialStore = new TwineCredentialStore(
+    app.getPath('userData'),
+    safeStorage,
+  );
+  const twineConversationStore = new TwineConversationStore(
+    app.getPath('userData'),
+  );
+  const twineGenerationService = new TwineGenerationService();
   closeCoordinator = new CloseCoordinator({
     isAllowedUrl,
     onShutdownApproved: markShutdownExpected,
@@ -390,6 +408,12 @@ async function startApplication(): Promise<void> {
     tabSessionStore,
     isAllowedUrl,
   );
+  removeTwineHandlers = registerTwineHandlers({
+    conversationStore: twineConversationStore,
+    credentialStore: twineCredentialStore,
+    generationService: twineGenerationService,
+    isAllowedUrl,
+  });
   removeUiStateHandlers = registerUiStateHandlers(uiStateStore, isAllowedUrl);
   removeWindowControlHandlers = registerWindowControlHandlers(isAllowedUrl);
 

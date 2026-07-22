@@ -327,6 +327,88 @@ test.describe('Flyoff desktop shell', () => {
     await page.getByRole('button', { name: homeLabel, exact: true }).click();
   });
 
+  test('opens Twine with Flyoff controls and resets the composer scroll', async () => {
+    const labels = await page.evaluate(() =>
+      document.documentElement.lang === 'en-US'
+        ? {
+            approval: 'Approval mode: Request approval',
+            closeTwine: 'Close tab: Twine',
+            fullAccess: 'Full access',
+            high: 'High',
+            home: 'Home',
+            keyLater: 'Not now',
+            message: 'Message Twine',
+            thinking: 'Thinking level: High',
+          }
+        : {
+            approval: 'Modo de aprovação: Solicitar aprovação',
+            closeTwine: 'Fechar aba: Twine',
+            fullAccess: 'Acesso completo',
+            high: 'Alto',
+            home: 'Início',
+            keyLater: 'Agora não',
+            message: 'Mensagem para o Twine',
+            thinking: 'Nível de pensamento: Alto',
+          },
+    );
+
+    await page.getByRole('button', { name: /Twine, Beta/ }).click();
+    const keyDialog = page.getByRole('dialog');
+    await keyDialog.getByRole('button', { name: labels.keyLater }).click();
+
+    await expect(page.locator('.twine-empty-state__brand')).toContainText('Twine');
+    await page.getByRole('button', { name: labels.thinking }).click();
+    await expect(
+      page.getByRole('menuitemcheckbox', { name: labels.high }).locator('.home__icon'),
+    ).toHaveCount(0);
+    await page.keyboard.press('Escape');
+
+    await page.getByRole('button', { name: labels.approval }).click();
+    await page.getByRole('menuitemcheckbox', { name: labels.fullAccess }).click();
+    await expect(
+      page.getByRole('button', { name: new RegExp(labels.fullAccess) }),
+    ).toBeVisible();
+
+    const composer = page.getByRole('textbox', { name: labels.message });
+    const longDraft = Array.from(
+      { length: 20 },
+      (_, index) => `line ${index}`,
+    ).join('\n');
+    await composer.fill(longDraft);
+    await composer.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+    await page.getByRole('button', { name: labels.home, exact: true }).click();
+    await page.getByRole('button', { name: 'Twine', exact: true }).click();
+    await expect(composer).toHaveJSProperty('scrollTop', 0);
+
+    const twinePane = page
+      .locator('.workspace-pane')
+      .filter({ has: page.getByRole('tab', { name: 'Twine' }) });
+    const twinePaneBounds = await twinePane.boundingBox();
+    expect(twinePaneBounds).not.toBeNull();
+    await dispatchWorkspaceDrag(
+      twinePane.getByRole('tab', { name: 'Twine' }),
+      twinePane,
+      {
+        x: twinePaneBounds!.width - 18,
+        y: twinePaneBounds!.height / 2,
+      },
+    );
+    await expect(page.locator('.workspace-pane')).toHaveCount(2);
+    await expect(
+      page.getByRole('textbox', { name: labels.message }),
+    ).toHaveValue(longDraft);
+
+    await page.getByRole('button', { name: labels.closeTwine }).click();
+    await expect(page.locator('.workspace-pane')).toHaveCount(1);
+    await page.getByRole('button', { name: labels.home, exact: true }).click();
+    await expect(page.getByRole('tab', { name: labels.home })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+  });
+
   test('keeps Node and Electron out of the renderer world', async () => {
     const exposure = await page.evaluate(() => {
       const pageGlobal = globalThis as typeof globalThis & {
@@ -411,6 +493,24 @@ test.describe('Flyoff desktop shell', () => {
         listProjectBacklinksType:
           typeof window.flyoff.listProjectBacklinks,
         searchProjectType: typeof window.flyoff.searchProject,
+        getTwineCredentialStatusType:
+          typeof window.flyoff.getTwineCredentialStatus,
+        saveTwineApiKeyType: typeof window.flyoff.saveTwineApiKey,
+        removeTwineApiKeyType: typeof window.flyoff.removeTwineApiKey,
+        listTwineConversationsType:
+          typeof window.flyoff.listTwineConversations,
+        loadTwineConversationType:
+          typeof window.flyoff.loadTwineConversation,
+        saveTwineConversationType:
+          typeof window.flyoff.saveTwineConversation,
+        createTwineConversationType:
+          typeof window.flyoff.createTwineConversation,
+        deleteTwineConversationType:
+          typeof window.flyoff.deleteTwineConversation,
+        startTwineGenerationType: typeof window.flyoff.startTwineGeneration,
+        cancelTwineGenerationType: typeof window.flyoff.cancelTwineGeneration,
+        onTwineGenerationEventType:
+          typeof window.flyoff.onTwineGenerationEvent,
         bufferType: typeof pageGlobal.Buffer,
         electronType: typeof pageGlobal.electron,
         ipcRendererType: typeof pageGlobal.ipcRenderer,
@@ -476,6 +576,17 @@ test.describe('Flyoff desktop shell', () => {
         'resolveProjectInternalLink',
         'listProjectBacklinks',
         'searchProject',
+        'getTwineCredentialStatus',
+        'saveTwineApiKey',
+        'removeTwineApiKey',
+        'listTwineConversations',
+        'loadTwineConversation',
+        'saveTwineConversation',
+        'createTwineConversation',
+        'deleteTwineConversation',
+        'startTwineGeneration',
+        'cancelTwineGeneration',
+        'onTwineGenerationEvent',
       ].sort(),
       getBootstrapStateType: 'function',
       getWindowStateType: 'function',
@@ -529,6 +640,17 @@ test.describe('Flyoff desktop shell', () => {
       resolveProjectInternalLinkType: 'function',
       listProjectBacklinksType: 'function',
       searchProjectType: 'function',
+      getTwineCredentialStatusType: 'function',
+      saveTwineApiKeyType: 'function',
+      removeTwineApiKeyType: 'function',
+      listTwineConversationsType: 'function',
+      loadTwineConversationType: 'function',
+      saveTwineConversationType: 'function',
+      createTwineConversationType: 'function',
+      deleteTwineConversationType: 'function',
+      startTwineGenerationType: 'function',
+      cancelTwineGenerationType: 'function',
+      onTwineGenerationEventType: 'function',
       bufferType: 'undefined',
       electronType: 'undefined',
       ipcRendererType: 'undefined',

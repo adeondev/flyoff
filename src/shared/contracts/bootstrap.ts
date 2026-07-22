@@ -21,6 +21,13 @@ import type {
   WindowState,
 } from './window-controls';
 import type {
+  TwineCredentialStatus,
+  TwineConversationSnapshot,
+  TwineConversationStoreSnapshot,
+  TwineGenerationEvent,
+  TwineGenerationRequest,
+} from './twine';
+import type {
   CreateProjectNodeRequest,
   ChangeProjectPagePasswordRequest,
   CreateProjectRequest,
@@ -121,6 +128,21 @@ export interface FlyoffApi {
   openExternalLink(
     request: OpenExternalLinkRequest,
   ): Promise<OpenExternalLinkResult>;
+  getTwineCredentialStatus(): Promise<TwineCredentialStatus>;
+  saveTwineApiKey(apiKey: string): Promise<TwineCredentialStatus>;
+  removeTwineApiKey(): Promise<TwineCredentialStatus>;
+  listTwineConversations(): Promise<TwineConversationStoreSnapshot>;
+  loadTwineConversation(id: string): Promise<TwineConversationSnapshot | null>;
+  saveTwineConversation(
+    conversation: TwineConversationSnapshot,
+  ): Promise<TwineConversationStoreSnapshot>;
+  createTwineConversation(): Promise<TwineConversationSnapshot>;
+  deleteTwineConversation(id: string): Promise<TwineConversationStoreSnapshot>;
+  startTwineGeneration(request: TwineGenerationRequest): Promise<void>;
+  cancelTwineGeneration(requestId: string): Promise<void>;
+  onTwineGenerationEvent(
+    listener: (event: TwineGenerationEvent) => void,
+  ): () => void;
   onRendererMenuCommand(
     listener: (command: RendererMenuCommand) => void,
   ): () => void;

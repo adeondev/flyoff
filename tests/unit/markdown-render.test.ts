@@ -152,4 +152,15 @@ describe('markdown DOM renderer', () => {
     expect([...container.querySelectorAll('p')].map((node) => node.textContent))
       .toEqual(['one', 'two']);
   });
+
+  it('renders aligned Markdown tables without injecting HTML', () => {
+    const container = render(
+      '| Name | Value |\n| :--- | ---: |\n| **Twine** | 4 |',
+    );
+
+    expect(container.querySelectorAll('th')).toHaveLength(2);
+    expect(container.querySelector('th')?.style.textAlign).toBe('left');
+    expect(container.querySelectorAll('td')[1]?.style.textAlign).toBe('right');
+    expect(container.querySelector('strong')?.textContent).toBe('Twine');
+  });
 });

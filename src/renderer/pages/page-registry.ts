@@ -1,6 +1,7 @@
 import { createElement, type ComponentType, type ReactNode } from 'react';
 
 import flyoffLogo from '../../../public/images/flyoff/flyoff-logo.svg';
+import twineIcon from '../../../public/images/twine/icon.svg';
 import configurationIcon from '../../../public/images/icons/homepage/configuration.svg';
 import folderOpenIcon from '../../../public/images/icons/instances/folder-open.svg';
 import refreshIcon from '../../../public/images/icons/actions/refresh.svg';
@@ -14,6 +15,10 @@ import {
   createProjectGraphPageState,
   migrateProjectGraphPageState,
 } from '../projects/project-graph-state';
+import {
+  createTwinePageState,
+  migrateTwinePageState,
+} from '../twine';
 import {
   INTERNAL_PAGE_IDS,
   type InternalPageId,
@@ -31,6 +36,7 @@ import type {
 } from './page-types';
 import { PlaceholderPage } from './PlaceholderPage';
 import { SettingsPage } from './SettingsPage';
+import { TwinePage } from './TwinePage';
 
 export interface InternalPageDefinition {
   id: InternalPageId;
@@ -82,6 +88,17 @@ export const PAGE_REGISTRY = {
     component: HomePage,
     createInitialState: createEmptyState,
     migrateState: migrateEmptyState,
+  },
+  [INTERNAL_PAGE_IDS.twine]: {
+    id: INTERNAL_PAGE_IDS.twine,
+    titleKey: 'pages.twine',
+    icon: twineIcon,
+    singleton: true,
+    retention: 'keep-alive',
+    stateVersion: 1,
+    component: TwinePage,
+    createInitialState: createTwinePageState,
+    migrateState: migrateTwinePageState,
   },
   [INTERNAL_PAGE_IDS.thisDevice]: {
     id: INTERNAL_PAGE_IDS.thisDevice,
@@ -144,6 +161,7 @@ export const PAGE_REGISTRY = {
 
 export const PAGE_NAVIGATION_ORDER = [
   INTERNAL_PAGE_IDS.home,
+  INTERNAL_PAGE_IDS.twine,
   INTERNAL_PAGE_IDS.thisDevice,
   INTERNAL_PAGE_IDS.settings,
   INTERNAL_PAGE_IDS.help,

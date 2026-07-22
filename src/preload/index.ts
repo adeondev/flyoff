@@ -98,6 +98,25 @@ import {
   isLockProjectPageRequest,
   isOpenExternalLinkRequest,
   isOpenExternalLinkResult,
+  isTwineApiKeyInput,
+  isTwineConversationId,
+  isTwineConversationSnapshot,
+  isTwineConversationStoreSnapshot,
+  isTwineCredentialStatus,
+  isTwineGenerationEvent,
+  isTwineGenerationRequest,
+  isTwineRequestId,
+  TWINE_CANCEL_GENERATION_CHANNEL,
+  TWINE_CREATE_CONVERSATION_CHANNEL,
+  TWINE_CREDENTIAL_STATUS_CHANNEL,
+  TWINE_DELETE_CONVERSATION_CHANNEL,
+  TWINE_GENERATION_EVENT_CHANNEL,
+  TWINE_LIST_CONVERSATIONS_CHANNEL,
+  TWINE_LOAD_CONVERSATION_CHANNEL,
+  TWINE_REMOVE_API_KEY_CHANNEL,
+  TWINE_SAVE_CONVERSATION_CHANNEL,
+  TWINE_SAVE_API_KEY_CHANNEL,
+  TWINE_START_GENERATION_CHANNEL,
   type CreateProjectRequest,
   type GetProjectNodeRequest,
   type RestoreProjectRequest,
@@ -126,6 +145,9 @@ import {
   type OpenExternalLinkRequest,
   type SpellcheckWordRequest,
   type SpellcheckWordsRequest,
+  type TwineConversationSnapshot,
+  type TwineGenerationEvent,
+  type TwineGenerationRequest,
 } from '../shared/contracts';
 
 function isNull(value: unknown): value is null {
@@ -353,6 +375,125 @@ const flyoffApi: FlyoffApi = Object.freeze({
       throw new Error('The main process returned an invalid link result.');
     }
     return result;
+  },
+  async getTwineCredentialStatus() {
+    const status: unknown = await ipcRenderer.invoke(
+      TWINE_CREDENTIAL_STATUS_CHANNEL,
+    );
+    if (!isTwineCredentialStatus(status)) {
+      throw new Error('The main process returned invalid Twine credentials.');
+    }
+    return status;
+  },
+  async saveTwineApiKey(apiKey: string) {
+    if (!isTwineApiKeyInput(apiKey)) {
+      throw new TypeError('Invalid Twine API key.');
+    }
+    const status: unknown = await ipcRenderer.invoke(
+      TWINE_SAVE_API_KEY_CHANNEL,
+      apiKey,
+    );
+    if (!isTwineCredentialStatus(status)) {
+      throw new Error('The main process returned invalid Twine credentials.');
+    }
+    return status;
+  },
+  async removeTwineApiKey() {
+    const status: unknown = await ipcRenderer.invoke(
+      TWINE_REMOVE_API_KEY_CHANNEL,
+    );
+    if (!isTwineCredentialStatus(status)) {
+      throw new Error('The main process returned invalid Twine credentials.');
+    }
+    return status;
+  },
+  async listTwineConversations() {
+    const snapshot: unknown = await ipcRenderer.invoke(
+      TWINE_LIST_CONVERSATIONS_CHANNEL,
+    );
+    if (!isTwineConversationStoreSnapshot(snapshot)) {
+      throw new Error('The main process returned invalid Twine conversations.');
+    }
+    return snapshot;
+  },
+  async loadTwineConversation(id: string) {
+    if (!isTwineConversationId(id)) {
+      throw new TypeError('Invalid Twine conversation id.');
+    }
+    const conversation: unknown = await ipcRenderer.invoke(
+      TWINE_LOAD_CONVERSATION_CHANNEL,
+      id,
+    );
+    if (
+      conversation !== null &&
+      !isTwineConversationSnapshot(conversation)
+    ) {
+      throw new Error('The main process returned an invalid Twine conversation.');
+    }
+    return conversation;
+  },
+  async saveTwineConversation(conversation: TwineConversationSnapshot) {
+    if (!isTwineConversationSnapshot(conversation)) {
+      throw new TypeError('Invalid Twine conversation snapshot.');
+    }
+    const snapshot: unknown = await ipcRenderer.invoke(
+      TWINE_SAVE_CONVERSATION_CHANNEL,
+      conversation,
+    );
+    if (!isTwineConversationStoreSnapshot(snapshot)) {
+      throw new Error('The main process returned invalid Twine conversations.');
+    }
+    return snapshot;
+  },
+  async createTwineConversation() {
+    const conversation: unknown = await ipcRenderer.invoke(
+      TWINE_CREATE_CONVERSATION_CHANNEL,
+    );
+    if (!isTwineConversationSnapshot(conversation)) {
+      throw new Error('The main process returned an invalid Twine conversation.');
+    }
+    return conversation;
+  },
+  async deleteTwineConversation(id: string) {
+    if (!isTwineConversationId(id)) {
+      throw new TypeError('Invalid Twine conversation id.');
+    }
+    const snapshot: unknown = await ipcRenderer.invoke(
+      TWINE_DELETE_CONVERSATION_CHANNEL,
+      id,
+    );
+    if (!isTwineConversationStoreSnapshot(snapshot)) {
+      throw new Error('The main process returned invalid Twine conversations.');
+    }
+    return snapshot;
+  },
+  async startTwineGeneration(request: TwineGenerationRequest) {
+    if (!isTwineGenerationRequest(request)) {
+      throw new TypeError('Invalid Twine generation request.');
+    }
+    await ipcRenderer.invoke(TWINE_START_GENERATION_CHANNEL, request);
+  },
+  async cancelTwineGeneration(requestId: string) {
+    if (!isTwineRequestId(requestId)) {
+      throw new TypeError('Invalid Twine request id.');
+    }
+    await ipcRenderer.invoke(TWINE_CANCEL_GENERATION_CHANNEL, requestId);
+  },
+  onTwineGenerationEvent(listener: (event: TwineGenerationEvent) => void) {
+    const handleEvent = (_event: unknown, event: unknown) => {
+      if (isTwineGenerationEvent(event)) {
+        listener(event);
+      }
+    };
+
+    ipcRenderer.on(TWINE_GENERATION_EVENT_CHANNEL, handleEvent);
+
+    return () => {
+      ipcRenderer.removeListener(
+        TWINE_GENERATION_EVENT_CHANNEL,
+        handleEvent,
+      );
+    };
   },
   onRendererMenuCommand(
     listener: (command: RendererMenuCommand) => void,
