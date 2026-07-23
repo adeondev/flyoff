@@ -5,98 +5,28 @@ import type {
   TwineGenerationRequest,
   TwineGenerationUsage,
   TwineIpcModelId,
-  TwineSource,
 } from '../../shared/contracts';
-import { TwineStreamParser } from './twine-stream-parser';
-
-export const TWINE_SYSTEM_INSTRUCTION = `IDENTIDADE
-Você é o Twine, o assistente local do Flyoff. Nunca se apresente como Gemini ou Gemma. Responda no idioma usado pelo usuário.
-
-RESPOSTAS
-Seja direto, natural e útil. Comece pelo conteúdo que resolve o pedido, sem saudações ou introduções genéricas desnecessárias. Entregue uma única resposta final coerente. Não apresente rascunhos, respostas candidatas ou alternativas de formulação, exceto quando o usuário pedir opções ou comparações. Pense com profundidade proporcional à complexidade da tarefa e não narre alternativas internas na resposta final. Quando houver ambiguidade relevante, peça somente a informação indispensável. Declare incertezas e diferencie fatos de inferências.
-
-FERRAMENTAS E FONTES
-Use pesquisa e execução de código apenas quando estiverem disponíveis e forem úteis ao pedido. Nunca afirme ter usado uma ferramenta sem um resultado correspondente. Ao pesquisar, baseie afirmações nas fontes retornadas, preserve os links verificáveis e não invente referências. Ao executar código, explique de forma objetiva o resultado observado.
-
-CONTEÚDO ADULTO
-Você pode usar palavrões e tratar de temas sexuais entre adultos, consensuais e legais quando o usuário pedir. Não moralize nem simule desconforto.
-
-LIMITES
-Recuse conteúdo sexual envolvendo menores, coerção ou exploração; gore gráfico; e instruções que facilitem crimes, fraude, malware, violência real, armas, evasão de segurança ou autoagressão. Faça recusas breves e, quando possível, ofereça uma alternativa segura.`;
-
-export const TWINE_RESEARCH_INSTRUCTION = `MODO PESQUISA ATIVO
-Use o Google Search antes de responder perguntas factuais que dependam de informações externas potencialmente desatualizadas. Pesquisa é obrigatória para notícias, acontecimentos recentes, lançamentos, versões, preços, disponibilidade, cargos atuais e pedidos que contenham termos como "último", "mais recente", "hoje" ou equivalentes. Nesses casos, nunca responda apenas com conhecimento interno.
-
-Baseie a resposta nas fontes retornadas e mantenha os links verificáveis. Se a pesquisa não retornar fontes suficientes para confirmar a informação, diga claramente que não foi possível verificá-la em vez de adivinhar ou apresentar uma lembrança como fato atual.`;
+import {
+  mergeTwineGenerationUsage,
+  runTwineGenerationAttempt,
+  type TwineGenAIClient,
+  type TwineGenerateContentConfig,
+} from './twine-generation-attempt';
+import { createTwineSystemInstruction } from './twine-system-instruction';
 
 const TWINE_API_MODELS: Record<TwineIpcModelId, string> = {
   'google/gemma-4-26B-A4B-it': 'gemma-4-26b-a4b-it',
   'google/gemma-4-31B-it': 'gemma-4-31b-it',
 };
 
-interface TwineGenerateContentConfig {
-  abortSignal?: AbortSignal;
-  safetySettings: Array<{
-    category: string;
-    threshold: string;
-  }>;
-  systemInstruction: string;
-  thinkingConfig: {
-    includeThoughts: boolean;
-    thinkingLevel: string;
-  };
-  tools: Array<{
-    codeExecution?: Record<string, never>;
-    googleSearch?: Record<string, never>;
-  }>;
-}
-
-interface TwinePart {
-  codeExecutionResult?: {
-    outcome?: string;
-    output?: string;
-  };
-  executableCode?: {
-    code?: string;
-    language?: string;
-  };
-  text?: string;
-  thought?: boolean;
-}
-
-interface TwineGenerateContentChunk {
-  candidates?: Array<{
-    content?: { parts?: TwinePart[] };
-    groundingMetadata?: {
-      groundingChunks?: Array<{
-        web?: { title?: string; uri?: string };
-      }>;
-      webSearchQueries?: string[];
-    };
-  }>;
-  usageMetadata?: {
-    candidatesTokenCount?: number;
-    promptTokenCount?: number;
-    thoughtsTokenCount?: number;
-    totalTokenCount?: number;
-  };
-}
-
-interface TwineGenAIClient {
-  models: {
-    generateContentStream(params: {
-      config: TwineGenerateContentConfig;
-      contents: Array<{
-        parts: Array<{ text: string }>;
-        role: 'model' | 'user';
-      }>;
-      model: string;
-    }): Promise<AsyncGenerator<TwineGenerateContentChunk>>;
-  };
+interface TwineGenerationConfigOptions {
+  currentDate?: Date;
+  researchRetry?: boolean;
 }
 
 export function createTwineGenerateContentConfig(
   request: TwineGenerationRequest,
+  options: TwineGenerationConfigOptions = {},
 ): TwineGenerateContentConfig {
   const highThinking = request.thinkingLevel === 'high';
   return {
@@ -118,54 +48,17 @@ export function createTwineGenerateContentConfig(
         threshold: 'BLOCK_MEDIUM_AND_ABOVE',
       },
     ],
-    systemInstruction: request.researchEnabled
-      ? `${TWINE_SYSTEM_INSTRUCTION}\n\n${TWINE_RESEARCH_INSTRUCTION}`
-      : TWINE_SYSTEM_INSTRUCTION,
+    systemInstruction: createTwineSystemInstruction({
+      currentDate: options.currentDate,
+      researchEnabled: request.researchEnabled,
+      researchRetry: options.researchRetry,
+    }),
     thinkingConfig: {
       includeThoughts: highThinking,
       thinkingLevel: highThinking ? 'HIGH' : 'MINIMAL',
     },
-    tools: request.researchEnabled
-      ? [{ googleSearch: {} }, { codeExecution: {} }]
-      : [{ codeExecution: {} }],
+    tools: [{ googleSearch: {} }, { codeExecution: {} }],
   };
-}
-
-function usageFromChunk(
-  chunk: TwineGenerateContentChunk,
-): TwineGenerationUsage | undefined {
-  const usage = chunk.usageMetadata;
-  if (!usage) {
-    return undefined;
-  }
-  const result: TwineGenerationUsage = {};
-  if (usage.promptTokenCount !== undefined) {
-    result.inputTokens = usage.promptTokenCount;
-  }
-  if (usage.candidatesTokenCount !== undefined) {
-    result.outputTokens = usage.candidatesTokenCount;
-  }
-  if (usage.thoughtsTokenCount !== undefined) {
-    result.thoughtTokens = usage.thoughtsTokenCount;
-  }
-  if (usage.totalTokenCount !== undefined) {
-    result.totalTokens = usage.totalTokenCount;
-  }
-  return Object.keys(result).length > 0 ? result : undefined;
-}
-
-function sourcesFromChunk(chunk: TwineGenerateContentChunk): TwineSource[] {
-  const sources: TwineSource[] = [];
-  for (const candidate of chunk.candidates ?? []) {
-    for (const groundingChunk of
-      candidate.groundingMetadata?.groundingChunks ?? []) {
-      const { title, uri } = groundingChunk.web ?? {};
-      if (title?.trim() && uri?.trim()) {
-        sources.push({ title, url: uri });
-      }
-    }
-  }
-  return sources;
 }
 
 export class TwineGenerationService {
@@ -226,99 +119,64 @@ export class TwineGenerationService {
     try {
       const { GoogleGenAI } = await import('@google/genai');
       const ai = new GoogleGenAI({ apiKey }) as TwineGenAIClient;
-      const config = createTwineGenerateContentConfig(request);
-      const stream = await ai.models.generateContentStream({
-        config: { ...config, abortSignal: controller.signal },
-        contents: request.messages.map((message) => ({
-          parts: [{ text: message.text }],
-          role: message.role === 'assistant' ? 'model' : 'user',
-        })),
-        model: TWINE_API_MODELS[request.modelId],
-      });
-      const parser = new TwineStreamParser(request.thinkingLevel === 'high');
-      const sourceUrls = new Set<string>();
-      let lastUsage: TwineGenerationUsage | undefined;
+      const currentDate = new Date();
 
-      for await (const chunk of stream) {
+      if (!request.researchEnabled) {
+        const result = await runTwineGenerationAttempt({
+          ai,
+          config: createTwineGenerateContentConfig(request, { currentDate }),
+          emit: (event) => this.emit(webContents, channel, event),
+          model: TWINE_API_MODELS[request.modelId],
+          request,
+          signal: controller.signal,
+        });
+        if (!controller.signal.aborted) {
+          this.emit(webContents, channel, {
+            requestId: request.requestId,
+            type: 'done',
+            ...(result.usage ? { usage: result.usage } : {}),
+          });
+        }
+        return;
+      }
+
+      let totalUsage: TwineGenerationUsage | undefined;
+      for (let attemptIndex = 0; attemptIndex < 2; attemptIndex += 1) {
+        const events: TwineGenerationEvent[] = [];
+        const result = await runTwineGenerationAttempt({
+          ai,
+          config: createTwineGenerateContentConfig(request, {
+            currentDate,
+            researchRetry: attemptIndex > 0,
+          }),
+          emit: (event) => events.push(event),
+          model: TWINE_API_MODELS[request.modelId],
+          request,
+          signal: controller.signal,
+        });
         if (controller.signal.aborted) {
           return;
         }
 
-        lastUsage = usageFromChunk(chunk) ?? lastUsage;
-        for (const candidate of chunk.candidates ?? []) {
-          for (const part of candidate.content?.parts ?? []) {
-            if (part.text) {
-              if (part.thought) {
-                if (request.thinkingLevel === 'high') {
-                  this.emit(webContents, channel, {
-                    requestId: request.requestId,
-                    text: part.text,
-                    type: 'thought-delta',
-                  });
-                }
-              } else {
-                for (const delta of parser.push(part.text)) {
-                  this.emit(webContents, channel, {
-                    requestId: request.requestId,
-                    ...delta,
-                  });
-                }
-              }
-            }
-            if (part.executableCode?.code) {
-              this.emit(webContents, channel, {
-                phase: 'start',
-                requestId: request.requestId,
-                text: `${part.executableCode.language ?? ''}\n${part.executableCode.code}`.trim(),
-                tool: 'code',
-                type: 'tool',
-              });
-            }
-            if (part.codeExecutionResult?.output) {
-              this.emit(webContents, channel, {
-                phase: 'result',
-                requestId: request.requestId,
-                text: part.codeExecutionResult.output,
-                tool: 'code',
-                type: 'tool',
-              });
-            }
+        totalUsage = mergeTwineGenerationUsage(totalUsage, result.usage);
+        if (result.hasSources) {
+          for (const event of events) {
+            this.emit(webContents, channel, event);
           }
-        }
-
-        const sources = sourcesFromChunk(chunk).filter(({ url }) => {
-          if (sourceUrls.has(url)) {
-            return false;
-          }
-          sourceUrls.add(url);
-          return true;
-        });
-        if (sources.length > 0) {
-          this.emit(webContents, channel, {
-            phase: 'result',
-            requestId: request.requestId,
-            text: '',
-            tool: 'search',
-            type: 'tool',
-          });
           this.emit(webContents, channel, {
             requestId: request.requestId,
-            sources,
-            type: 'sources',
+            type: 'done',
+            ...(totalUsage ? { usage: totalUsage } : {}),
           });
+          return;
         }
       }
 
-      for (const delta of parser.flush()) {
-        this.emit(webContents, channel, {
-          requestId: request.requestId,
-          ...delta,
-        });
-      }
       this.emit(webContents, channel, {
+        message:
+          'O Modo Pesquisa não conseguiu obter fontes verificáveis. Tente novamente ou revise a conexão com o Google Search.',
         requestId: request.requestId,
-        type: 'done',
-        ...(lastUsage ? { usage: lastUsage } : {}),
+        type: 'error',
       });
     } catch (error) {
       if (controller.signal.aborted) {
