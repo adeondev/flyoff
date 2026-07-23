@@ -13,6 +13,7 @@ import { DiagramToolbar } from '../../src/renderer/projects/diagram/DiagramToolb
 import { DiagramTypeDialog } from '../../src/renderer/projects/diagram/DiagramTypeDialog';
 import {
   addAdjacentActivityPartition,
+  getDiagramConnectionPoint,
   resizeDiagramNodeBounds,
 } from '../../src/renderer/projects/diagram/diagram-geometry';
 import {
@@ -267,6 +268,69 @@ describe('diagram components', () => {
     expect(resizedFinal.height).toBe(56);
   });
 
+  it('anchors activity flow endpoints on the final-node circumference', () => {
+    const finalNode = createDiagramElement('flow-final', { x: 200, y: 100 });
+    const center = {
+      x: finalNode.presentation.bounds.x + finalNode.presentation.bounds.width / 2,
+      y: finalNode.presentation.bounds.y + finalNode.presentation.bounds.height / 2,
+    };
+    const verticalPoint = getDiagramConnectionPoint(
+      finalNode.element,
+      finalNode.presentation,
+      { x: center.x, y: 20 },
+    );
+    const diagonalPoint = getDiagramConnectionPoint(
+      finalNode.element,
+      finalNode.presentation,
+      { x: 100, y: 20 },
+    );
+
+    expect(verticalPoint).toEqual({ x: center.x, y: center.y - 16 });
+    expect(Math.hypot(
+      diagonalPoint.x - center.x,
+      diagonalPoint.y - center.y,
+    )).toBeCloseTo(16);
+  });
+
+  it('renders control-flow arrows up to the flow-final border', () => {
+    const document = createDiagramDocument('activity');
+    const action = createDiagramElement('action', { x: 20, y: 20 });
+    const finalNode = createDiagramElement('flow-final', { x: 82, y: 184 });
+    const relationship = createDiagramRelationship(
+      'control-flow',
+      action.element.id,
+      finalNode.element.id,
+    );
+    const { container } = render(
+      <DiagramCanvas
+        ariaLabel="Diagram"
+        document={{
+          ...document,
+          elements: [action.element, finalNode.element],
+          relationships: [relationship],
+          presentations: {
+            nodes: [action.presentation, finalNode.presentation],
+            edges: [],
+          },
+        }}
+        minimapLabel="Minimap"
+        onConnectionNode={vi.fn()}
+        onCreateElement={vi.fn()}
+        onKeyDown={vi.fn()}
+        onMoveElement={vi.fn()}
+        onResizeElement={vi.fn()}
+        onSelectionChange={vi.fn()}
+        onViewportChange={vi.fn()}
+        tool={{ kind: 'select' }}
+        viewport={{ x: 0, y: 0, zoom: 1 }}
+      />,
+    );
+
+    expect(container.querySelector('.diagram-edge__line')?.getAttribute('d')).toBe(
+      'M100 56 L100 186',
+    );
+  });
+
   it('selects, moves and supplies both endpoints in connection mode', () => {
     const document = populated('use-case');
     const actorId = document.elements[0]!.id;
@@ -337,10 +401,22 @@ describe('diagram components', () => {
       target.id,
     );
     const onResizeElement = vi.fn();
+    const customizedNodes = document.presentations.nodes.map((presentation) =>
+      presentation.elementId === source.id
+        ? { ...presentation, appearance: { color: '#567fc4' as const } }
+        : presentation,
+    );
     const { container } = render(
       <DiagramCanvas
         ariaLabel="Diagram"
-        document={{ ...document, relationships: [relationship] }}
+        document={{
+          ...document,
+          relationships: [relationship],
+          presentations: {
+            ...document.presentations,
+            nodes: customizedNodes,
+          },
+        }}
         minimapLabel="Minimap"
         onConnectionNode={vi.fn()}
         onCreateElement={vi.fn()}
@@ -372,6 +448,14 @@ describe('diagram components', () => {
     expect(onResizeElement).toHaveBeenCalledWith(source.id, expect.any(Object));
     expect(container.querySelector('.diagram-edge__hit-area')).toBeTruthy();
     expect(container.querySelector('.diagram-node__hit-area')).toBeTruthy();
+    expect(
+      container
+        .querySelector<SVGGElement>(`[data-element-id="${source.id}"]`)
+        ?.style.getPropertyValue('--diagram-node-stroke'),
+    ).toBe('#567fc4');
+    expect(
+      container.querySelector<SVGRectElement>('.diagram-minimap__node')?.style.fill,
+    ).toBe('rgb(86, 127, 196)');
   });
 
   it('expands classifier compartments to contain attributes and operations', () => {
@@ -439,9 +523,21 @@ describe('diagram components', () => {
   });
 
   it('edits classifier properties and exposes diagnostics without color-only meaning', () => {
-    const document = populated('class');
+    const original = populated('class');
+    const document = {
+      ...original,
+      presentations: {
+        ...original.presentations,
+        nodes: original.presentations.nodes.map((presentation, index) =>
+          index === 0
+            ? { ...presentation, appearance: { color: '#aa575b' as const } }
+            : presentation,
+        ),
+      },
+    };
     const element = document.elements[0]!;
     const onResizeElement = vi.fn();
+    const onUpdateAppearance = vi.fn();
     const onUpdateElement = vi.fn();
     render(
       <DiagramInspector
@@ -457,6 +553,7 @@ describe('diagram components', () => {
         onAddPartition={vi.fn()}
         onResizeElement={onResizeElement}
         onSelectDiagnostic={vi.fn()}
+        onUpdateAppearance={onUpdateAppearance}
         onUpdateElement={onUpdateElement}
         onUpdateRelationship={vi.fn()}
         selection={{ kind: 'element', id: element.id }}
@@ -475,6 +572,23 @@ describe('diagram components', () => {
       element.id,
       expect.objectContaining({ width: 320 }),
     );
+    expect(
+      screen.getByRole('button', { name: 'diagram.colorRed' }).getAttribute(
+        'aria-pressed',
+      ),
+    ).toBe('true');
+    fireEvent.click(screen.getByRole('button', { name: 'diagram.colorPurple' }));
+    expect(onUpdateAppearance).toHaveBeenCalledWith(element.id, {
+      color: '#8f4fc4',
+    });
+    fireEvent.change(screen.getByLabelText('diagram.customColor'), {
+      target: { value: '#123456' },
+    });
+    expect(onUpdateAppearance).toHaveBeenCalledWith(element.id, {
+      color: '#123456',
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'diagram.useThemeColor' }));
+    expect(onUpdateAppearance).toHaveBeenCalledWith(element.id, undefined);
     expect(
       screen
         .getByText('diagram.diagnosticElementIncompatible')

@@ -10,6 +10,7 @@ import {
   type DiagramBounds,
   type DiagramDocument,
   type DiagramElement,
+  type DiagramNodeAppearance,
   type DiagramPoint,
   type DiagramViewport,
 } from '../../../shared/diagram';
@@ -557,6 +558,28 @@ function ReadyDiagramPage({
           onAddPartition={addPartition}
           onResizeElement={resizeElement}
           onSelectDiagnostic={selectDiagnostic}
+          onUpdateAppearance={(
+            id: string,
+            appearance: DiagramNodeAppearance | undefined,
+          ) =>
+            updateDocument((current) => ({
+              ...current,
+              presentations: {
+                ...current.presentations,
+                nodes: current.presentations.nodes.map((presentation) => {
+                  if (presentation.elementId !== id) {
+                    return presentation;
+                  }
+                  if (appearance) {
+                    return { ...presentation, appearance };
+                  }
+                  const withoutAppearance = { ...presentation };
+                  delete withoutAppearance.appearance;
+                  return withoutAppearance;
+                }),
+              },
+            }))
+          }
           onUpdateElement={(id, update) =>
             updateDocument((current) => ({
               ...current,

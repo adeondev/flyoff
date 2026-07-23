@@ -26,6 +26,7 @@ const repositoryRoot = path.resolve(__dirname, '../..');
 interface DiagramLabels {
   addInstance: string;
   chooseLocation: string;
+  colorRed: string;
   create: string;
   diagram: string;
   diagramTypes: Record<'class' | 'use-case' | 'sequence' | 'activity', string>;
@@ -48,6 +49,7 @@ function labelsFor(locale: string): DiagramLabels {
     ? {
         addInstance: 'Add instance',
         chooseLocation: 'Choose location',
+        colorRed: 'Red',
         create: 'Create',
         diagram: 'UML diagram',
         diagramTypes: {
@@ -72,6 +74,7 @@ function labelsFor(locale: string): DiagramLabels {
     : {
         addInstance: 'Adicionar instância',
         chooseLocation: 'Escolher local',
+        colorRed: 'Vermelho',
         create: 'Criar',
         diagram: 'Diagrama UML',
         diagramTypes: {
@@ -200,6 +203,17 @@ test('creates, edits, saves, imports and exports native UML diagrams securely', 
       .getByRole('textbox', { name: labels.name });
     await inspectorName.fill('Customer');
     await expect(classPanel.locator('.diagram-node__name')).toContainText('Customer');
+    await classPanel.getByRole('button', { name: labels.colorRed }).click();
+    await expect(
+      classPanel.getByRole('button', { name: labels.colorRed }),
+    ).toHaveAttribute('aria-pressed', 'true');
+    await expect
+      .poll(() =>
+        classPanel.locator('[data-element-id]').first().evaluate((node) =>
+          node.style.getPropertyValue('--diagram-node-stroke'),
+        ),
+      )
+      .toBe('#aa575b');
     await expect(classPanel.locator('.diagram-page__save-status')).toHaveAttribute(
       'data-status',
       'saved',
@@ -319,6 +333,9 @@ test('creates, edits, saves, imports and exports native UML diagrams securely', 
       'activity',
       'class',
     ]);
+    expect(persisted[0].presentations.nodes[0].appearance).toEqual({
+      color: '#aa575b',
+    });
   } finally {
     await stopApplication(app);
     await rm(userDataPath, { recursive: true, force: true, maxRetries: 5 });

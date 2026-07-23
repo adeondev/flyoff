@@ -6,6 +6,7 @@ import type {
 } from '../../../shared/diagram';
 import {
   getClassifierLayout,
+  getDiagramConnectionPoint,
   getDiagramResizeHandles,
   type DiagramResizeHandle,
 } from './diagram-geometry';
@@ -21,6 +22,21 @@ interface DiagramNodeRendererProps {
     event: React.PointerEvent<SVGRectElement>,
     handle: DiagramResizeHandle,
   ) => void;
+}
+
+function nodeAppearanceStyle(
+  presentation: DiagramNodePresentation,
+): React.CSSProperties | undefined {
+  const color = presentation.appearance?.color;
+  if (!color) {
+    return undefined;
+  }
+  return {
+    '--diagram-node-container-fill': `color-mix(in srgb, ${color} 14%, transparent)`,
+    '--diagram-node-fill': `color-mix(in srgb, ${color} 22%, var(--color-surface))`,
+    '--diagram-node-solid': color,
+    '--diagram-node-stroke': color,
+  } as React.CSSProperties;
 }
 
 function visibilitySymbol(visibility: string): string {
@@ -245,6 +261,7 @@ export function DiagramNodeRenderer({
       data-element-id={element.id}
       onPointerDown={onPointerDown}
       role="graphics-symbol"
+      style={nodeAppearanceStyle(presentation)}
       transform={`translate(${x} ${y})`}
     >
       <rect
@@ -323,7 +340,9 @@ function DiagramResizeHandles({
 interface DiagramEdgeRendererProps {
   relationship: DiagramRelationship;
   presentation?: DiagramEdgePresentation;
+  sourceElement: DiagramElement;
   source: DiagramNodePresentation;
+  targetElement: DiagramElement;
   target: DiagramNodePresentation;
   selected: boolean;
   onPointerDown: (event: React.PointerEvent<SVGPathElement>) => void;
@@ -353,7 +372,9 @@ function markerAttributes(relationship: DiagramRelationship) {
 
 function edgePath(
   relationship: DiagramRelationship,
+  sourceElement: DiagramElement,
   source: DiagramNodePresentation,
+  targetElement: DiagramElement,
   target: DiagramNodePresentation,
   presentation?: DiagramEdgePresentation,
 ): string {
@@ -380,18 +401,35 @@ function edgePath(
   if (relationship.sourceId === relationship.targetId) {
     return `M${sx} ${sy} H${sx + 64} V${sy + 42} H${sx}`;
   }
-  return `M${sx} ${sy} L${tx} ${ty}`;
+  const sourcePoint = getDiagramConnectionPoint(sourceElement, source, {
+    x: tx,
+    y: ty,
+  });
+  const targetPoint = getDiagramConnectionPoint(targetElement, target, {
+    x: sx,
+    y: sy,
+  });
+  return `M${sourcePoint.x} ${sourcePoint.y} L${targetPoint.x} ${targetPoint.y}`;
 }
 
 export function DiagramEdgeRenderer({
   relationship,
   presentation,
+  sourceElement,
   source,
+  targetElement,
   target,
   selected,
   onPointerDown,
 }: DiagramEdgeRendererProps) {
-  const path = edgePath(relationship, source, target, presentation);
+  const path = edgePath(
+    relationship,
+    sourceElement,
+    source,
+    targetElement,
+    target,
+    presentation,
+  );
   const dashed =
     relationship.kind === 'dependency' ||
     relationship.kind === 'realization' ||

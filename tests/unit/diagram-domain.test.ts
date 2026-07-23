@@ -46,7 +46,7 @@ describe('Flyoff diagram domain', () => {
 
     expect(document).toMatchObject({
       format: 'flyoff-diagram',
-      formatVersion: 1,
+      formatVersion: 2,
       diagramType: 'class',
       settings: { showGrid: true, snapToGrid: true, gridSize: 16 },
     });
@@ -58,7 +58,7 @@ describe('Flyoff diagram domain', () => {
     expect(validateDiagramDocument(document)).toEqual({ ok: true, value: document });
   });
 
-  it('serializes UTF-8 deterministically and migrates version zero', () => {
+  it('serializes UTF-8 deterministically and migrates previous versions', () => {
     const document = withElement(createDiagramDocument('use-case'), 'actor');
     const serialized = serializeDiagramDocument(document);
     expect(serialized.endsWith('\n')).toBe(true);
@@ -77,8 +77,51 @@ describe('Flyoff diagram domain', () => {
     expect(parsed.ok).toBe(true);
     if (parsed.ok) {
       expect(parsed.migrated).toBe(true);
+      expect(parsed.document.formatVersion).toBe(2);
       expect(parsed.document.settings.gridSize).toBe(16);
     }
+
+    const versionOne = JSON.stringify({
+      ...document,
+      formatVersion: 1,
+    });
+    const parsedVersionOne = parseDiagramDocument(versionOne);
+    expect(parsedVersionOne.ok).toBe(true);
+    if (parsedVersionOne.ok) {
+      expect(parsedVersionOne.migrated).toBe(true);
+      expect(parsedVersionOne.document.formatVersion).toBe(2);
+    }
+  });
+
+  it('round-trips safe node colors and rejects arbitrary CSS values', () => {
+    const document = withElement(createDiagramDocument('activity'), 'action');
+    const customized = {
+      ...document,
+      presentations: {
+        ...document.presentations,
+        nodes: document.presentations.nodes.map((presentation) => ({
+          ...presentation,
+          appearance: { color: '#8f4fc4' as const },
+        })),
+      },
+    };
+    expect(parseDiagramDocument(serializeDiagramDocument(customized))).toEqual({
+      ok: true,
+      document: customized,
+      migrated: false,
+    });
+
+    const unsafe = {
+      ...customized,
+      presentations: {
+        ...customized.presentations,
+        nodes: customized.presentations.nodes.map((presentation) => ({
+          ...presentation,
+          appearance: { color: 'red; stroke: url(javascript:alert(1))' },
+        })),
+      },
+    };
+    expect(validateDiagramDocument(unsafe)).toMatchObject({ ok: false });
   });
 
   it('rejects duplicate IDs and excessive JSON depth structurally', () => {

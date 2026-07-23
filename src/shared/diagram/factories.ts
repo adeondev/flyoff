@@ -37,7 +37,7 @@ export function createDiagramDocument(
 ): DiagramDocument {
   return {
     format: 'flyoff-diagram',
-    formatVersion: 1,
+    formatVersion: 2,
     documentId: createId(),
     diagramType,
     elements: [],

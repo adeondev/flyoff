@@ -512,6 +512,16 @@ export interface TranslationCatalog {
     dimensions: string;
     width: string;
     height: string;
+    appearance: string;
+    elementColor: string;
+    customColor: string;
+    useThemeColor: string;
+    colorPurple: string;
+    colorBlue: string;
+    colorCyan: string;
+    colorGreen: string;
+    colorAmber: string;
+    colorRed: string;
     orientation: string;
     addPartitionLeft: string;
     addPartitionRight: string;
@@ -1252,6 +1262,16 @@ export const ptBR = {
     dimensions: 'Dimensões',
     width: 'Largura',
     height: 'Altura',
+    appearance: 'Aparência',
+    elementColor: 'Cor do elemento',
+    customColor: 'Cor personalizada',
+    useThemeColor: 'Usar cor do tema',
+    colorPurple: 'Roxo',
+    colorBlue: 'Azul',
+    colorCyan: 'Ciano',
+    colorGreen: 'Verde',
+    colorAmber: 'Âmbar',
+    colorRed: 'Vermelho',
     orientation: 'Orientação',
     addPartitionLeft: 'Adicionar raia à esquerda',
     addPartitionRight: 'Adicionar raia à direita',
@@ -1973,6 +1993,16 @@ export const enUS = {
     dimensions: 'Dimensions',
     width: 'Width',
     height: 'Height',
+    appearance: 'Appearance',
+    elementColor: 'Element color',
+    customColor: 'Custom color',
+    useThemeColor: 'Use theme color',
+    colorPurple: 'Purple',
+    colorBlue: 'Blue',
+    colorCyan: 'Cyan',
+    colorGreen: 'Green',
+    colorAmber: 'Amber',
+    colorRed: 'Red',
     orientation: 'Orientation',
     addPartitionLeft: 'Add partition to the left',
     addPartitionRight: 'Add partition to the right',

@@ -322,7 +322,9 @@ export function DiagramCanvas({
           {document.relationships.map((relationship) => {
             const source = nodes.get(relationship.sourceId);
             const target = nodes.get(relationship.targetId);
-            return source && target ? (
+            const sourceElement = elements.get(relationship.sourceId);
+            const targetElement = elements.get(relationship.targetId);
+            return source && target && sourceElement && targetElement ? (
               <DiagramEdgeRenderer
                 key={relationship.id}
                 onPointerDown={(event) => {
@@ -333,7 +335,9 @@ export function DiagramCanvas({
                 relationship={relationship}
                 selected={selection?.kind === 'relationship' && selection.id === relationship.id}
                 source={source}
+                sourceElement={sourceElement}
                 target={target}
+                targetElement={targetElement}
               />
             ) : null;
           })}
@@ -421,6 +425,7 @@ function DiagramMinimap({
           className="diagram-minimap__node"
           height={Math.max(2, node.bounds.height * scale)}
           key={node.id}
+          style={node.appearance ? { fill: node.appearance.color } : undefined}
           width={Math.max(2, node.bounds.width * scale)}
           x={node.bounds.x * scale + offsetX}
           y={node.bounds.y * scale + offsetY}

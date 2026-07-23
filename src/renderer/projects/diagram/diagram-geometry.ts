@@ -84,6 +84,42 @@ export function getEffectiveDiagramNodePresentation(
   };
 }
 
+const CIRCULAR_ACTIVITY_NODES = new Set<DiagramElement['kind']>([
+  'initial-node',
+  'activity-final',
+  'flow-final',
+]);
+
+export function getDiagramConnectionPoint(
+  element: DiagramElement,
+  presentation: DiagramNodePresentation,
+  toward: DiagramPoint,
+): DiagramPoint {
+  const center = {
+    x: presentation.bounds.x + presentation.bounds.width / 2,
+    y: presentation.bounds.y + presentation.bounds.height / 2,
+  };
+  if (!CIRCULAR_ACTIVITY_NODES.has(element.kind)) {
+    return center;
+  }
+
+  const delta = {
+    x: toward.x - center.x,
+    y: toward.y - center.y,
+  };
+  const distance = Math.hypot(delta.x, delta.y);
+  if (distance === 0) {
+    return center;
+  }
+
+  const radius =
+    Math.max(0, Math.min(presentation.bounds.width, presentation.bounds.height) / 2 - 2);
+  return {
+    x: center.x + (delta.x / distance) * radius,
+    y: center.y + (delta.y / distance) * radius,
+  };
+}
+
 export type DiagramResizeHandle =
   | 'n'
   | 'ne'

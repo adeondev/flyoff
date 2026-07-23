@@ -2,11 +2,14 @@ import type {
   DiagramDiagnostic,
   DiagramBounds,
   DiagramDocument,
+  DiagramElementColor,
   DiagramElement,
+  DiagramNodeAppearance,
   DiagramRelationship,
   UmlAttribute,
   UmlOperation,
 } from '../../../shared/diagram';
+import { getTooltipTargetProps } from '../../components/tooltip';
 import type { Translate } from '../../pages/page-types';
 import type { DiagramSelection } from './DiagramCanvas';
 import {
@@ -15,6 +18,10 @@ import {
   setDiagramNodeSize,
   type ActivityPartitionSide,
 } from './diagram-geometry';
+import {
+  DEFAULT_CUSTOM_DIAGRAM_COLOR,
+  DIAGRAM_COLOR_PRESETS,
+} from './diagram-appearance';
 
 interface DiagramInspectorProps {
   diagnostics: readonly DiagramDiagnostic[];
@@ -24,6 +31,10 @@ interface DiagramInspectorProps {
   onSelectDiagnostic: (targetId: string) => void;
   onAddPartition: (side: ActivityPartitionSide) => void;
   onResizeElement: (id: string, bounds: DiagramBounds) => void;
+  onUpdateAppearance: (
+    id: string,
+    appearance: DiagramNodeAppearance | undefined,
+  ) => void;
   onUpdateElement: (
     id: string,
     update: (element: DiagramElement) => DiagramElement,
@@ -32,6 +43,68 @@ interface DiagramInspectorProps {
     id: string,
     update: (relationship: DiagramRelationship) => DiagramRelationship,
   ) => void;
+}
+
+function AppearanceFields({
+  appearance,
+  elementId,
+  onUpdateAppearance,
+  translate,
+}: {
+  appearance: DiagramNodeAppearance | undefined;
+  elementId: string;
+  onUpdateAppearance: DiagramInspectorProps['onUpdateAppearance'];
+  translate: Translate;
+}) {
+  const selectedColor = appearance?.color.toLowerCase();
+  return (
+    <fieldset className="diagram-inspector__appearance">
+      <legend>{translate('diagram.appearance')}</legend>
+      <div
+        aria-label={translate('diagram.elementColor')}
+        className="diagram-inspector__color-presets"
+        role="group"
+      >
+        {DIAGRAM_COLOR_PRESETS.map(({ color, labelKey }) => {
+          const label = translate(labelKey);
+          return (
+            <button
+              {...getTooltipTargetProps(label, 'bottom')}
+              aria-label={label}
+              aria-pressed={selectedColor === color}
+              className="diagram-inspector__color-swatch"
+              key={color}
+              onClick={() => onUpdateAppearance(elementId, { color })}
+              style={{ '--diagram-swatch-color': color } as React.CSSProperties}
+              type="button"
+            />
+          );
+        })}
+      </div>
+      <div className="diagram-inspector__color-actions">
+        <label>
+          <span>{translate('diagram.customColor')}</span>
+          <input
+            aria-label={translate('diagram.customColor')}
+            onChange={(event) =>
+              onUpdateAppearance(elementId, {
+                color: event.currentTarget.value as DiagramElementColor,
+              })
+            }
+            type="color"
+            value={appearance?.color ?? DEFAULT_CUSTOM_DIAGRAM_COLOR}
+          />
+        </label>
+        <button
+          disabled={!appearance}
+          onClick={() => onUpdateAppearance(elementId, undefined)}
+          type="button"
+        >
+          {translate('diagram.useThemeColor')}
+        </button>
+      </div>
+    </fieldset>
+  );
 }
 
 function GeometryFields({
@@ -539,6 +612,7 @@ export function DiagramInspector({
   onAddPartition,
   onResizeElement,
   onSelectDiagnostic,
+  onUpdateAppearance,
   onUpdateElement,
   onUpdateRelationship,
   selection,
@@ -567,6 +641,14 @@ export function DiagramInspector({
               document={document}
               element={element}
               onResizeElement={onResizeElement}
+              translate={translate}
+            />
+            <AppearanceFields
+              appearance={document.presentations.nodes.find(
+                ({ elementId }) => elementId === element.id,
+              )?.appearance}
+              elementId={element.id}
+              onUpdateAppearance={onUpdateAppearance}
               translate={translate}
             />
             {element.kind === 'class' ? (

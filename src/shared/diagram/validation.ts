@@ -3,6 +3,7 @@ import {
   DIAGRAM_FORMAT_VERSION,
   type DiagramDocument,
   type DiagramElement,
+  type DiagramNodeAppearance,
   type DiagramRelationship,
   type DiagramSourceRef,
   type UmlAttribute,
@@ -20,6 +21,7 @@ export const DIAGRAM_MAX_POINTS_PER_EDGE = 256;
 
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const colorPattern = /^#[0-9a-f]{6}$/i;
 const diagramTypes = new Set(['class', 'use-case', 'sequence', 'activity']);
 const elementKinds = new Set([
   'package',
@@ -94,6 +96,14 @@ function isString(value: unknown, maxLength = 16_384): value is string {
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
+}
+
+function isNodeAppearance(value: unknown): value is DiagramNodeAppearance {
+  return (
+    isRecord(value) &&
+    typeof value.color === 'string' &&
+    colorPattern.test(value.color)
+  );
 }
 
 function optionalString(value: unknown, maxLength = 16_384): boolean {
@@ -382,7 +392,8 @@ export function validateDiagramDocument(value: unknown): DiagramValidationResult
           isBounds(node.bounds) &&
           Number.isSafeInteger(node.zIndex) &&
           (node.parentPresentationId === undefined ||
-            isId(node.parentPresentationId)),
+            isId(node.parentPresentationId)) &&
+          (node.appearance === undefined || isNodeAppearance(node.appearance)),
       )
     ) {
       issues.push({ path: 'presentations.nodes', message: 'Invalid node presentations.' });

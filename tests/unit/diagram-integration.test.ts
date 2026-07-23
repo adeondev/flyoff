@@ -66,6 +66,8 @@ describe('native diagram page integration', () => {
     const english = TRANSLATION_CATALOGS['en-US'];
     expect(portuguese.projects.instanceDiagram).toBe('Diagrama UML');
     expect(english.projects.instanceDiagram).toBe('UML diagram');
+    expect(portuguese.diagram.customColor).toBe('Cor personalizada');
+    expect(english.diagram.customColor).toBe('Custom color');
     expect(portuguese.diagram.relationComposition).toBe('Composição');
     expect(english.diagram.relationMessageAsynchronous).toBe('Asynchronous message');
     expect(portuguese.diagram.astahBridgeExplanation).toContain('não interpreta .asta diretamente');

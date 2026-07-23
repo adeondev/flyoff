@@ -1,5 +1,5 @@
 export const DIAGRAM_FORMAT = 'flyoff-diagram' as const;
-export const DIAGRAM_FORMAT_VERSION = 1 as const;
+export const DIAGRAM_FORMAT_VERSION = 2 as const;
 export const DIAGRAM_MIME_TYPE = 'application/vnd.flyoff.diagram' as const;
 export const DIAGRAM_FILE_EXTENSION = '.flyd' as const;
 
@@ -250,12 +250,19 @@ export interface DiagramBounds extends DiagramPoint {
   height: number;
 }
 
+export type DiagramElementColor = `#${string}`;
+
+export interface DiagramNodeAppearance {
+  color: DiagramElementColor;
+}
+
 export interface DiagramNodePresentation {
   id: string;
   elementId: string;
   bounds: DiagramBounds;
   zIndex: number;
   parentPresentationId?: string;
+  appearance?: DiagramNodeAppearance;
 }
 
 export interface DiagramEdgePresentation {

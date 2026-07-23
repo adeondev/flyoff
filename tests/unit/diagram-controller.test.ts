@@ -3,7 +3,10 @@ import { describe, expect, it, vi } from 'vitest';
 import { DiagramController } from '../../src/renderer/projects/diagram/diagram-controller';
 import { DiagramHistoryStore } from '../../src/renderer/projects/diagram/diagram-history';
 import { projectFailure, projectSuccess } from '../../src/shared/contracts';
-import { createDiagramDocument } from '../../src/shared/diagram';
+import {
+  createDiagramDocument,
+  createDiagramElement,
+} from '../../src/shared/diagram';
 
 const nodeId = '11111111-1111-4111-8111-111111111111';
 const initialRevision = 'a'.repeat(64);
@@ -32,7 +35,16 @@ describe('diagram history and controller', () => {
 
   it('autosaves structurally valid edits with the expected revision', async () => {
     vi.useFakeTimers();
-    const document = createDiagramDocument('activity');
+    const baseDocument = createDiagramDocument('activity');
+    const action = createDiagramElement('action');
+    const document = {
+      ...baseDocument,
+      elements: [action.element],
+      presentations: {
+        nodes: [action.presentation],
+        edges: [],
+      },
+    };
     const save = vi.fn(async (request) =>
       projectSuccess({
         nodeId,
@@ -51,6 +63,13 @@ describe('diagram history and controller', () => {
       controller.update(nodeId, (current) => ({
         ...current,
         settings: { ...current.settings, showGrid: false },
+        presentations: {
+          ...current.presentations,
+          nodes: current.presentations.nodes.map((presentation) => ({
+            ...presentation,
+            appearance: { color: '#8f4fc4' },
+          })),
+        },
       })),
     ).toBe(true);
     expect(controller.getSnapshot(nodeId)).toMatchObject({ dirty: true, status: 'dirty' });
@@ -63,6 +82,13 @@ describe('diagram history and controller', () => {
         expectedRevision: initialRevision,
         document: expect.objectContaining({
           settings: expect.objectContaining({ showGrid: false }),
+          presentations: expect.objectContaining({
+            nodes: [
+              expect.objectContaining({
+                appearance: { color: '#8f4fc4' },
+              }),
+            ],
+          }),
         }),
       }),
     );
