@@ -74,11 +74,11 @@ describe('Twine entry points', () => {
     render(<TwinePage {...pageProps(INTERNAL_PAGE_IDS.twine)} />);
 
     expect(screen.getByText('Twine')).toBeTruthy();
-    expect(screen.queryByRole('heading')).toBeNull();
+    expect(screen.queryByText('What will we do today?')).toBeNull();
     expect(screen.queryByText('Beta')).toBeNull();
     expect(
       screen.getByRole('button', {
-        name: 'Select model: Gemma 4 31B IT',
+        name: 'Select model: Gemma 4 26B A4B IT',
       }),
     ).toBeTruthy();
   });

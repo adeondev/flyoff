@@ -131,6 +131,24 @@ describe('Twine streaming Markdown', () => {
     expect(markdown.querySelector('strong')?.textContent).toBe('bold');
   });
 
+  it('reports the first grapheme only when it becomes visible', () => {
+    const onFirstVisibleGrapheme = vi.fn();
+    const { container } = render(
+      <TwineMarkdown
+        onFirstVisibleGrapheme={onFirstVisibleGrapheme}
+        source="answer"
+        streaming
+      />,
+    );
+
+    expect(onFirstVisibleGrapheme).not.toHaveBeenCalled();
+    runFrame();
+    expect(container.querySelector('.twine-markdown')?.textContent).not.toBe('');
+    expect(onFirstVisibleGrapheme).toHaveBeenCalledOnce();
+    drainText(container.querySelector('.twine-markdown')!, 'answer');
+    expect(onFirstVisibleGrapheme).toHaveBeenCalledOnce();
+  });
+
   it('keeps typewriter progress when the message remounts in another pane', () => {
     const first = render(
       <TwineMarkdown cacheKey="message-1:text" source="abcdefghij" streaming />,

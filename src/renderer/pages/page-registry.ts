@@ -95,7 +95,7 @@ export const PAGE_REGISTRY = {
     icon: twineIcon,
     singleton: true,
     retention: 'keep-alive',
-    stateVersion: 1,
+    stateVersion: 3,
     component: TwinePage,
     createInitialState: createTwinePageState,
     migrateState: migrateTwinePageState,

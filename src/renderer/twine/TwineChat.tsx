@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   useSyncExternalStore,
 } from 'react';
@@ -12,7 +13,9 @@ import type {
   TwineGenerateMessage,
 } from '../../shared/contracts';
 import chevronIcon from '../../../public/images/icons/actions/chevron-right.svg';
-import plusIcon from '../../../public/images/icons/actions/plus.svg';
+import conversationIcon from '../../../public/images/icons/twine/conversation.svg';
+import fullAccessIcon from '../../../public/images/icons/twine/thinking.svg';
+import historyIcon from '../../../public/images/icons/twine/history.svg';
 import geminiLogo from '../../../public/images/twine/gemini-logo.png';
 import { Dialog } from '../components/dialog';
 import { MaskedIcon } from '../components/MaskedIcon';
@@ -22,6 +25,7 @@ import type { InternalPageProps } from '../pages/page-types';
 import { TwineApiKeyDialog } from './TwineApiKeyDialog';
 import { TwineComposer } from './TwineComposer';
 import { TwineConversation } from './TwineConversation';
+import { TwineHistoryDialog } from './TwineHistoryDialog';
 import {
   activeTwineBranch,
   forkTwineConversation,
@@ -96,7 +100,9 @@ export function TwineChat({
     conversation,
     conversationId,
     conversationSummaries,
+    conversationTitle,
     draft,
+    editSession,
     isGenerating,
   } = runtimeState;
   const [credentialStatus, setCredentialStatus] =
@@ -104,8 +110,11 @@ export function TwineChat({
   const [showApiKeyDialog, setShowApiKeyDialog] = useState(false);
   const [notice, setNotice] = useState<string>();
   const [confirmNewConversation, setConfirmNewConversation] = useState(false);
+  const [confirmFullAccess, setConfirmFullAccess] = useState(false);
   const [deleteMessageId, setDeleteMessageId] = useState<string>();
   const [deleteConversationId, setDeleteConversationId] = useState<string>();
+  const [showHistory, setShowHistory] = useState(false);
+  const pageRef = useRef<HTMLElement>(null);
   const selectedModel = getTwineModel(pageState.data.modelId);
   const messages = activeTwineBranch(conversation).messages;
   const variants = twineConversationVariants(conversation);
@@ -114,6 +123,10 @@ export function TwineChat({
   );
   const variantAnchor = variants.find(({ forkMessageId }) => forkMessageId)
     ?.forkMessageId;
+  const initialConversationScrollState = useMemo(
+    () => runtime.getScrollState(conversationId),
+    [conversationId, runtime],
+  );
 
   const modelItems = useMemo<readonly MenuItem[]>(
     () => [
@@ -129,35 +142,6 @@ export function TwineChat({
     ],
     [pageState.data.modelId, translate],
   );
-  const historyItems = useMemo<readonly MenuItem[]>(
-    () => [
-      {
-        kind: 'label',
-        id: 'twine-history-label',
-        label: translate('twine.history'),
-      },
-      ...conversationSummaries.slice(0, 12).map((conversation) => ({
-        kind: 'action' as const,
-        id: `conversation:${conversation.id}`,
-        label: conversation.title,
-        checked: conversation.id === conversationId,
-      })),
-      ...(conversationSummaries.length > 0
-        ? ([
-            { kind: 'separator' as const, id: 'twine-history-separator' },
-            {
-              kind: 'action' as const,
-              id: 'delete-current-conversation',
-              label: translate('twine.deleteConversation'),
-              tone: 'danger' as const,
-              disabled: !conversationId,
-            },
-          ] satisfies readonly MenuItem[])
-        : []),
-    ],
-    [conversationId, conversationSummaries, translate],
-  );
-
   const nextId = useCallback((prefix: string): string => {
     return runtime.nextId(prefix);
   }, [runtime]);
@@ -197,6 +181,9 @@ export function TwineChat({
     setDeleteConversationId(undefined);
     if (!id) {
       return;
+    }
+    if (id === conversationId) {
+      runtime.clearEditSession();
     }
     await runtime.deleteConversation(id);
   }
@@ -274,6 +261,14 @@ export function TwineChat({
       ...current,
       data: { ...current.data, researchEnabled },
     }));
+  }
+
+  function requestApprovalMode(approvalMode: TwineApprovalMode): void {
+    if (approvalMode === 'full' && pageState.data.approvalMode !== 'full') {
+      setConfirmFullAccess(true);
+      return;
+    }
+    setApprovalMode(approvalMode);
   }
 
   function loadPreview(file: File, id: string): void {
@@ -399,7 +394,11 @@ export function TwineChat({
   }
 
   function sendMessage(): void {
-    void submitMessage();
+    if (editSession) {
+      void submitEditedMessage();
+    } else {
+      void submitMessage();
+    }
   }
 
   async function submitMessage(): Promise<void> {
@@ -436,6 +435,7 @@ export function TwineChat({
           },
         ]),
       );
+      runtime.markActivity();
       runtime.setAttachments([]);
       runtime.setDraft('');
       setNotice(undefined);
@@ -464,6 +464,7 @@ export function TwineChat({
     runtime.setConversation((current) =>
       updateTwineBranchMessages(current, branch.id, () => nextMessages),
     );
+    runtime.markActivity();
     runtime.setAttachments([]);
     runtime.setDraft('');
     setNotice(
@@ -474,13 +475,37 @@ export function TwineChat({
     await startGeneration(requestId, generationMessages(nextMessages));
   }
 
-  function editMessage(messageId: string, text: string): void {
-    cancelGeneration();
-    const branch = activeTwineBranch(conversation);
-    const index = branch.messages.findIndex(({ id }) => id === messageId);
-    if (index < 0 || branch.messages[index]?.kind !== 'user') {
+  function beginEditingMessage(messageId: string): void {
+    const message = activeTwineBranch(conversation).messages.find(
+      ({ id }) => id === messageId,
+    );
+    if (message?.kind === 'user') {
+      cancelGeneration();
+      runtime.beginEdit(messageId, message.text);
+    }
+  }
+
+  async function submitEditedMessage(): Promise<void> {
+    if (!editSession) {
       return;
     }
+    const text = editSession.text.trim();
+    const branch = activeTwineBranch(conversation);
+    const index = branch.messages.findIndex(
+      ({ id }) => id === editSession.messageId,
+    );
+    if (
+      !text ||
+      text === editSession.originalText.trim() ||
+      conversationId !== editSession.conversationId ||
+      branch.id !== editSession.branchId ||
+      index < 0 ||
+      branch.messages[index]?.kind !== 'user'
+    ) {
+      runtime.clearEditSession();
+      return;
+    }
+    cancelGeneration();
     const requestId = nextId('twine-request');
     const userMessage = { ...branch.messages[index]!, text };
     const assistantMessage = createAssistantMessage(nextId('message'), requestId);
@@ -493,14 +518,18 @@ export function TwineChat({
     runtime.setConversation((current) =>
       forkTwineConversation(current, {
         branchId,
-        forkMessageId: messageId,
+        forkMessageId: editSession.messageId,
         messages: nextMessages,
       }),
     );
-    void startGeneration(requestId, generationMessages(nextMessages));
+    runtime.markActivity();
+    runtime.clearEditSession();
+    setNotice(undefined);
+    await startGeneration(requestId, generationMessages(nextMessages));
   }
 
   function regenerateMessage(messageId: string): void {
+    runtime.clearEditSession();
     cancelGeneration();
     const branch = activeTwineBranch(conversation);
     const index = branch.messages.findIndex(({ id }) => id === messageId);
@@ -522,6 +551,7 @@ export function TwineChat({
   }
 
   function rewindToMessage(messageId: string): void {
+    runtime.clearEditSession();
     cancelGeneration();
     runtime.setConversation((current) =>
       truncateActiveTwineConversation(current, messageId, true),
@@ -534,6 +564,7 @@ export function TwineChat({
     if (!messageId) {
       return;
     }
+    runtime.clearEditSession();
     cancelGeneration();
     const branch = activeTwineBranch(conversation);
     const index = branch.messages.findIndex(({ id }) => id === messageId);
@@ -547,6 +578,7 @@ export function TwineChat({
 
   async function resetConversation(): Promise<void> {
     cancelGeneration();
+    runtime.clearEditSession();
     runtime.setAttachments([]);
     runtime.setDraft('');
     setNotice(undefined);
@@ -562,117 +594,156 @@ export function TwineChat({
     }
   }
 
+  function dismissHistory(): void {
+    setShowHistory(false);
+    requestAnimationFrame(() => {
+      pageRef.current
+        ?.querySelector<HTMLTextAreaElement>('.twine-composer textarea')
+        ?.focus({ preventScroll: true });
+    });
+  }
+
   return (
-    <main className="twine-page" aria-label={translate('twine.conversation')}>
-      <header className="twine-page__toolbar">
-        <DropdownMenu
-          items={modelItems}
-          onAction={(id) => {
-            if (isTwineModelId(id)) {
-              setModel(id);
-            }
-          }}
-          trigger={(props) => (
+    <main
+      className="twine-page"
+      aria-label={translate('twine.conversation')}
+      ref={pageRef}
+    >
+      <section className="twine-page__workspace">
+        <header className="twine-page__toolbar">
+          <div className="twine-page__toolbar-leading">
             <button
-              {...props}
-              aria-label={`${translate('twine.selectModel')}: ${selectedModel.label}`}
-              className="twine-model-selector"
+              aria-label={translate('twine.history')}
+              className="twine-history-trigger"
+              onClick={() => setShowHistory(true)}
               type="button"
+              {...getTooltipTargetProps(translate('twine.history'), 'bottom')}
             >
-              <img aria-hidden="true" src={geminiLogo} alt="" />
-              <span>{selectedModel.label}</span>
-              <MaskedIcon className="twine-model-selector__chevron" icon={chevronIcon} />
+              <MaskedIcon icon={historyIcon} />
             </button>
-          )}
-        />
-        <div className="twine-page__toolbar-actions">
-          <DropdownMenu
-            items={historyItems}
-            onAction={(id) => {
-              if (id.startsWith('conversation:')) {
-                setNotice(undefined);
-                void runtime.openConversation(
-                  id.slice('conversation:'.length),
-                );
-              } else if (id === 'delete-current-conversation' && conversationId) {
-                setDeleteConversationId(conversationId);
-              }
-            }}
-            trigger={(props) => (
-              <button
-                {...props}
-                aria-label={translate('twine.conversationHistory')}
-                className="twine-history-button"
-                type="button"
-              >
-                <span>{translate('twine.history')}</span>
-                <MaskedIcon className="twine-model-selector__chevron" icon={chevronIcon} />
-              </button>
-            )}
-          />
+            <DropdownMenu
+              items={modelItems}
+              onAction={(id) => {
+                if (isTwineModelId(id)) {
+                  setModel(id);
+                }
+              }}
+              trigger={(props) => (
+                <button
+                  {...props}
+                  aria-label={`${translate('twine.selectModel')}: ${selectedModel.label}`}
+                  className="twine-model-selector"
+                  type="button"
+                >
+                  <img aria-hidden="true" src={geminiLogo} alt="" />
+                  <span>{selectedModel.label}</span>
+                  <MaskedIcon
+                    className="twine-model-selector__chevron"
+                    icon={chevronIcon}
+                  />
+                </button>
+              )}
+            />
+          </div>
           <button
             aria-label={translate('twine.newConversation')}
             className="twine-new-conversation"
             onClick={requestNewConversation}
             type="button"
-            {...getTooltipTargetProps(translate('twine.newConversation'), 'bottom')}
+            {...getTooltipTargetProps(
+              translate('twine.newConversation'),
+              'bottom',
+            )}
           >
-            <MaskedIcon icon={plusIcon} />
-            <span>{translate('twine.newConversation')}</span>
+            <MaskedIcon icon={conversationIcon} />
           </button>
+        </header>
+        <div
+          className={`twine-page__body${
+            messages.length === 0 ? ' twine-page__body--empty' : ''
+          }`}
+        >
+          <TwineConversation
+            active={active}
+            conversationId={conversationId}
+            conversationTitle={conversationTitle}
+            initialScrollState={initialConversationScrollState}
+            key={conversationId ?? 'twine-session'}
+            messages={messages}
+            onDelete={setDeleteMessageId}
+            onEditRequest={beginEditingMessage}
+            onRegenerate={regenerateMessage}
+            onRewind={rewindToMessage}
+            onScrollStateChange={handleScrollStateChange}
+            onVariantChange={(offset) => {
+              runtime.clearEditSession();
+              cancelGeneration();
+              runtime.setConversation((current) =>
+                selectTwineVariant(current, offset),
+              );
+            }}
+            translate={translate}
+            variant={
+              variants.length > 1 && activeVariantIndex >= 0
+                ? {
+                    anchorMessageId: variantAnchor,
+                    index: activeVariantIndex,
+                    total: variants.length,
+                  }
+                : undefined
+            }
+          />
+          <TwineComposer
+            active={active}
+            attachments={attachments}
+            approvalMode={pageState.data.approvalMode}
+            draft={editSession?.text ?? draft}
+            editMessageId={editSession?.messageId}
+            editMode={Boolean(editSession)}
+            isGenerating={isGenerating}
+            notice={notice}
+            onAddFiles={addFiles}
+            onApprovalChange={requestApprovalMode}
+            onCancelEdit={() => runtime.clearEditSession()}
+            onDraftChange={(value) => {
+              if (editSession) {
+                runtime.setEditText(value);
+              } else {
+                runtime.setDraft(value);
+              }
+            }}
+            onRemoveAttachment={removeAttachment}
+            onResearchChange={setResearchEnabled}
+            onSend={sendMessage}
+            onThinkingChange={setThinkingLevel}
+            originalEditText={editSession?.originalText}
+            researchEnabled={pageState.data.researchEnabled}
+            thinkingLevel={pageState.data.thinkingLevel}
+            translate={translate}
+          />
         </div>
-      </header>
-      <div
-        className={`twine-page__body${
-          messages.length === 0 ? ' twine-page__body--empty' : ''
-        }`}
-      >
-        <TwineConversation
-          active={active}
-          conversationId={conversationId}
-          initialScrollState={runtime.getScrollState(conversationId)}
-          messages={messages}
-          onDelete={setDeleteMessageId}
-          onEdit={editMessage}
-          onRegenerate={regenerateMessage}
-          onRewind={rewindToMessage}
-          onScrollStateChange={handleScrollStateChange}
-          onVariantChange={(offset) => {
-            cancelGeneration();
-            runtime.setConversation((current) =>
-              selectTwineVariant(current, offset),
-            );
+      </section>
+      {showHistory ? (
+        <TwineHistoryDialog
+          activeConversationId={conversationId}
+          initialConversations={conversationSummaries}
+          onCancel={dismissHistory}
+          onCreate={() => {
+            setShowHistory(false);
+            requestNewConversation();
           }}
-          translate={translate}
-          variant={
-            variants.length > 1 && activeVariantIndex >= 0
-              ? {
-                  anchorMessageId: variantAnchor,
-                  index: activeVariantIndex,
-                  total: variants.length,
-                }
-              : undefined
-          }
-        />
-        <TwineComposer
-          active={active}
-          attachments={attachments}
-          approvalMode={pageState.data.approvalMode}
-          draft={draft}
-          isGenerating={isGenerating}
-          notice={notice}
-          onAddFiles={addFiles}
-          onApprovalChange={setApprovalMode}
-          onDraftChange={(value) => runtime.setDraft(value)}
-          onRemoveAttachment={removeAttachment}
-          onResearchChange={setResearchEnabled}
-          onSend={sendMessage}
-          onThinkingChange={setThinkingLevel}
-          researchEnabled={pageState.data.researchEnabled}
-          thinkingLevel={pageState.data.thinkingLevel}
+          onDelete={setDeleteConversationId}
+          onOpen={(id) => {
+            runtime.clearEditSession();
+            setNotice(undefined);
+            setShowHistory(false);
+            void runtime.openConversation(id);
+          }}
+          onQuery={(query) => runtime.queryConversations(query)}
+          onUpdate={(request) => runtime.updateConversation(request)}
           translate={translate}
         />
-      </div>
+      ) : null}
       {showApiKeyDialog && credentialStatus ? (
         <TwineApiKeyDialog
           closeLabel={translate('windowControls.close')}
@@ -711,6 +782,50 @@ export function TwineChat({
           size="compact"
           title={translate('twine.newConversationTitle')}
         />
+      ) : null}
+      {confirmFullAccess ? (
+        <Dialog
+          className="twine-full-access-dialog"
+          closeLabel={translate('windowControls.close')}
+          closeOnBackdrop
+          footerEnd={
+            <button
+              className="twine-full-access-dialog__confirm"
+              onClick={() => {
+                setApprovalMode('full');
+                setConfirmFullAccess(false);
+              }}
+              type="button"
+            >
+              {translate('twine.approvalFullConfirm')}
+            </button>
+          }
+          footerStart={
+            <button
+              data-dialog-initial-focus
+              onClick={() => setConfirmFullAccess(false)}
+              type="button"
+            >
+              {translate('twine.cancel')}
+            </button>
+          }
+          onCancel={() => setConfirmFullAccess(false)}
+          size="compact"
+          title={translate('twine.approvalFullTitle')}
+        >
+          <div className="twine-full-access-dialog__content">
+            <MaskedIcon
+              className="twine-full-access-dialog__icon"
+              icon={fullAccessIcon}
+            />
+            <div>
+              <p>{translate('twine.approvalFullDescription')}</p>
+              <p className="twine-full-access-dialog__warning">
+                {translate('twine.approvalFullWarning')}
+              </p>
+            </div>
+          </div>
+        </Dialog>
       ) : null}
       {deleteMessageId ? (
         <Dialog

@@ -1,4 +1,4 @@
-export type MenuItemTone = 'default' | 'danger';
+export type MenuItemTone = 'default' | 'danger' | 'warning';
 
 export interface MenuActionItem {
   kind: 'action';

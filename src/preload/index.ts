@@ -99,24 +99,34 @@ import {
   isOpenExternalLinkRequest,
   isOpenExternalLinkResult,
   isTwineApiKeyInput,
+  isTwineContentActionResult,
+  isTwineCopyContentRequest,
   isTwineConversationId,
+  isTwineConversationMutationRequest,
+  isTwineConversationQuery,
+  isTwineConversationQueryResult,
   isTwineConversationSnapshot,
   isTwineConversationStoreSnapshot,
   isTwineCredentialStatus,
   isTwineGenerationEvent,
   isTwineGenerationRequest,
+  isTwineExportMarkdownRequest,
   isTwineRequestId,
   TWINE_CANCEL_GENERATION_CHANNEL,
+  TWINE_COPY_CONTENT_CHANNEL,
   TWINE_CREATE_CONVERSATION_CHANNEL,
   TWINE_CREDENTIAL_STATUS_CHANNEL,
   TWINE_DELETE_CONVERSATION_CHANNEL,
+  TWINE_EXPORT_MARKDOWN_CHANNEL,
   TWINE_GENERATION_EVENT_CHANNEL,
   TWINE_LIST_CONVERSATIONS_CHANNEL,
   TWINE_LOAD_CONVERSATION_CHANNEL,
+  TWINE_QUERY_CONVERSATIONS_CHANNEL,
   TWINE_REMOVE_API_KEY_CHANNEL,
   TWINE_SAVE_CONVERSATION_CHANNEL,
   TWINE_SAVE_API_KEY_CHANNEL,
   TWINE_START_GENERATION_CHANNEL,
+  TWINE_UPDATE_CONVERSATION_CHANNEL,
   type CreateProjectRequest,
   type GetProjectNodeRequest,
   type RestoreProjectRequest,
@@ -146,6 +156,10 @@ import {
   type SpellcheckWordRequest,
   type SpellcheckWordsRequest,
   type TwineConversationSnapshot,
+  type TwineConversationMutationRequest,
+  type TwineConversationQuery,
+  type TwineCopyContentRequest,
+  type TwineExportMarkdownRequest,
   type TwineGenerationEvent,
   type TwineGenerationRequest,
 } from '../shared/contracts';
@@ -407,6 +421,32 @@ const flyoffApi: FlyoffApi = Object.freeze({
     }
     return status;
   },
+  async copyTwineContent(request: TwineCopyContentRequest) {
+    if (!isTwineCopyContentRequest(request)) {
+      throw new TypeError('Invalid Twine copy request.');
+    }
+    const result: unknown = await ipcRenderer.invoke(
+      TWINE_COPY_CONTENT_CHANNEL,
+      request,
+    );
+    if (!isTwineContentActionResult(result)) {
+      throw new Error('The main process returned an invalid Twine copy result.');
+    }
+    return result;
+  },
+  async exportTwineMarkdown(request: TwineExportMarkdownRequest) {
+    if (!isTwineExportMarkdownRequest(request)) {
+      throw new TypeError('Invalid Twine export request.');
+    }
+    const result: unknown = await ipcRenderer.invoke(
+      TWINE_EXPORT_MARKDOWN_CHANNEL,
+      request,
+    );
+    if (!isTwineContentActionResult(result)) {
+      throw new Error('The main process returned an invalid Twine export result.');
+    }
+    return result;
+  },
   async listTwineConversations() {
     const snapshot: unknown = await ipcRenderer.invoke(
       TWINE_LIST_CONVERSATIONS_CHANNEL,
@@ -415,6 +455,19 @@ const flyoffApi: FlyoffApi = Object.freeze({
       throw new Error('The main process returned invalid Twine conversations.');
     }
     return snapshot;
+  },
+  async queryTwineConversations(query: TwineConversationQuery) {
+    if (!isTwineConversationQuery(query)) {
+      throw new TypeError('Invalid Twine conversation query.');
+    }
+    const result: unknown = await ipcRenderer.invoke(
+      TWINE_QUERY_CONVERSATIONS_CHANNEL,
+      query,
+    );
+    if (!isTwineConversationQueryResult(result)) {
+      throw new Error('The main process returned an invalid Twine query result.');
+    }
+    return result;
   },
   async loadTwineConversation(id: string) {
     if (!isTwineConversationId(id)) {
@@ -453,6 +506,19 @@ const flyoffApi: FlyoffApi = Object.freeze({
       throw new Error('The main process returned an invalid Twine conversation.');
     }
     return conversation;
+  },
+  async updateTwineConversation(request: TwineConversationMutationRequest) {
+    if (!isTwineConversationMutationRequest(request)) {
+      throw new TypeError('Invalid Twine conversation update.');
+    }
+    const snapshot: unknown = await ipcRenderer.invoke(
+      TWINE_UPDATE_CONVERSATION_CHANNEL,
+      request,
+    );
+    if (!isTwineConversationStoreSnapshot(snapshot)) {
+      throw new Error('The main process returned invalid Twine conversations.');
+    }
+    return snapshot;
   },
   async deleteTwineConversation(id: string) {
     if (!isTwineConversationId(id)) {

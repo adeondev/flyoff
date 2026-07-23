@@ -19,6 +19,9 @@ describe('Twine generation config', () => {
     const config = createTwineGenerateContentConfig(baseRequest);
 
     expect(config.systemInstruction).toBe(TWINE_SYSTEM_INSTRUCTION);
+    expect(config.systemInstruction).toContain('uma única resposta final coerente');
+    expect(config.systemInstruction).toContain('não invente referências');
+    expect(config.systemInstruction).toContain('Você é o Twine');
     expect(config.thinkingConfig.thinkingLevel).toBe('MINIMAL');
     expect(config.thinkingConfig.includeThoughts).toBe(false);
     expect(config.tools).toEqual([{ codeExecution: {} }]);

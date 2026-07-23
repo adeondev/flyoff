@@ -12,6 +12,7 @@ import { nextGraphemeBoundary } from '../projects/source-grapheme';
 interface TwineMarkdownProps {
   cacheKey?: string;
   className?: string;
+  onFirstVisibleGrapheme?: () => void;
   source: string;
   streaming?: boolean;
 }
@@ -68,6 +69,7 @@ function prefersReducedMotion(): boolean {
 export function TwineMarkdown({
   cacheKey,
   className,
+  onFirstVisibleGrapheme,
   source,
   streaming = false,
 }: TwineMarkdownProps) {
@@ -89,6 +91,12 @@ export function TwineMarkdown({
   const lastArrivalAtRef = useRef(-1);
   const lastFrameAtRef = useRef<number | undefined>(undefined);
   const revealBudgetRef = useRef(0);
+  const firstVisibleReportedRef = useRef(false);
+  const onFirstVisibleGraphemeRef = useRef(onFirstVisibleGrapheme);
+
+  useLayoutEffect(() => {
+    onFirstVisibleGraphemeRef.current = onFirstVisibleGrapheme;
+  }, [onFirstVisibleGrapheme]);
 
   useLayoutEffect(() => {
     const container = containerRef.current;
@@ -96,6 +104,12 @@ export function TwineMarkdown({
       return;
     }
     const previousTarget = targetSourceRef.current;
+    const reportFirstVisibleGrapheme = (visibleSource: string): void => {
+      if (visibleSource && !firstVisibleReportedRef.current) {
+        firstVisibleReportedRef.current = true;
+        onFirstVisibleGraphemeRef.current?.();
+      }
+    };
     targetSourceRef.current = source;
     streamingRef.current = streaming;
     if (lastArrivalAtRef.current < 0) {
@@ -103,6 +117,7 @@ export function TwineMarkdown({
     }
     if (displaySourceRef.current && !container.hasChildNodes()) {
       renderMarkdownInto(container, displaySourceRef.current);
+      reportFirstVisibleGrapheme(displaySourceRef.current);
     }
 
     if (prefersReducedMotion()) {
@@ -113,6 +128,7 @@ export function TwineMarkdown({
       }
       displaySourceRef.current = source;
       renderMarkdownInto(container, source);
+      reportFirstVisibleGrapheme(source);
       if (cacheKey) {
         typewriterCache.delete(cacheKey);
       }
@@ -123,6 +139,7 @@ export function TwineMarkdown({
       typewritingRef.current = streaming;
       displaySourceRef.current = source;
       renderMarkdownInto(container, source);
+      reportFirstVisibleGrapheme(source);
       if (cacheKey) {
         typewriterCache.delete(cacheKey);
       }
@@ -144,8 +161,9 @@ export function TwineMarkdown({
     if (streaming) {
       typewritingRef.current = true;
     } else if (!typewritingRef.current) {
-      displaySourceRef.current = source;
-      renderMarkdownInto(container, source);
+        displaySourceRef.current = source;
+        renderMarkdownInto(container, source);
+        reportFirstVisibleGrapheme(source);
       if (cacheKey) {
         typewriterCache.delete(cacheKey);
       }
@@ -161,6 +179,7 @@ export function TwineMarkdown({
         typewritingRef.current = false;
         displaySourceRef.current = target;
         renderMarkdownInto(container, target);
+        reportFirstVisibleGrapheme(target);
         if (cacheKey) {
           typewriterCache.delete(cacheKey);
         }
@@ -204,6 +223,7 @@ export function TwineMarkdown({
       const next = target.slice(0, boundary);
       displaySourceRef.current = next;
       renderMarkdownInto(container, next);
+      reportFirstVisibleGrapheme(next);
       if (cacheKey) {
         typewriterCache.set(cacheKey, {
           active: streamingRef.current || next !== targetSourceRef.current,

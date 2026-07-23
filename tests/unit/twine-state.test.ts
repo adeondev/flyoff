@@ -8,13 +8,13 @@ import {
 describe('Twine page state', () => {
   it('creates the documented defaults', () => {
     expect(createTwinePageState()).toEqual({
-      version: 1,
+      version: 3,
       data: {
         activeConversationId: null,
-        modelId: 'google/gemma-4-31B-it',
+        modelId: 'google/gemma-4-26B-A4B-it',
         approvalMode: 'request',
         researchEnabled: false,
-        thinkingLevel: 'high',
+        thinkingLevel: 'low',
       },
     });
   });
@@ -32,7 +32,7 @@ describe('Twine page state', () => {
         },
       }),
     ).toEqual({
-      version: 1,
+      version: 3,
       data: {
         activeConversationId: 'twine-conversation-1',
         modelId: 'google/gemma-4-26B-A4B-it',
@@ -58,5 +58,30 @@ describe('Twine page state', () => {
     expect(migrateTwinePageState({ version: 1, data: {} })).toEqual(
       createTwinePageState(),
     );
+  });
+
+  it('drops the previous sidebar preference during migration', () => {
+    expect(
+      migrateTwinePageState({
+        version: 2,
+        data: {
+          activeConversationId: null,
+          approvalMode: 'request',
+          modelId: 'google/gemma-4-31B-it',
+          researchEnabled: false,
+          sidebarOpen: false,
+          thinkingLevel: 'low',
+        },
+      }),
+    ).toEqual({
+      version: 3,
+      data: {
+        activeConversationId: null,
+        approvalMode: 'request',
+        modelId: 'google/gemma-4-31B-it',
+        researchEnabled: false,
+        thinkingLevel: 'low',
+      },
+    });
   });
 });

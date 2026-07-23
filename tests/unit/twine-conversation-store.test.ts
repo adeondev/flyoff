@@ -17,9 +17,12 @@ function createTemporaryDirectory(): string {
 
 function snapshot(id: string, text: string): TwineConversationSnapshot {
   return {
+    activityAt: 10,
+    archivedAt: null,
     createdAt: 10,
     id,
     nextId: 3,
+    pinnedAt: null,
     state: {
       activeBranchId: 'twine-root',
       branches: {
@@ -38,8 +41,8 @@ function snapshot(id: string, text: string): TwineConversationSnapshot {
       },
     },
     title: text,
-    updatedAt: 10,
-    version: 1,
+    titleMode: 'automatic',
+    version: 2,
   };
 }
 
@@ -57,14 +60,14 @@ describe('TwineConversationStore', () => {
 
     const created = store.create();
     expect(created.title).toBe('New conversation');
-    expect(store.list().activeConversationId).toBe(created.id);
+    expect(store.list().activeConversationId).toBeNull();
 
     now = 200;
     const saved = store.save(snapshot('twine-conversation-custom', 'Hello'));
     expect(saved.conversations[0]).toMatchObject({
       id: 'twine-conversation-custom',
       title: 'Hello',
-      updatedAt: 200,
+      activityAt: 10,
     });
 
     const restored = new TwineConversationStore(directory);
@@ -72,7 +75,110 @@ describe('TwineConversationStore', () => {
       snapshot('twine-conversation-custom', 'Hello').state,
     );
 
-    expect(restored.delete('twine-conversation-custom').conversations).toHaveLength(1);
+    expect(restored.delete('twine-conversation-custom').conversations).toHaveLength(0);
+  });
+
+  it('keeps technical saves from changing activity order', () => {
+    const directory = createTemporaryDirectory();
+    const store = new TwineConversationStore(directory, () => new Date(500));
+    store.save({ ...snapshot('twine-conversation-old', 'Old'), activityAt: 10 });
+    store.save({ ...snapshot('twine-conversation-new', 'New'), activityAt: 20 });
+
+    store.save({
+      ...snapshot('twine-conversation-old', 'Old'),
+      activityAt: 10,
+      draft: 'technical save',
+    });
+
+    expect(store.list().conversations.map(({ id }) => id)).toEqual([
+      'twine-conversation-new',
+      'twine-conversation-old',
+    ]);
+  });
+
+  it('queries content and manages pin, rename, and archive metadata', () => {
+    let now = 100;
+    const directory = createTemporaryDirectory();
+    const store = new TwineConversationStore(directory, () => new Date(now));
+    store.save(snapshot('twine-conversation-one', 'Planejamento técnico'));
+    store.save({
+      ...snapshot('twine-conversation-two', 'Outra conversa'),
+      activityAt: 20,
+    });
+
+    now = 200;
+    store.update({
+      id: 'twine-conversation-one',
+      pinned: true,
+      type: 'pin',
+    });
+    store.update({
+      id: 'twine-conversation-one',
+      title: 'Projeto principal',
+      type: 'rename',
+    });
+    expect(store.list().conversations[0]).toMatchObject({
+      id: 'twine-conversation-one',
+      pinnedAt: 200,
+      title: 'Projeto principal',
+      titleMode: 'custom',
+    });
+    expect(
+      store.query({ filter: 'all', query: 'tecnico', sort: 'recent' })
+        .conversations[0],
+    ).toMatchObject({
+      id: 'twine-conversation-one',
+      matchSnippet: 'Planejamento técnico',
+    });
+
+    now = 300;
+    store.update({
+      archived: true,
+      id: 'twine-conversation-one',
+      type: 'archive',
+    });
+    expect(store.list().conversations.map(({ id }) => id)).toEqual([
+      'twine-conversation-two',
+    ]);
+    expect(
+      store.query({ filter: 'archived', query: '', sort: 'recent' })
+        .conversations[0],
+    ).toMatchObject({
+      archivedAt: 300,
+      id: 'twine-conversation-one',
+      pinnedAt: null,
+    });
+  });
+
+  it('migrates version 1 history without losing messages', () => {
+    const directory = createTemporaryDirectory();
+    const store = new TwineConversationStore(directory);
+    const current = snapshot('twine-conversation-legacy', 'Legacy');
+    const { activityAt, archivedAt, pinnedAt, titleMode, ...legacy } = current;
+    writeFileSync(
+      store.filePath,
+      JSON.stringify({
+        activeConversationId: current.id,
+        conversations: [
+          { ...legacy, updatedAt: activityAt, version: 1 },
+        ],
+        version: 1,
+      }),
+      'utf8',
+    );
+
+    expect(store.list().conversations[0]).toMatchObject({
+      activityAt: 10,
+      archivedAt: null,
+      id: current.id,
+      pinnedAt: null,
+    });
+    expect(store.load(current.id)?.state).toEqual(current.state);
+    expect({ archivedAt, pinnedAt, titleMode }).toEqual({
+      archivedAt: null,
+      pinnedAt: null,
+      titleMode: 'automatic',
+    });
   });
 
   it('treats malformed or oversized history as empty', () => {

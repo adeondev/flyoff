@@ -14,22 +14,33 @@ import type {
 
 function conversation(id = 'twine-conversation-1'): TwineConversationSnapshot {
   return {
+    activityAt: 1,
+    archivedAt: null,
     createdAt: 1,
     draft: '',
     id,
     nextId: 2,
+    pinnedAt: null,
     state: {
       activeBranchId: 'twine-root',
       branches: {
         'twine-root': {
           id: 'twine-root',
-          messages: [],
+          messages: [
+            {
+              attachments: [],
+              id: 'message-1',
+              kind: 'user',
+              status: 'complete',
+              text: 'Conversation',
+            },
+          ],
         },
       },
     },
     title: 'Conversation',
-    updatedAt: 1,
-    version: 1,
+    titleMode: 'automatic',
+    version: 2,
   };
 }
 
@@ -38,13 +49,16 @@ function summary(): TwineConversationStoreSnapshot {
     activeConversationId: 'twine-conversation-1',
     conversations: [
       {
+        activityAt: 1,
+        archivedAt: null,
         createdAt: 1,
         id: 'twine-conversation-1',
+        pinnedAt: null,
         title: 'Conversation',
-        updatedAt: 1,
+        titleMode: 'automatic',
       },
     ],
-    version: 1,
+    version: 2,
   };
 }
 
@@ -111,6 +125,85 @@ describe('Twine runtime', () => {
     ).toEqual({ follow: false, scrollTop: 320 });
   });
 
+  it('keeps a new empty conversation out of history until the first message', async () => {
+    const runtime = getTwineRuntime();
+    runtime.connect({
+      createTwineConversation: vi.fn().mockResolvedValue(conversation()),
+      listTwineConversations: vi.fn().mockResolvedValue({
+        activeConversationId: null,
+        conversations: [],
+        version: 2,
+      }),
+      loadTwineConversation: vi.fn(),
+    });
+
+    await runtime.loadHistory(null, 'New conversation');
+
+    expect(runtime.getSnapshot().conversationSummaries).toEqual([]);
+  });
+
+  it('settles a canceled response and ignores its late events', async () => {
+    let generationListener:
+      | Parameters<NonNullable<FlyoffApi['onTwineGenerationEvent']>>[0]
+      | undefined;
+    const cancelTwineGeneration = vi.fn().mockResolvedValue(undefined);
+    const runtime = getTwineRuntime();
+    runtime.connect({
+      cancelTwineGeneration,
+      createTwineConversation: vi.fn().mockResolvedValue(conversation()),
+      listTwineConversations: vi.fn().mockResolvedValue(summary()),
+      loadTwineConversation: vi.fn().mockResolvedValue(conversation()),
+      onTwineGenerationEvent: (listener) => {
+        generationListener = listener;
+        return vi.fn();
+      },
+    });
+    await runtime.loadHistory('twine-conversation-1', 'New conversation');
+    runtime.setConversation((current) => ({
+      ...current,
+      branches: {
+        ...current.branches,
+        [current.activeBranchId]: {
+          ...current.branches[current.activeBranchId]!,
+          messages: [
+            {
+              attachments: [],
+              id: 'message-1',
+              kind: 'assistant',
+              status: 'streaming',
+              streamRequestId: 'request-1',
+              text: 'Partial response',
+              thinkingStartedAt: Date.now() - 10,
+            },
+          ],
+        },
+      },
+    }));
+    runtime.beginGeneration('request-1');
+
+    runtime.cancelGeneration();
+
+    expect(cancelTwineGeneration).toHaveBeenCalledWith('request-1');
+    expect(runtime.getSnapshot().isGenerating).toBe(false);
+    expect(
+      runtime.getSnapshot().conversation.branches['twine-root']?.messages[0],
+    ).toMatchObject({
+      status: 'complete',
+      streamRequestId: undefined,
+      text: 'Partial response',
+    });
+
+    generationListener?.({
+      requestId: 'request-1',
+      text: ' late text',
+      type: 'text-delta',
+    });
+    expect(
+      runtime.getSnapshot().conversation.branches['twine-root']?.messages[0]
+        ?.text,
+    ).toBe('Partial response');
+  });
+
   it('does not resurrect a deleted conversation through a pending autosave', async () => {
     const saveTwineConversation = vi.fn().mockResolvedValue(summary());
     const runtime = getTwineRuntime();
@@ -120,13 +213,16 @@ describe('Twine runtime', () => {
         activeConversationId: 'twine-conversation-2',
         conversations: [
           {
+            activityAt: 2,
+            archivedAt: null,
             createdAt: 2,
             id: 'twine-conversation-2',
+            pinnedAt: null,
             title: 'Second',
-            updatedAt: 2,
+            titleMode: 'automatic',
           },
         ],
-        version: 1,
+        version: 2,
       }),
       listTwineConversations: vi.fn().mockResolvedValue(summary()),
       loadTwineConversation: vi

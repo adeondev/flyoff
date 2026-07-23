@@ -20,6 +20,14 @@ export const TWINE_CREATE_CONVERSATION_CHANNEL =
   'flyoff:twine:conversations:create' as const;
 export const TWINE_DELETE_CONVERSATION_CHANNEL =
   'flyoff:twine:conversations:delete' as const;
+export const TWINE_QUERY_CONVERSATIONS_CHANNEL =
+  'flyoff:twine:conversations:query' as const;
+export const TWINE_UPDATE_CONVERSATION_CHANNEL =
+  'flyoff:twine:conversations:update' as const;
+export const TWINE_COPY_CONTENT_CHANNEL =
+  'flyoff:twine:content:copy' as const;
+export const TWINE_EXPORT_MARKDOWN_CHANNEL =
+  'flyoff:twine:content:export-markdown' as const;
 
 export const TWINE_IPC_MODEL_IDS = [
   'google/gemma-4-31B-it',
@@ -33,12 +41,44 @@ export const TWINE_APPROVAL_MODES = [
 ] as const;
 export const TWINE_TOOL_TYPES = ['code', 'search'] as const;
 export const TWINE_TOOL_PHASES = ['start', 'result'] as const;
+export const TWINE_CONTENT_FORMATS = ['text', 'markdown'] as const;
+export const TWINE_CONVERSATION_FILTERS = [
+  'active',
+  'pinned',
+  'archived',
+  'all',
+] as const;
+export const TWINE_CONVERSATION_SORTS = [
+  'recent',
+  'oldest',
+  'title',
+] as const;
 
 export type TwineIpcModelId = (typeof TWINE_IPC_MODEL_IDS)[number];
 export type TwineIpcThinkingLevel = (typeof TWINE_THINKING_LEVELS)[number];
 export type TwineIpcApprovalMode = (typeof TWINE_APPROVAL_MODES)[number];
 export type TwineToolType = (typeof TWINE_TOOL_TYPES)[number];
 export type TwineToolPhase = (typeof TWINE_TOOL_PHASES)[number];
+export type TwineContentFormat = (typeof TWINE_CONTENT_FORMATS)[number];
+export type TwineConversationFilter =
+  (typeof TWINE_CONVERSATION_FILTERS)[number];
+export type TwineConversationSort =
+  (typeof TWINE_CONVERSATION_SORTS)[number];
+
+export interface TwineCopyContentRequest {
+  content: string;
+  format: TwineContentFormat;
+}
+
+export interface TwineExportMarkdownRequest {
+  content: string;
+  suggestedName: string;
+}
+
+export type TwineContentActionResult =
+  | { status: 'success' }
+  | { status: 'canceled' }
+  | { error: 'clipboard-unavailable' | 'write-failed'; status: 'error' };
 
 export interface TwineCredentialStatus {
   encryptionAvailable: boolean;
@@ -111,28 +151,54 @@ export interface TwineConversationTreeSnapshot {
 }
 
 export interface TwineConversationSnapshot {
+  activityAt: number;
+  archivedAt: number | null;
   createdAt: number;
   draft?: string;
   id: string;
   nextId: number;
+  pinnedAt: number | null;
   state: TwineConversationTreeSnapshot;
   title: string;
-  updatedAt: number;
-  version: 1;
+  titleMode: 'automatic' | 'custom';
+  version: 2;
 }
 
 export interface TwineConversationSummary {
+  activityAt: number;
+  archivedAt: number | null;
   createdAt: number;
   id: string;
+  pinnedAt: number | null;
   title: string;
-  updatedAt: number;
+  titleMode: 'automatic' | 'custom';
 }
 
 export interface TwineConversationStoreSnapshot {
   activeConversationId: string | null;
   conversations: readonly TwineConversationSummary[];
-  version: 1;
+  version: 2;
 }
+
+export interface TwineConversationQuery {
+  filter: TwineConversationFilter;
+  query: string;
+  sort: TwineConversationSort;
+}
+
+export interface TwineConversationSearchResult extends TwineConversationSummary {
+  matchSnippet?: string;
+}
+
+export interface TwineConversationQueryResult {
+  conversations: readonly TwineConversationSearchResult[];
+  version: 2;
+}
+
+export type TwineConversationMutationRequest =
+  | { id: string; title: string; type: 'rename' }
+  | { id: string; pinned: boolean; type: 'pin' }
+  | { archived: boolean; id: string; type: 'archive' };
 
 export type TwineGenerationEvent =
   | {
@@ -205,6 +271,44 @@ export function isTwineRequestId(value: unknown): value is string {
 
 export function isTwineConversationId(value: unknown): value is string {
   return isBoundedString(value, 128);
+}
+
+export function isTwineCopyContentRequest(
+  value: unknown,
+): value is TwineCopyContentRequest {
+  return (
+    isRecord(value) &&
+    Object.keys(value).length === 2 &&
+    isBoundedString(value.content, 200_000) &&
+    includes(TWINE_CONTENT_FORMATS, value.format)
+  );
+}
+
+export function isTwineExportMarkdownRequest(
+  value: unknown,
+): value is TwineExportMarkdownRequest {
+  return (
+    isRecord(value) &&
+    Object.keys(value).length === 2 &&
+    isBoundedString(value.content, 200_000) &&
+    isBoundedString(value.suggestedName, 120)
+  );
+}
+
+export function isTwineContentActionResult(
+  value: unknown,
+): value is TwineContentActionResult {
+  if (!isRecord(value)) {
+    return false;
+  }
+  if (value.status === 'success' || value.status === 'canceled') {
+    return Object.keys(value).length === 1;
+  }
+  return (
+    value.status === 'error' &&
+    Object.keys(value).length === 2 &&
+    (value.error === 'clipboard-unavailable' || value.error === 'write-failed')
+  );
 }
 
 export function isTwineCredentialStatus(
@@ -407,16 +511,32 @@ function isTwineConversationTreeSnapshot(
 export function isTwineConversationSnapshot(
   value: unknown,
 ): value is TwineConversationSnapshot {
+  const allowedKeys = [
+    'activityAt',
+    'archivedAt',
+    'createdAt',
+    'draft',
+    'id',
+    'nextId',
+    'pinnedAt',
+    'state',
+    'title',
+    'titleMode',
+    'version',
+  ];
   return (
     isRecord(value) &&
-    (Object.keys(value).length === 7 || Object.keys(value).length === 8) &&
-    value.version === 1 &&
+    Object.keys(value).every((key) => allowedKeys.includes(key)) &&
+    value.version === 2 &&
     (value.draft === undefined ||
       isBoundedString(value.draft, 200_000, true)) &&
     isTwineConversationId(value.id) &&
     isBoundedString(value.title, 120) &&
+    (value.titleMode === 'automatic' || value.titleMode === 'custom') &&
+    isTimestamp(value.activityAt) &&
     isTimestamp(value.createdAt) &&
-    isTimestamp(value.updatedAt) &&
+    (value.archivedAt === null || isTimestamp(value.archivedAt)) &&
+    (value.pinnedAt === null || isTimestamp(value.pinnedAt)) &&
     typeof value.nextId === 'number' &&
     Number.isInteger(value.nextId) &&
     value.nextId >= 1 &&
@@ -430,11 +550,14 @@ export function isTwineConversationSummary(
 ): value is TwineConversationSummary {
   return (
     isRecord(value) &&
-    Object.keys(value).length === 4 &&
+    Object.keys(value).length === 7 &&
     isTwineConversationId(value.id) &&
     isBoundedString(value.title, 120) &&
+    (value.titleMode === 'automatic' || value.titleMode === 'custom') &&
+    isTimestamp(value.activityAt) &&
     isTimestamp(value.createdAt) &&
-    isTimestamp(value.updatedAt)
+    (value.archivedAt === null || isTimestamp(value.archivedAt)) &&
+    (value.pinnedAt === null || isTimestamp(value.pinnedAt))
   );
 }
 
@@ -444,13 +567,79 @@ export function isTwineConversationStoreSnapshot(
   return (
     isRecord(value) &&
     Object.keys(value).length === 3 &&
-    value.version === 1 &&
+    value.version === 2 &&
     (value.activeConversationId === null ||
       isTwineConversationId(value.activeConversationId)) &&
     Array.isArray(value.conversations) &&
     value.conversations.length <= 64 &&
     value.conversations.every(isTwineConversationSummary)
   );
+}
+
+export function isTwineConversationQuery(
+  value: unknown,
+): value is TwineConversationQuery {
+  return (
+    isRecord(value) &&
+    Object.keys(value).length === 3 &&
+    includes(TWINE_CONVERSATION_FILTERS, value.filter) &&
+    isBoundedString(value.query, 500, true) &&
+    includes(TWINE_CONVERSATION_SORTS, value.sort)
+  );
+}
+
+export function isTwineConversationSearchResult(
+  value: unknown,
+): value is TwineConversationSearchResult {
+  if (!isRecord(value)) {
+    return false;
+  }
+  const { matchSnippet, ...summary } = value;
+  return (
+    isTwineConversationSummary(summary) &&
+    (matchSnippet === undefined ||
+      isBoundedString(matchSnippet, 500, true))
+  );
+}
+
+export function isTwineConversationQueryResult(
+  value: unknown,
+): value is TwineConversationQueryResult {
+  return (
+    isRecord(value) &&
+    Object.keys(value).length === 2 &&
+    value.version === 2 &&
+    Array.isArray(value.conversations) &&
+    value.conversations.length <= 64 &&
+    value.conversations.every(isTwineConversationSearchResult)
+  );
+}
+
+export function isTwineConversationMutationRequest(
+  value: unknown,
+): value is TwineConversationMutationRequest {
+  if (!isRecord(value) || !isTwineConversationId(value.id)) {
+    return false;
+  }
+  switch (value.type) {
+    case 'rename':
+      return (
+        Object.keys(value).length === 3 &&
+        isBoundedString(value.title, 120)
+      );
+    case 'pin':
+      return (
+        Object.keys(value).length === 3 &&
+        typeof value.pinned === 'boolean'
+      );
+    case 'archive':
+      return (
+        Object.keys(value).length === 3 &&
+        typeof value.archived === 'boolean'
+      );
+    default:
+      return false;
+  }
 }
 
 export function isTwineGenerationEvent(

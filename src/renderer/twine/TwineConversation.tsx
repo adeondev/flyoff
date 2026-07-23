@@ -4,7 +4,6 @@ import {
   useLayoutEffect,
   useRef,
   useState,
-  type FormEvent,
   type KeyboardEvent,
   type ReactNode,
   type UIEvent,
@@ -12,17 +11,22 @@ import {
 
 import arrowLeftIcon from '../../../public/images/icons/actions/arrow-left.svg';
 import chevronIcon from '../../../public/images/icons/actions/chevron-right.svg';
-import refreshIcon from '../../../public/images/icons/actions/refresh.svg';
+import copyIcon from '../../../public/images/icons/twine/copy.svg';
 import deleteIcon from '../../../public/images/icons/twine/delete.svg';
 import downIcon from '../../../public/images/icons/twine/down.svg';
 import editIcon from '../../../public/images/icons/twine/edit.svg';
+import regenerateIcon from '../../../public/images/icons/twine/regenerate.svg';
+import shareIcon from '../../../public/images/icons/twine/share.svg';
 import fileIcon from '../../../public/images/icons/instances/file.svg';
 import twineIcon from '../../../public/images/twine/icon.svg';
 import { MaskedIcon } from '../components/MaskedIcon';
+import { DropdownMenu, type MenuItem } from '../components/menu';
 import { getTooltipTargetProps } from '../components/tooltip';
 import type { Translate } from '../pages/page-types';
 import { formatTwineFileSize } from './TwineAttachments';
 import { TwineMarkdown } from './TwineMarkdown';
+import { TwineThoughtPanel } from './TwineThoughtPanel';
+import { twinePlainTextFromMarkdown } from './twine-content';
 import type {
   TwineConversationScrollState,
   TwineMessage,
@@ -31,10 +35,11 @@ import type {
 interface TwineConversationProps {
   active: boolean;
   conversationId: string | null;
+  conversationTitle: string;
   initialScrollState?: TwineConversationScrollState;
   messages: readonly TwineMessage[];
   onDelete: (messageId: string) => void;
-  onEdit: (messageId: string, text: string) => void;
+  onEditRequest: (messageId: string) => void;
   onRegenerate: (messageId: string) => void;
   onRewind: (messageId: string) => void;
   onScrollStateChange: (state: TwineConversationScrollState) => void;
@@ -49,19 +54,14 @@ interface TwineConversationProps {
 
 const BOTTOM_THRESHOLD = 96;
 
-function elapsedThinking(message: TwineMessage): string {
-  const duration = message.thinkingDurationMs ??
-    (message.thinkingStartedAt ? Date.now() - message.thinkingStartedAt : 0);
-  return `${Math.max(1, Math.round(duration / 1000))}s`;
-}
-
 export function TwineConversation({
   active,
   conversationId,
+  conversationTitle,
   initialScrollState,
   messages,
   onDelete,
-  onEdit,
+  onEditRequest,
   onRegenerate,
   onRewind,
   onScrollStateChange,
@@ -74,6 +74,7 @@ export function TwineConversation({
   const bottomRef = useRef<HTMLDivElement>(null);
   const followRef = useRef(true);
   const manualIntentRef = useRef(false);
+  const heldManualIntentRef = useRef(false);
   const manualIntentTimerRef = useRef<number | undefined>(undefined);
   const resizeFrameRef = useRef<number | undefined>(undefined);
   const anchorRef = useRef<{
@@ -81,21 +82,41 @@ export function TwineConversation({
     offset: number;
   } | undefined>(undefined);
   const previousMessageCountRef = useRef(messages.length);
+  const streamingRequestId = [...messages]
+    .reverse()
+    .find(
+      (message) =>
+        message.status === 'streaming' && Boolean(message.streamRequestId),
+    )?.streamRequestId;
+  const previousStreamingRequestIdRef = useRef(streamingRequestId);
+  const conversationIdentityRef = useRef(conversationId);
+  const restoredConversationIdRef = useRef<string | null | undefined>(
+    undefined,
+  );
   const [showJump, setShowJump] = useState(false);
-  const [editingId, setEditingId] = useState<string>();
-  const [editingText, setEditingText] = useState('');
+  const [actionAnnouncement, setActionAnnouncement] = useState('');
+  const [visibleAnswerKeys, setVisibleAnswerKeys] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const actionAnnouncementTimerRef = useRef<number | undefined>(undefined);
 
-  function scrollToBottom(behavior: ScrollBehavior): void {
+  const scrollToBottom = useCallback((behavior: ScrollBehavior): void => {
     const scroller = scrollRef.current;
     if (!scroller) {
       return;
     }
     if (behavior === 'smooth' && typeof scroller.scrollTo === 'function') {
-      scroller.scrollTo({ behavior, top: scroller.scrollHeight });
+      scroller.scrollTo({
+        behavior,
+        top: Math.max(0, scroller.scrollHeight - scroller.clientHeight),
+      });
     } else {
-      scroller.scrollTop = scroller.scrollHeight;
+      scroller.scrollTop = Math.max(
+        0,
+        scroller.scrollHeight - scroller.clientHeight,
+      );
     }
-  }
+  }, []);
 
   function isAtBottom(element: HTMLElement): boolean {
     return (
@@ -139,6 +160,21 @@ export function TwineConversation({
     });
   }, [onScrollStateChange]);
 
+  const activateFollow = useCallback((): void => {
+    followRef.current = true;
+    anchorRef.current = undefined;
+    setShowJump(false);
+    const settleAtBottom = () => {
+      scrollToBottom('auto');
+      const scroller = scrollRef.current;
+      if (scroller) {
+        persistScrollState(scroller);
+      }
+    };
+    settleAtBottom();
+    requestAnimationFrame(settleAtBottom);
+  }, [persistScrollState, scrollToBottom]);
+
   function setManualIntent(): void {
     manualIntentRef.current = true;
     if (manualIntentTimerRef.current !== undefined) {
@@ -148,6 +184,24 @@ export function TwineConversation({
       manualIntentRef.current = false;
       manualIntentTimerRef.current = undefined;
     }, 180);
+  }
+
+  function holdManualIntent(): void {
+    heldManualIntentRef.current = true;
+    manualIntentRef.current = true;
+    if (manualIntentTimerRef.current !== undefined) {
+      clearTimeout(manualIntentTimerRef.current);
+      manualIntentTimerRef.current = undefined;
+    }
+  }
+
+  function releaseManualIntent(): void {
+    if (!heldManualIntentRef.current) {
+      return;
+    }
+    heldManualIntentRef.current = false;
+    requestAnimationFrame(pauseFollowing);
+    setManualIntent();
   }
 
   function pauseFollowing(): void {
@@ -166,21 +220,44 @@ export function TwineConversation({
     .join('|');
 
   useLayoutEffect(() => {
-    if (messages.length > previousMessageCountRef.current) {
-      followRef.current = true;
-      setShowJump(false);
+    if (conversationIdentityRef.current === conversationId) {
+      return;
     }
+    conversationIdentityRef.current = conversationId;
+    previousMessageCountRef.current = messages.length;
+    previousStreamingRequestIdRef.current = streamingRequestId;
+  }, [conversationId, messages.length, streamingRequestId]);
+
+  useLayoutEffect(() => {
+    const startedNewGeneration =
+      Boolean(streamingRequestId) &&
+      streamingRequestId !== previousStreamingRequestIdRef.current;
+    if (
+      startedNewGeneration ||
+      messages.length > previousMessageCountRef.current
+    ) {
+      activateFollow();
+    }
+    previousStreamingRequestIdRef.current = streamingRequestId;
     previousMessageCountRef.current = messages.length;
     if (active && followRef.current) {
       scrollToBottom('auto');
     }
-  }, [active, messages.length, streamingSignature]);
+  }, [
+    activateFollow,
+    active,
+    messages.length,
+    scrollToBottom,
+    streamingRequestId,
+    streamingSignature,
+  ]);
 
   useLayoutEffect(() => {
     const scroller = scrollRef.current;
-    if (!scroller) {
+    if (restoredConversationIdRef.current === conversationId) {
       return;
     }
+    restoredConversationIdRef.current = conversationId;
     const saved = initialScrollState;
     followRef.current = saved?.follow ?? true;
     anchorRef.current =
@@ -190,6 +267,10 @@ export function TwineConversation({
             offset: saved.anchorOffset,
           }
         : undefined;
+    if (!scroller) {
+      setShowJump(false);
+      return;
+    }
     if (followRef.current) {
       scrollToBottom('auto');
     } else {
@@ -197,7 +278,7 @@ export function TwineConversation({
     }
     captureAnchor(scroller);
     setShowJump(!followRef.current && !isAtBottom(scroller));
-  }, [conversationId, initialScrollState]);
+  }, [conversationId, initialScrollState, scrollToBottom]);
 
   useEffect(() => {
     if (!active || !followRef.current) {
@@ -207,7 +288,7 @@ export function TwineConversation({
       scrollToBottom('auto');
     });
     return () => cancelAnimationFrame(frame);
-  }, [active]);
+  }, [active, scrollToBottom]);
 
   useEffect(() => {
     const scroller = scrollRef.current;
@@ -251,12 +332,20 @@ export function TwineConversation({
         cancelAnimationFrame(resizeFrameRef.current);
       }
     };
-  }, [conversationId, messages.length, persistScrollState]);
+  }, [
+    conversationId,
+    messages.length,
+    persistScrollState,
+    scrollToBottom,
+  ]);
 
   useEffect(
     () => () => {
       if (manualIntentTimerRef.current !== undefined) {
         clearTimeout(manualIntentTimerRef.current);
+      }
+      if (actionAnnouncementTimerRef.current !== undefined) {
+        clearTimeout(actionAnnouncementTimerRef.current);
       }
     },
     [],
@@ -306,14 +395,74 @@ export function TwineConversation({
     }
   }
 
-  function submitEdit(event: FormEvent, messageId: string): void {
-    event.preventDefault();
-    const text = editingText.trim();
-    if (text) {
-      onEdit(messageId, text);
-      setEditingId(undefined);
-      setEditingText('');
+  function announceAction(message: string): void {
+    setActionAnnouncement(message);
+    if (actionAnnouncementTimerRef.current !== undefined) {
+      clearTimeout(actionAnnouncementTimerRef.current);
     }
+    actionAnnouncementTimerRef.current = window.setTimeout(() => {
+      setActionAnnouncement('');
+      actionAnnouncementTimerRef.current = undefined;
+    }, 2_000);
+  }
+
+  async function copyMessage(
+    message: TwineMessage,
+    format: 'markdown' | 'text',
+  ): Promise<void> {
+    try {
+      const result = await window.flyoff?.copyTwineContent({
+        content:
+          format === 'markdown'
+            ? message.text
+            : twinePlainTextFromMarkdown(message.text),
+        format,
+      });
+      announceAction(
+        result?.status === 'success'
+          ? translate('twine.copied')
+          : translate('twine.copyFailed'),
+      );
+    } catch {
+      announceAction(translate('twine.copyFailed'));
+    }
+  }
+
+  async function exportMessage(message: TwineMessage): Promise<void> {
+    try {
+      const result = await window.flyoff?.exportTwineMarkdown({
+        content: message.text,
+        suggestedName: conversationTitle,
+      });
+      if (result?.status === 'success') {
+        announceAction(translate('twine.exportSaved'));
+      } else if (result?.status === 'error' || !result) {
+        announceAction(translate('twine.exportFailed'));
+      }
+    } catch {
+      announceAction(translate('twine.exportFailed'));
+    }
+  }
+
+  function shareItems(): readonly MenuItem[] {
+    return [
+      {
+        id: 'copy-text',
+        kind: 'action',
+        label: translate('twine.copyText'),
+      },
+      {
+        id: 'copy-markdown',
+        kind: 'action',
+        label: translate('twine.copyMarkdown'),
+      },
+      { id: 'share-separator', kind: 'separator' },
+      {
+        id: 'save-markdown',
+        kind: 'action',
+        label: translate('twine.saveMarkdown'),
+      },
+    ];
   }
 
   function variantControls(): ReactNode {
@@ -352,9 +501,17 @@ export function TwineConversation({
         aria-label={translate('twine.conversation')}
         className="twine-messages"
         onKeyDown={handleNavigationKey}
-        onPointerDown={setManualIntent}
+        onPointerDown={(event) => {
+          if (event.target === event.currentTarget) {
+            holdManualIntent();
+          }
+        }}
+        onPointerCancel={releaseManualIntent}
+        onPointerUp={releaseManualIntent}
         onScroll={handleScroll}
-        onTouchStart={setManualIntent}
+        onTouchCancel={releaseManualIntent}
+        onTouchEnd={releaseManualIntent}
+        onTouchStart={holdManualIntent}
         onWheel={(event) => {
           setManualIntent();
           if (event.deltaY < 0) {
@@ -373,24 +530,17 @@ export function TwineConversation({
             >
               <div className="twine-message__body">
                 {message.kind === 'assistant' && message.thought ? (
-                  <details
-                    className="twine-thought"
-                    open={message.status === 'streaming' ? true : undefined}
-                  >
-                    <summary>
-                      <span>
-                        {message.status === 'streaming'
-                          ? translate('twine.thinkingNow')
-                          : `${translate('twine.thoughtFor')} ${elapsedThinking(message)}`}
-                      </span>
-                      <MaskedIcon icon={chevronIcon} />
-                    </summary>
-                    <TwineMarkdown
-                      cacheKey={`${conversationId ?? 'session'}:${message.id}:thought`}
-                      source={message.thought}
-                      streaming={message.status === 'streaming'}
-                    />
-                  </details>
+                  <TwineThoughtPanel
+                    answerVisible={
+                      (!message.streamRequestId && message.status !== 'streaming') ||
+                      visibleAnswerKeys.has(
+                        `${conversationId ?? 'session'}:${message.id}`,
+                      )
+                    }
+                    cacheKey={`${conversationId ?? 'session'}:${message.id}:thought`}
+                    message={message}
+                    translate={translate}
+                  />
                 ) : null}
                 {message.tools && message.tools.length > 0 ? (
                   <div className="twine-message__tools">
@@ -410,43 +560,22 @@ export function TwineConversation({
                     ))}
                   </div>
                 ) : null}
-                {editingId === message.id ? (
-                  <form
-                    className="twine-message__editor"
-                    onSubmit={(event) => submitEdit(event, message.id)}
-                  >
-                    <textarea
-                      aria-label={translate('twine.editMessage')}
-                      autoFocus
-                      onChange={(event) =>
-                        setEditingText(event.currentTarget.value)
-                      }
-                      onKeyDown={(event) => {
-                        if (event.key === 'Escape') {
-                          setEditingId(undefined);
-                        }
-                      }}
-                      value={editingText}
-                    />
-                    <div>
-                      <button
-                        onClick={() => setEditingId(undefined)}
-                        type="button"
-                      >
-                        {translate('twine.cancel')}
-                      </button>
-                      <button
-                        className="twine-message__save"
-                        disabled={!editingText.trim()}
-                        type="submit"
-                      >
-                        {translate('twine.saveEdit')}
-                      </button>
-                    </div>
-                  </form>
-                ) : message.text ? (
+                {message.text ? (
                   <TwineMarkdown
                     cacheKey={`${conversationId ?? 'session'}:${message.id}:text`}
+                    onFirstVisibleGrapheme={
+                      message.kind === 'assistant'
+                        ? () => {
+                            const key = `${conversationId ?? 'session'}:${message.id}`;
+                            setVisibleAnswerKeys((current) => {
+                              if (current.has(key)) {
+                                return current;
+                              }
+                              return new Set([...current, key]);
+                            });
+                          }
+                        : undefined
+                    }
                     source={message.text}
                     streaming={message.status === 'streaming'}
                   />
@@ -501,63 +630,123 @@ export function TwineConversation({
               {(message.kind !== 'system' && message.status !== 'streaming') ||
               (variant?.anchorMessageId === message.id && variant.total > 1) ? (
                 <div className="twine-message__footer">
-                  {message.kind !== 'system' && message.status !== 'streaming' ? (
-                    <div className="twine-message__actions">
-                      {message.kind === 'user' ? (
-                        <button
-                          aria-label={translate('twine.editMessage')}
-                          onClick={() => {
-                            setEditingId(message.id);
-                            setEditingText(message.text);
-                          }}
-                          type="button"
-                          {...getTooltipTargetProps(
-                            translate('twine.editMessage'),
-                            'bottom',
-                          )}
-                        >
-                          <MaskedIcon icon={editIcon} />
-                        </button>
-                      ) : (
-                        <button
-                          aria-label={translate('twine.regenerate')}
-                          onClick={() => onRegenerate(message.id)}
-                          type="button"
-                          {...getTooltipTargetProps(
-                            translate('twine.regenerate'),
-                            'bottom',
-                          )}
-                        >
-                          <MaskedIcon icon={refreshIcon} />
-                        </button>
-                      )}
-                      <button
-                        aria-label={translate('twine.rewindHere')}
-                        onClick={() => onRewind(message.id)}
-                        type="button"
-                        {...getTooltipTargetProps(
-                          translate('twine.rewindHere'),
-                          'bottom',
-                        )}
-                      >
-                        <MaskedIcon icon={arrowLeftIcon} />
-                      </button>
-                      <button
-                        aria-label={translate('twine.deleteMessage')}
-                        onClick={() => onDelete(message.id)}
-                        type="button"
-                        {...getTooltipTargetProps(
-                          translate('twine.deleteMessage'),
-                          'bottom',
-                        )}
-                      >
-                        <MaskedIcon icon={deleteIcon} />
-                      </button>
-                    </div>
-                  ) : null}
                   {variant?.anchorMessageId === message.id && variant.total > 1
                     ? variantControls()
                     : null}
+                  {message.kind !== 'system' && message.status !== 'streaming' ? (
+                    <div className="twine-message__actions">
+                      {message.kind === 'user' ? (
+                        <>
+                          <button
+                            aria-label={translate('twine.editMessage')}
+                            onClick={() => onEditRequest(message.id)}
+                            type="button"
+                            {...getTooltipTargetProps(
+                              translate('twine.editMessage'),
+                              'bottom',
+                            )}
+                          >
+                            <MaskedIcon icon={editIcon} />
+                          </button>
+                          <button
+                            aria-label={translate('twine.rewindHere')}
+                            onClick={() => onRewind(message.id)}
+                            type="button"
+                            {...getTooltipTargetProps(
+                              translate('twine.rewindHere'),
+                              'bottom',
+                            )}
+                          >
+                            <MaskedIcon icon={arrowLeftIcon} />
+                          </button>
+                          <button
+                            aria-label={translate('twine.deleteMessage')}
+                            onClick={() => onDelete(message.id)}
+                            type="button"
+                            {...getTooltipTargetProps(
+                              translate('twine.deleteMessage'),
+                              'bottom',
+                            )}
+                          >
+                            <MaskedIcon icon={deleteIcon} />
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            aria-label={translate('twine.rewindHere')}
+                            onClick={() => onRewind(message.id)}
+                            type="button"
+                            {...getTooltipTargetProps(
+                              translate('twine.rewindHere'),
+                              'bottom',
+                            )}
+                          >
+                            <MaskedIcon icon={arrowLeftIcon} />
+                          </button>
+                          <button
+                            aria-label={translate('twine.regenerate')}
+                            onClick={() => onRegenerate(message.id)}
+                            type="button"
+                            {...getTooltipTargetProps(
+                              translate('twine.regenerate'),
+                              'bottom',
+                            )}
+                          >
+                            <MaskedIcon icon={regenerateIcon} />
+                          </button>
+                          <button
+                            aria-label={translate('twine.copyResponse')}
+                            onClick={() => void copyMessage(message, 'markdown')}
+                            type="button"
+                            {...getTooltipTargetProps(
+                              translate('twine.copyResponse'),
+                              'bottom',
+                            )}
+                          >
+                            <MaskedIcon icon={copyIcon} />
+                          </button>
+                          <DropdownMenu
+                            items={shareItems()}
+                            onAction={(id) => {
+                              if (id === 'copy-text') {
+                                void copyMessage(message, 'text');
+                              } else if (id === 'copy-markdown') {
+                                void copyMessage(message, 'markdown');
+                              } else if (id === 'save-markdown') {
+                                void exportMessage(message);
+                              }
+                            }}
+                            placement="bottom-start"
+                            trigger={(props) => (
+                              <button
+                                {...props}
+                                aria-label={translate('twine.shareResponse')}
+                                type="button"
+                                {...getTooltipTargetProps(
+                                  translate('twine.shareResponse'),
+                                  'bottom',
+                                )}
+                              >
+                                <MaskedIcon icon={shareIcon} />
+                              </button>
+                            )}
+                          />
+                          <button
+                            aria-label={translate('twine.deleteMessage')}
+                            onClick={() => onDelete(message.id)}
+                            type="button"
+                            {...getTooltipTargetProps(
+                              translate('twine.deleteMessage'),
+                              'bottom',
+                            )}
+                          >
+                            <MaskedIcon icon={deleteIcon} />
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
             </article>
@@ -585,13 +774,13 @@ export function TwineConversation({
         </button>
       ) : null}
       <p aria-live="polite" className="twine-sr-status">
-        {messages.at(-1)?.status === 'error'
+        {actionAnnouncement || (messages.at(-1)?.status === 'error'
           ? translate('twine.generationFailed')
           : messages.some(({ status }) => status === 'streaming')
             ? translate('twine.generating')
             : messages.at(-1)?.kind === 'assistant'
               ? translate('twine.responseReady')
-              : ''}
+              : '')}
       </p>
     </div>
   );

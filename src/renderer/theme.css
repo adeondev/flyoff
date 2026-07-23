@@ -21,6 +21,8 @@
   --color-accent-ink: var(--color-text);
   --color-danger: #b62326;
   --color-danger-active: #c93d40;
+  --color-warning: #f0a15a;
+  --color-warning-hover: #ffb46d;
   --color-spelling-error: #e45b68;
   --color-focus-ring: #a964dc;
   --color-overlay: rgb(0 0 0 / 58%);

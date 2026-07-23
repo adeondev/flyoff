@@ -1,5 +1,8 @@
 import type {
   FlyoffApi,
+  TwineConversationMutationRequest,
+  TwineConversationQuery,
+  TwineConversationQueryResult,
   TwineConversationSnapshot,
   TwineConversationStoreSnapshot,
   TwineGenerationEvent,
@@ -13,6 +16,7 @@ import {
   restoreTwineConversationSnapshot,
 } from './twine-conversation-persistence';
 import {
+  activeTwineBranch,
   createTwineConversationState,
   updateTwineMessageByRequest,
 } from './twine-conversation-state';
@@ -22,14 +26,28 @@ import type {
   TwineConversationState,
 } from './twine-types';
 
+export interface TwineEditSession {
+  branchId: string;
+  conversationId: string | null;
+  messageId: string;
+  originalText: string;
+  text: string;
+}
+
 export interface TwineRuntimeSnapshot {
   apiKeyDialogDismissed: boolean;
   attachments: readonly TwineAttachment[];
   conversation: TwineConversationState;
+  conversationActivityAt: number;
+  conversationArchivedAt: number | null;
   conversationCreatedAt: number;
   conversationId: string | null;
+  conversationPinnedAt: number | null;
   conversationSummaries: TwineConversationStoreSnapshot['conversations'];
+  conversationTitle: string;
+  conversationTitleMode: TwineConversationSnapshot['titleMode'];
   draft: string;
+  editSession?: TwineEditSession;
   historyReady: boolean;
   isGenerating: boolean;
   revision: number;
@@ -46,14 +64,66 @@ function initialSnapshot(): TwineRuntimeSnapshot {
     apiKeyDialogDismissed: false,
     attachments: [],
     conversation: createTwineConversationState(),
+    conversationActivityAt: Date.now(),
+    conversationArchivedAt: null,
     conversationCreatedAt: Date.now(),
     conversationId: null,
+    conversationPinnedAt: null,
     conversationSummaries: [],
+    conversationTitle: 'New conversation',
+    conversationTitleMode: 'automatic',
     draft: '',
     historyReady: false,
     isGenerating: false,
     revision: 0,
   };
+}
+
+function snapshotHasUserMessage(
+  snapshot: TwineConversationSnapshot,
+): boolean {
+  return Object.values(snapshot.state.branches).some((branch) =>
+    branch.messages.some(
+      (message) => message.kind === 'user' && message.text.trim().length > 0,
+    ),
+  );
+}
+
+function conversationSummary(
+  snapshot: TwineConversationSnapshot,
+): TwineConversationStoreSnapshot['conversations'][number] {
+  return {
+    activityAt: snapshot.activityAt,
+    archivedAt: snapshot.archivedAt,
+    createdAt: snapshot.createdAt,
+    id: snapshot.id,
+    pinnedAt: snapshot.pinnedAt,
+    title: snapshot.title,
+    titleMode: snapshot.titleMode,
+  };
+}
+
+function sortedConversationSummaries(
+  conversations: TwineConversationStoreSnapshot['conversations'],
+): TwineConversationStoreSnapshot['conversations'] {
+  return [...conversations].sort((first, second) => {
+    if (first.pinnedAt !== null || second.pinnedAt !== null) {
+      if (first.pinnedAt === null) return 1;
+      if (second.pinnedAt === null) return -1;
+      return second.pinnedAt - first.pinnedAt;
+    }
+    return second.activityAt - first.activityAt;
+  });
+}
+
+function upsertConversationSummary(
+  conversations: TwineConversationStoreSnapshot['conversations'],
+  snapshot: TwineConversationSnapshot,
+): TwineConversationStoreSnapshot['conversations'] {
+  return sortedConversationSummaries([
+    conversationSummary(snapshot),
+    ...conversations.filter(({ id }) => id !== snapshot.id),
+  ]);
 }
 
 class TwineRuntime {
@@ -142,6 +212,43 @@ class TwineRuntime {
     this.scheduleSave();
   }
 
+  beginEdit(messageId: string, text: string): void {
+    const conversationId = this.state.conversationId;
+    const branch = activeTwineBranch(this.state.conversation);
+    const message = branch.messages.find(({ id }) => id === messageId);
+    if (message?.kind !== 'user') {
+      return;
+    }
+    this.publish({
+      ...this.state,
+      editSession: {
+        branchId: branch.id,
+        conversationId,
+        messageId,
+        originalText: text,
+        text,
+      },
+    });
+  }
+
+  setEditText(text: string): void {
+    const editSession = this.state.editSession;
+    if (!editSession || editSession.text === text) {
+      return;
+    }
+    this.publish({
+      ...this.state,
+      editSession: { ...editSession, text },
+    });
+  }
+
+  clearEditSession(): void {
+    if (!this.state.editSession) {
+      return;
+    }
+    this.publish({ ...this.state, editSession: undefined });
+  }
+
   getScrollState(
     conversationId: string | null,
   ): TwineConversationScrollState | undefined {
@@ -174,39 +281,25 @@ class TwineRuntime {
       .catch(() => undefined)
       .finally(() => {
         this.publish({ ...this.state, historyReady: true });
+        this.scheduleSave();
       });
     return this.historyLoad;
   }
 
   async createConversation(): Promise<void> {
-    await this.flushSave();
     this.cancelGeneration();
-    const snapshot =
-      (await this.api.createTwineConversation?.()) ??
-      createEmptyTwineConversationSnapshot(this.fallbackTitle);
-    this.applyConversationSnapshot(snapshot);
-    this.publish({
-      ...this.state,
-      conversationSummaries: [
-        {
-          createdAt: snapshot.createdAt,
-          id: snapshot.id,
-          title: snapshot.title,
-          updatedAt: snapshot.updatedAt,
-        },
-        ...this.state.conversationSummaries.filter(
-          ({ id }) => id !== snapshot.id,
-        ),
-      ],
-    });
+    await this.flushSave();
+    this.applyConversationSnapshot(
+      createEmptyTwineConversationSnapshot(this.fallbackTitle),
+    );
   }
 
   async openConversation(id: string): Promise<void> {
     if (id === this.state.conversationId) {
       return;
     }
-    await this.flushSave();
     this.cancelGeneration();
+    await this.flushSave();
     const snapshot =
       this.conversationCache.get(id) ??
       rememberedTwineConversationSnapshot(id) ??
@@ -217,7 +310,10 @@ class TwineRuntime {
   }
 
   async deleteConversation(id: string): Promise<void> {
-    this.cancelGeneration();
+    const deletingActiveConversation = id === this.state.conversationId;
+    if (deletingActiveConversation) {
+      this.cancelGeneration();
+    }
     if (this.saveTimer !== undefined) {
       clearTimeout(this.saveTimer);
       this.saveTimer = undefined;
@@ -234,11 +330,86 @@ class TwineRuntime {
         this.state.conversationId === id ? null : this.state.conversationId,
       conversationSummaries: store.conversations,
     });
+    if (!deletingActiveConversation) {
+      return;
+    }
     if (store.activeConversationId) {
       await this.openConversation(store.activeConversationId);
     } else {
       await this.createConversation();
     }
+  }
+
+  async queryConversations(
+    query: TwineConversationQuery,
+  ): Promise<TwineConversationQueryResult> {
+    await this.flushSave();
+    const result = await this.api.queryTwineConversations?.(query);
+    return result ?? {
+      conversations: this.state.conversationSummaries,
+      version: 2,
+    };
+  }
+
+  async updateConversation(
+    request: TwineConversationMutationRequest,
+  ): Promise<void> {
+    await this.flushSave();
+    const updatingActiveConversation = request.id === this.state.conversationId;
+    const store = await this.api.updateTwineConversation?.(request);
+    if (!store) {
+      return;
+    }
+    if (!updatingActiveConversation) {
+      this.conversationCache.delete(request.id);
+    }
+    let nextState = {
+      ...this.state,
+      conversationSummaries: store.conversations,
+    };
+    if (updatingActiveConversation) {
+      if (request.type === 'rename') {
+        nextState = {
+          ...nextState,
+          conversationTitle: request.title.trim(),
+          conversationTitleMode: 'custom',
+        };
+      } else if (request.type === 'pin') {
+        nextState = {
+          ...nextState,
+          conversationPinnedAt: request.pinned ? Date.now() : null,
+        };
+      } else if (request.type === 'archive') {
+        nextState = {
+          ...nextState,
+          conversationArchivedAt: request.archived ? Date.now() : null,
+          conversationPinnedAt: request.archived
+            ? null
+            : nextState.conversationPinnedAt,
+        };
+      }
+    }
+    this.publish(nextState);
+    if (
+      updatingActiveConversation &&
+      request.type === 'archive' &&
+      request.archived
+    ) {
+      if (store.activeConversationId) {
+        await this.openConversation(store.activeConversationId);
+      } else {
+        await this.createConversation();
+      }
+    }
+  }
+
+  markActivity(): void {
+    this.publish({
+      ...this.state,
+      conversationActivityAt: Date.now(),
+      conversationArchivedAt: null,
+    });
+    void this.flushSave();
   }
 
   beginGeneration(requestId: string): void {
@@ -268,7 +439,19 @@ class TwineRuntime {
     const requestId = this.activeRequestId;
     if (requestId) {
       void this.api.cancelTwineGeneration?.(requestId);
-      this.pendingDeltas.delete(requestId);
+      this.flushPendingDeltas();
+      this.setConversation((current) =>
+        updateTwineMessageByRequest(current, requestId, (message) => ({
+          ...message,
+          status: 'complete',
+          streamRequestId: undefined,
+          thinkingDurationMs:
+            message.thinkingDurationMs ??
+            (message.thinkingStartedAt
+              ? Date.now() - message.thinkingStartedAt
+              : undefined),
+        })),
+      );
       this.activeRequestId = undefined;
     }
     if (this.state.isGenerating) {
@@ -287,6 +470,12 @@ class TwineRuntime {
       return;
     }
     const snapshot = this.currentConversationSnapshot();
+    if (!snapshotHasUserMessage(snapshot)) {
+      this.conversationCache.set(snapshot.id, snapshot);
+      rememberTwineConversationSnapshot(snapshot);
+      await this.saveTail;
+      return;
+    }
     this.conversationCache.set(snapshot.id, snapshot);
     rememberTwineConversationSnapshot(snapshot);
     const operation = this.saveTail
@@ -334,8 +523,7 @@ class TwineRuntime {
   ): Promise<void> {
     if (
       !this.api.listTwineConversations ||
-      !this.api.loadTwineConversation ||
-      !this.api.createTwineConversation
+      !this.api.loadTwineConversation
     ) {
       return;
     }
@@ -348,16 +536,11 @@ class TwineRuntime {
     const store = await this.api.listTwineConversations();
     this.publish({
       ...this.state,
-      conversationSummaries: remembered
-        ? [
-            {
-              createdAt: remembered.createdAt,
-              id: remembered.id,
-              title: remembered.title,
-              updatedAt: remembered.updatedAt,
-            },
-            ...store.conversations.filter(({ id }) => id !== remembered.id),
-          ]
+      conversationSummaries:
+        remembered &&
+        snapshotHasUserMessage(remembered) &&
+        remembered.archivedAt === null
+        ? upsertConversationSummary(store.conversations, remembered)
         : store.conversations,
     });
     if (remembered) {
@@ -370,7 +553,7 @@ class TwineRuntime {
         : store.activeConversationId;
     const snapshot = targetId
       ? await this.api.loadTwineConversation(targetId)
-      : await this.api.createTwineConversation();
+      : createEmptyTwineConversationSnapshot(this.fallbackTitle);
     if (snapshot) {
       this.applyConversationSnapshot(snapshot);
     }
@@ -388,9 +571,24 @@ class TwineRuntime {
       ...this.state,
       attachments: [],
       conversation: restoreTwineConversationSnapshot(snapshot),
+      conversationActivityAt: snapshot.activityAt,
+      conversationArchivedAt: snapshot.archivedAt,
       conversationCreatedAt: snapshot.createdAt,
       conversationId: snapshot.id,
+      conversationPinnedAt: snapshot.pinnedAt,
+      conversationSummaries:
+        snapshotHasUserMessage(snapshot) && snapshot.archivedAt === null
+          ? upsertConversationSummary(
+              this.state.conversationSummaries,
+              snapshot,
+            )
+          : this.state.conversationSummaries.filter(
+              ({ id }) => id !== snapshot.id,
+            ),
+      conversationTitle: snapshot.title,
+      conversationTitleMode: snapshot.titleMode,
       draft: snapshot.draft ?? '',
+      editSession: undefined,
       isGenerating: false,
     });
   }
@@ -526,12 +724,17 @@ class TwineRuntime {
 
   private currentConversationSnapshot(): TwineConversationSnapshot {
     return createTwineConversationSnapshot({
+      activityAt: this.state.conversationActivityAt,
+      archivedAt: this.state.conversationArchivedAt,
       createdAt: this.state.conversationCreatedAt,
       draft: this.state.draft,
       fallbackTitle: this.fallbackTitle,
       id: this.state.conversationId!,
       nextId: this.nextIdValue,
+      pinnedAt: this.state.conversationPinnedAt,
       state: this.conversationWithPendingDeltas(),
+      title: this.state.conversationTitle,
+      titleMode: this.state.conversationTitleMode,
     });
   }
 

@@ -57,13 +57,13 @@ describe('renderer tab state', () => {
     ]);
     expect(restored.activeTabId).toBe('page:twine');
     expect(restored.tabs[1]?.pageState).toEqual({
-      version: 1,
+      version: 3,
       data: {
         activeConversationId: null,
-        modelId: 'google/gemma-4-31B-it',
+        modelId: 'google/gemma-4-26B-A4B-it',
         approvalMode: 'request',
         researchEnabled: false,
-        thinkingLevel: 'high',
+        thinkingLevel: 'low',
       },
     });
   });

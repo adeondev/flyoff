@@ -332,23 +332,31 @@ test.describe('Flyoff desktop shell', () => {
       document.documentElement.lang === 'en-US'
         ? {
             approval: 'Approval mode: Request approval',
+            closeDialog: 'Close',
             closeTwine: 'Close tab: Twine',
-            fullAccess: 'Full access',
+            fullAccess: 'Total Freedom',
+            fullAccessConfirm: 'Grant Total Freedom',
+            fullAccessDialog: 'Grant Total Freedom to Twine?',
             high: 'High',
+            history: 'History',
             home: 'Home',
             keyLater: 'Not now',
             message: 'Message Twine',
-            thinking: 'Thinking level: High',
+            thinking: 'Thinking level: Low',
           }
         : {
             approval: 'Modo de aprovação: Solicitar aprovação',
+            closeDialog: 'Fechar',
             closeTwine: 'Fechar aba: Twine',
-            fullAccess: 'Acesso completo',
+            fullAccess: 'Liberdade Total',
+            fullAccessConfirm: 'Conceder Liberdade Total',
+            fullAccessDialog: 'Conceder Liberdade Total ao Twine?',
             high: 'Alto',
+            history: 'Histórico',
             home: 'Início',
             keyLater: 'Agora não',
             message: 'Mensagem para o Twine',
-            thinking: 'Nível de pensamento: Alto',
+            thinking: 'Nível de pensamento: Baixo',
           },
     );
 
@@ -357,6 +365,68 @@ test.describe('Flyoff desktop shell', () => {
     await keyDialog.getByRole('button', { name: labels.keyLater }).click();
 
     await expect(page.locator('.twine-empty-state__brand')).toContainText('Twine');
+    await expect(page.locator('.twine-conversation-sidebar')).toHaveCount(0);
+    const workspaceWidth = await page.locator('.twine-page__workspace').evaluate(
+      (element) => element.getBoundingClientRect().width,
+    );
+    const historyTrigger = page.getByRole('button', { name: labels.history });
+    await historyTrigger.hover();
+    await expect(page.getByRole('tooltip')).toHaveText(labels.history);
+    await historyTrigger.click();
+    await expect(page.getByRole('tooltip')).toHaveCount(0);
+    const historyDialog = page.getByRole('dialog', { name: labels.history });
+    const historySearch = historyDialog.getByRole('searchbox', {
+      name: /Pesquisar conversas|Search conversations/,
+    });
+    await expect(historySearch).toBeVisible();
+    await expect(historySearch).toHaveCSS('outline-style', 'none');
+    await expect(historyDialog).toHaveCSS('border-radius', '16px');
+    await expect(page.locator('.twine-history__search')).toHaveCSS(
+      'border-radius',
+      '999px',
+    );
+    const historyFilter = historyDialog.locator('.twine-history__select').first();
+    await expect(historyFilter).toHaveCSS('border-radius', '999px');
+    await expect(
+      historyFilter.locator('.twine-history__button-icon'),
+    ).toHaveCSS('width', '12px');
+    await historyFilter.click();
+    await expect(page.locator('.twine-history-menu')).toBeVisible();
+    await expect(page.locator('.twine-history-menu')).toHaveCSS(
+      'border-radius',
+      '14px',
+    );
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('menu')).toHaveCount(0);
+    await expect(historyFilter).toBeFocused();
+    expect(
+      await page.locator('.twine-page__workspace').evaluate(
+        (element) => element.getBoundingClientRect().width,
+      ),
+    ).toBe(workspaceWidth);
+    await page.keyboard.press('Escape');
+    await expect(historyDialog).toHaveCount(0);
+    const composer = page.getByRole('textbox', { name: labels.message });
+    await expect(composer).toBeFocused();
+    await expect(historyTrigger).not.toBeFocused();
+
+    await historyTrigger.click();
+    await expect(historyDialog).toBeVisible();
+    await page.locator('.flyoff-dialog__backdrop').click({
+      position: { x: 4, y: 4 },
+    });
+    await expect(historyDialog).toHaveCount(0);
+    await expect(composer).toBeFocused();
+
+    await historyTrigger.click();
+    await expect(historyDialog).toBeVisible();
+    await historyDialog
+      .getByRole('button', { name: labels.closeDialog })
+      .click();
+    await expect(historyDialog).toHaveCount(0);
+    await expect(composer).toBeFocused();
+    await expect(historyTrigger).not.toBeFocused();
+    await expect(page.getByRole('tooltip')).toHaveCount(0);
     await page.getByRole('button', { name: labels.thinking }).click();
     await expect(
       page.getByRole('menuitemcheckbox', { name: labels.high }).locator('.home__icon'),
@@ -364,12 +434,40 @@ test.describe('Flyoff desktop shell', () => {
     await page.keyboard.press('Escape');
 
     await page.getByRole('button', { name: labels.approval }).click();
-    await page.getByRole('menuitemcheckbox', { name: labels.fullAccess }).click();
+    const fullAccessItem = page.getByRole('menuitemcheckbox', {
+      name: labels.fullAccess,
+    });
+    await fullAccessItem.click();
+    const fullAccessDialog = page.getByRole('dialog', {
+      name: labels.fullAccessDialog,
+    });
     await expect(
-      page.getByRole('button', { name: new RegExp(labels.fullAccess) }),
+      fullAccessDialog.locator('.twine-full-access-dialog__icon'),
     ).toBeVisible();
+    await fullAccessDialog
+      .getByRole('button', { name: labels.fullAccessConfirm })
+      .click();
+    const fullAccessTrigger = page.getByRole('button', {
+      name: new RegExp(labels.fullAccess),
+    });
+    await expect(fullAccessTrigger).toHaveCSS('color', 'rgb(240, 161, 90)');
+    await fullAccessTrigger.click();
+    const selectedFullAccessItem = page.getByRole('menuitemcheckbox', {
+      name: labels.fullAccess,
+    });
+    const fullAccessIcon = selectedFullAccessItem.locator(
+      '.flyoff-menu__leading-icon',
+    );
+    const fullAccessCheck = selectedFullAccessItem.locator(
+      '.flyoff-menu__check',
+    );
+    await expect(fullAccessIcon.locator('.home__icon')).toHaveCount(1);
+    await expect(fullAccessCheck).toHaveCount(1);
+    expect((await fullAccessCheck.boundingBox())!.x).toBeGreaterThan(
+      (await fullAccessIcon.boundingBox())!.x,
+    );
+    await page.keyboard.press('Escape');
 
-    const composer = page.getByRole('textbox', { name: labels.message });
     const longDraft = Array.from(
       { length: 20 },
       (_, index) => `line ${index}`,
@@ -399,6 +497,10 @@ test.describe('Flyoff desktop shell', () => {
     await expect(
       page.getByRole('textbox', { name: labels.message }),
     ).toHaveValue(longDraft);
+    await expect(
+      page.getByRole('textbox', { name: labels.message }),
+    ).toBeVisible();
+    await expect(page.locator('.twine-conversation-sidebar')).toHaveCount(0);
 
     await page.getByRole('button', { name: labels.closeTwine }).click();
     await expect(page.locator('.workspace-pane')).toHaveCount(1);
@@ -497,14 +599,20 @@ test.describe('Flyoff desktop shell', () => {
           typeof window.flyoff.getTwineCredentialStatus,
         saveTwineApiKeyType: typeof window.flyoff.saveTwineApiKey,
         removeTwineApiKeyType: typeof window.flyoff.removeTwineApiKey,
+        copyTwineContentType: typeof window.flyoff.copyTwineContent,
+        exportTwineMarkdownType: typeof window.flyoff.exportTwineMarkdown,
         listTwineConversationsType:
           typeof window.flyoff.listTwineConversations,
+        queryTwineConversationsType:
+          typeof window.flyoff.queryTwineConversations,
         loadTwineConversationType:
           typeof window.flyoff.loadTwineConversation,
         saveTwineConversationType:
           typeof window.flyoff.saveTwineConversation,
         createTwineConversationType:
           typeof window.flyoff.createTwineConversation,
+        updateTwineConversationType:
+          typeof window.flyoff.updateTwineConversation,
         deleteTwineConversationType:
           typeof window.flyoff.deleteTwineConversation,
         startTwineGenerationType: typeof window.flyoff.startTwineGeneration,
@@ -579,10 +687,14 @@ test.describe('Flyoff desktop shell', () => {
         'getTwineCredentialStatus',
         'saveTwineApiKey',
         'removeTwineApiKey',
+        'copyTwineContent',
+        'exportTwineMarkdown',
         'listTwineConversations',
+        'queryTwineConversations',
         'loadTwineConversation',
         'saveTwineConversation',
         'createTwineConversation',
+        'updateTwineConversation',
         'deleteTwineConversation',
         'startTwineGeneration',
         'cancelTwineGeneration',
@@ -643,10 +755,14 @@ test.describe('Flyoff desktop shell', () => {
       getTwineCredentialStatusType: 'function',
       saveTwineApiKeyType: 'function',
       removeTwineApiKeyType: 'function',
+      copyTwineContentType: 'function',
+      exportTwineMarkdownType: 'function',
       listTwineConversationsType: 'function',
+      queryTwineConversationsType: 'function',
       loadTwineConversationType: 'function',
       saveTwineConversationType: 'function',
       createTwineConversationType: 'function',
+      updateTwineConversationType: 'function',
       deleteTwineConversationType: 'function',
       startTwineGenerationType: 'function',
       cancelTwineGenerationType: 'function',

@@ -9,7 +9,7 @@ export type TwineThinkingLevel = 'low' | 'high';
 export type TwineApprovalMode = 'request' | 'automatic' | 'full';
 
 export interface TwinePageState extends PageSessionState {
-  version: 1;
+  version: 3;
   data: {
     activeConversationId: string | null;
     modelId: TwineModelId;
@@ -21,13 +21,13 @@ export interface TwinePageState extends PageSessionState {
 
 export function createTwinePageState(): TwinePageState {
   return {
-    version: 1,
+    version: 3,
     data: {
       activeConversationId: null,
       modelId: DEFAULT_TWINE_MODEL_ID,
       approvalMode: 'request',
       researchEnabled: false,
-      thinkingLevel: 'high',
+      thinkingLevel: 'low',
     },
   };
 }
@@ -49,12 +49,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export function migrateTwinePageState(
   state: PageSessionState,
 ): TwinePageState {
-  if (state.version !== 1 || !isRecord(state.data)) {
+  if (
+    (state.version !== 1 && state.version !== 2 && state.version !== 3) ||
+    !isRecord(state.data)
+  ) {
     return createTwinePageState();
   }
 
   return {
-    version: 1,
+    version: 3,
     data: {
       activeConversationId: normalizeConversationId(
         state.data.activeConversationId,
@@ -68,7 +71,7 @@ export function migrateTwinePageState(
           ? state.data.researchEnabled
           : false,
       thinkingLevel:
-        state.data.thinkingLevel === 'low' ? 'low' : 'high',
+        state.data.thinkingLevel === 'high' ? 'high' : 'low',
     },
   };
 }

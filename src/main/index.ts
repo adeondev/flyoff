@@ -62,6 +62,7 @@ import {
 import { TabSessionStore } from './session';
 import {
   TwineConversationStore,
+  TwineContentService,
   TwineCredentialStore,
   TwineGenerationService,
 } from './twine';
@@ -339,6 +340,7 @@ async function startApplication(): Promise<void> {
   const twineConversationStore = new TwineConversationStore(
     app.getPath('userData'),
   );
+  const twineContentService = new TwineContentService();
   const twineGenerationService = new TwineGenerationService();
   closeCoordinator = new CloseCoordinator({
     isAllowedUrl,
@@ -410,6 +412,7 @@ async function startApplication(): Promise<void> {
   );
   removeTwineHandlers = registerTwineHandlers({
     conversationStore: twineConversationStore,
+    contentService: twineContentService,
     credentialStore: twineCredentialStore,
     generationService: twineGenerationService,
     isAllowedUrl,

@@ -31,8 +31,11 @@ interface TwineComposerProps {
   attachments: readonly TwineAttachment[];
   approvalMode: TwineApprovalMode;
   draft: string;
+  editMessageId?: string;
+  editMode: boolean;
   isGenerating: boolean;
   notice?: string;
+  onCancelEdit: () => void;
   onAddFiles: (files: FileList | readonly File[]) => void;
   onApprovalChange: (mode: TwineApprovalMode) => void;
   onDraftChange: (draft: string) => void;
@@ -40,6 +43,7 @@ interface TwineComposerProps {
   onResearchChange: (enabled: boolean) => void;
   onSend: () => void;
   onThinkingChange: (level: TwineThinkingLevel) => void;
+  originalEditText?: string;
   researchEnabled: boolean;
   thinkingLevel: TwineThinkingLevel;
   translate: Translate;
@@ -50,8 +54,11 @@ export function TwineComposer({
   attachments,
   approvalMode,
   draft,
+  editMessageId,
+  editMode,
   isGenerating,
   notice,
+  onCancelEdit,
   onAddFiles,
   onApprovalChange,
   onDraftChange,
@@ -59,6 +66,7 @@ export function TwineComposer({
   onResearchChange,
   onSend,
   onThinkingChange,
+  originalEditText,
   researchEnabled,
   thinkingLevel,
   translate,
@@ -66,9 +74,12 @@ export function TwineComposer({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const previousActiveRef = useRef(active);
+  const previousEditMessageIdRef = useRef<string | undefined>(undefined);
   const [dragActive, setDragActive] = useState(false);
-  const canSend =
-    !isGenerating && (draft.trim().length > 0 || attachments.length > 0);
+  const trimmedDraft = draft.trim();
+  const canSend = editMode
+    ? trimmedDraft.length > 0 && trimmedDraft !== originalEditText?.trim()
+    : !isGenerating && (trimmedDraft.length > 0 || attachments.length > 0);
   const approvalLabel =
     approvalMode === 'full'
       ? translate('twine.approvalFull')
@@ -121,6 +132,7 @@ export function TwineComposer({
         label: translate('twine.approvalFull'),
         icon: fullAccessIcon,
         checked: approvalMode === 'full',
+        tone: 'warning',
       },
     ],
     [approvalMode, translate],
@@ -162,6 +174,32 @@ export function TwineComposer({
     previousActiveRef.current = active;
   }, [active, draft]);
 
+  useLayoutEffect(() => {
+    if (!editMode) {
+      previousEditMessageIdRef.current = undefined;
+      return;
+    }
+    if (
+      !active ||
+      !editMessageId ||
+      previousEditMessageIdRef.current === editMessageId
+    ) {
+      return;
+    }
+    previousEditMessageIdRef.current = editMessageId;
+    const textarea = textareaRef.current;
+    textarea?.focus();
+    textarea?.setSelectionRange(draft.length, draft.length);
+    if (textarea) {
+      textarea.scrollTop = textarea.scrollHeight;
+    }
+  }, [active, draft.length, editMessageId, editMode]);
+
+  function cancelEdit(): void {
+    onCancelEdit();
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  }
+
   function handleToolAction(id: string): void {
     switch (id) {
       case 'attach':
@@ -198,10 +236,17 @@ export function TwineComposer({
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>): void {
+    if (event.nativeEvent.isComposing) {
+      return;
+    }
+    if (editMode && event.key === 'Escape') {
+      event.preventDefault();
+      cancelEdit();
+      return;
+    }
     if (
       event.key === 'Enter' &&
-      !event.shiftKey &&
-      !event.nativeEvent.isComposing
+      !event.shiftKey
     ) {
       event.preventDefault();
       if (canSend) {
@@ -213,14 +258,16 @@ export function TwineComposer({
   function handlePaste(event: ClipboardEvent<HTMLTextAreaElement>): void {
     if (event.clipboardData.files.length > 0) {
       event.preventDefault();
-      onAddFiles(event.clipboardData.files);
+      if (!editMode) {
+        onAddFiles(event.clipboardData.files);
+      }
     }
   }
 
   function handleDrop(event: DragEvent<HTMLFormElement>): void {
     event.preventDefault();
     setDragActive(false);
-    if (event.dataTransfer.files.length > 0) {
+    if (!editMode && event.dataTransfer.files.length > 0) {
       onAddFiles(event.dataTransfer.files);
     }
   }
@@ -229,10 +276,13 @@ export function TwineComposer({
     <div className="twine-composer-area">
       <form
         className="twine-composer"
-        data-drag-active={dragActive || undefined}
+        data-drag-active={(!editMode && dragActive) || undefined}
+        data-edit-mode={editMode || undefined}
         onDragEnter={(event) => {
           event.preventDefault();
-          setDragActive(true);
+          if (!editMode) {
+            setDragActive(true);
+          }
         }}
         onDragLeave={(event) => {
           if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
@@ -243,121 +293,161 @@ export function TwineComposer({
         onDrop={handleDrop}
         onSubmit={handleSubmit}
       >
-        <input
-          className="twine-composer__file-input"
-          multiple
-          onChange={(event) => {
-            if (event.currentTarget.files) {
-              onAddFiles(event.currentTarget.files);
-            }
-            event.currentTarget.value = '';
-          }}
-          ref={fileInputRef}
-          type="file"
-        />
-        <TwineAttachments
-          attachments={attachments}
-          onRemove={onRemoveAttachment}
-          translate={translate}
-        />
+        {!editMode ? (
+          <>
+            <input
+              className="twine-composer__file-input"
+              multiple
+              onChange={(event) => {
+                if (event.currentTarget.files) {
+                  onAddFiles(event.currentTarget.files);
+                }
+                event.currentTarget.value = '';
+              }}
+              ref={fileInputRef}
+              type="file"
+            />
+            <TwineAttachments
+              attachments={attachments}
+              onRemove={onRemoveAttachment}
+              translate={translate}
+            />
+          </>
+        ) : null}
         <div className="twine-composer__input-shell">
           <textarea
-            aria-label={translate('twine.messageInput')}
+            aria-label={translate(
+              editMode ? 'twine.editMessage' : 'twine.messageInput',
+            )}
             onChange={(event) => onDraftChange(event.currentTarget.value)}
             onKeyDown={handleKeyDown}
             onPaste={handlePaste}
-            placeholder={translate('twine.messagePlaceholder')}
+            placeholder={translate(
+              editMode ? 'twine.editMessage' : 'twine.messagePlaceholder',
+            )}
             ref={textareaRef}
             rows={1}
             value={draft}
           />
-          <div className="twine-composer__footer">
-            <div className="twine-composer__leading-action">
-              <DropdownMenu
-                items={toolItems}
-                onAction={handleToolAction}
-                placement="top-end"
-                trigger={(props) => (
-                  <button
-                    {...props}
-                    aria-label={translate('twine.tools')}
-                    className="twine-composer__icon-button"
-                    type="button"
-                    {...getTooltipTargetProps(translate('twine.tools'), 'top')}
-                  >
-                    <MaskedIcon icon={plusIcon} />
-                  </button>
-                )}
-              />
-              <DropdownMenu
-                items={approvalItems}
-                onAction={handleToolAction}
-                placement="top-end"
-                trigger={(props) => (
-                  <button
-                    {...props}
-                    aria-label={`${translate('twine.approvalMode')}: ${approvalLabel}`}
-                    className="twine-approval-trigger"
-                    type="button"
-                  >
-                    <MaskedIcon icon={selectedApprovalIcon} />
-                    <span>{approvalLabel}</span>
-                  </button>
-                )}
-              />
+          {editMode ? (
+            <div className="twine-composer__footer twine-composer__footer--editing">
+              <span className="twine-composer__edit-label">
+                {translate('twine.editMessage')}
+              </span>
+              <div className="twine-composer__edit-actions">
+                <button
+                  className="twine-composer__edit-cancel"
+                  onClick={cancelEdit}
+                  type="button"
+                >
+                  {translate('twine.cancel')}
+                </button>
+                <button
+                  aria-label={translate('twine.saveEdit')}
+                  className="twine-composer__send twine-composer__edit-save"
+                  disabled={!canSend}
+                  type="submit"
+                  {...getTooltipTargetProps(translate('twine.saveEdit'), 'top')}
+                >
+                  <MaskedIcon icon={sendIcon} />
+                </button>
+              </div>
             </div>
-            <div className="twine-composer__actions">
-              <DropdownMenu
-                items={thinkingItems}
-                onAction={handleToolAction}
-                placement="top-end"
-                trigger={(props) => (
-                  <button
-                    {...props}
-                    aria-label={`${translate('twine.thinkingLevel')}: ${translate(
-                      thinkingLevel === 'high'
-                        ? 'twine.thinkingHigh'
-                        : 'twine.thinkingLow',
-                    )}`}
-                    className="twine-thinking-trigger"
-                    type="button"
-                  >
-                    <span>
-                      {translate(
+          ) : (
+            <div className="twine-composer__footer">
+              <div className="twine-composer__leading-action">
+                <DropdownMenu
+                  items={toolItems}
+                  onAction={handleToolAction}
+                  placement="top-end"
+                  trigger={(props) => (
+                    <button
+                      {...props}
+                      aria-label={translate('twine.tools')}
+                      className="twine-composer__icon-button"
+                      type="button"
+                      {...getTooltipTargetProps(translate('twine.tools'), 'top')}
+                    >
+                      <MaskedIcon icon={plusIcon} />
+                    </button>
+                  )}
+                />
+                <DropdownMenu
+                  items={approvalItems}
+                  onAction={handleToolAction}
+                  placement="top-end"
+                  trigger={(props) => (
+                    <button
+                      {...props}
+                      aria-label={`${translate('twine.approvalMode')}: ${approvalLabel}`}
+                      className="twine-approval-trigger"
+                      data-approval-mode={approvalMode}
+                      type="button"
+                    >
+                      <MaskedIcon icon={selectedApprovalIcon} />
+                      <span>{approvalLabel}</span>
+                    </button>
+                  )}
+                />
+              </div>
+              <div className="twine-composer__actions">
+                <DropdownMenu
+                  items={thinkingItems}
+                  onAction={handleToolAction}
+                  placement="top-end"
+                  trigger={(props) => (
+                    <button
+                      {...props}
+                      aria-label={`${translate('twine.thinkingLevel')}: ${translate(
                         thinkingLevel === 'high'
                           ? 'twine.thinkingHigh'
                           : 'twine.thinkingLow',
-                      )}
-                    </span>
-                    <MaskedIcon icon={chevronIcon} />
-                  </button>
-                )}
-              />
-              <button
-                aria-disabled="true"
-                aria-label={translate('twine.audioComingSoon')}
-                className="twine-composer__audio"
-                type="button"
-                {...getTooltipTargetProps(translate('twine.audioComingSoon'), 'top')}
-              >
-                <MaskedIcon icon={audioIcon} />
-              </button>
-              <button
-                aria-label={translate('twine.send')}
-                className="twine-composer__send"
-                disabled={!canSend}
-                type="submit"
-                {...getTooltipTargetProps(
-                  isGenerating ? translate('twine.generating') : translate('twine.send'),
-                  'top',
-                )}
-              >
-                <MaskedIcon icon={sendIcon} />
-              </button>
+                      )}`}
+                      className="twine-thinking-trigger"
+                      type="button"
+                    >
+                      <span>
+                        {translate(
+                          thinkingLevel === 'high'
+                            ? 'twine.thinkingHigh'
+                            : 'twine.thinkingLow',
+                        )}
+                      </span>
+                      <MaskedIcon icon={chevronIcon} />
+                    </button>
+                  )}
+                />
+                <button
+                  aria-disabled="true"
+                  aria-label={translate('twine.audioComingSoon')}
+                  className="twine-composer__audio"
+                  type="button"
+                  {...getTooltipTargetProps(
+                    translate('twine.audioComingSoon'),
+                    'top',
+                  )}
+                >
+                  <MaskedIcon icon={audioIcon} />
+                </button>
+                <button
+                  aria-label={translate('twine.send')}
+                  className="twine-composer__send"
+                  disabled={!canSend}
+                  type="submit"
+                  {...getTooltipTargetProps(
+                    isGenerating
+                      ? translate('twine.generating')
+                      : translate('twine.send'),
+                    'top',
+                  )}
+                >
+                  <MaskedIcon icon={sendIcon} />
+                </button>
+              </div>
             </div>
-          </div>
+          )}
         </div>
-        {dragActive ? (
+        {!editMode && dragActive ? (
           <div className="twine-composer__drop-label">
             {translate('twine.dropFiles')}
           </div>

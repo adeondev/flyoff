@@ -13,7 +13,7 @@ import type {
   TwineMessageAttachment,
 } from './twine-types';
 
-const SNAPSHOT_VERSION = 1;
+const SNAPSHOT_VERSION = 2;
 
 let rememberedSnapshot: TwineConversationSnapshot | undefined;
 
@@ -78,20 +78,31 @@ function persistedMessage(
 
 export function createTwineConversationSnapshot(
   options: {
+    activityAt: number;
+    archivedAt: number | null;
     createdAt: number;
     draft: string;
     fallbackTitle: string;
     id: string;
     nextId: number;
+    pinnedAt: number | null;
     state: TwineConversationState;
+    title: string;
+    titleMode: TwineConversationSnapshot['titleMode'];
   },
 ): TwineConversationSnapshot {
-  const title = twineConversationTitle(options.state, options.fallbackTitle);
+  const title =
+    options.titleMode === 'custom'
+      ? options.title
+      : twineConversationTitle(options.state, options.fallbackTitle);
   return {
+    activityAt: options.activityAt,
+    archivedAt: options.archivedAt,
     createdAt: options.createdAt,
     draft: options.draft,
     id: options.id,
     nextId: options.nextId,
+    pinnedAt: options.pinnedAt,
     state: {
       activeBranchId: options.state.activeBranchId,
       branches: Object.fromEntries(
@@ -108,7 +119,7 @@ export function createTwineConversationSnapshot(
         : {}),
     },
     title,
-    updatedAt: Date.now(),
+    titleMode: options.titleMode,
     version: SNAPSHOT_VERSION,
   };
 }
@@ -152,10 +163,13 @@ export function createEmptyTwineConversationSnapshot(
 ): TwineConversationSnapshot {
   const timestamp = Date.now();
   return {
+    activityAt: timestamp,
+    archivedAt: null,
     createdAt: timestamp,
     draft: '',
     id: `twine-conversation-${crypto.randomUUID()}`,
     nextId: 1,
+    pinnedAt: null,
     state: {
       activeBranchId: TWINE_ROOT_BRANCH_ID,
       branches: {
@@ -166,7 +180,7 @@ export function createEmptyTwineConversationSnapshot(
       },
     },
     title: fallbackTitle,
-    updatedAt: timestamp,
+    titleMode: 'automatic',
     version: SNAPSHOT_VERSION,
   };
 }

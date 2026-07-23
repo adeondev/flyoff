@@ -138,12 +138,22 @@ export interface TranslationCatalog {
     audioComingSoon: string;
     approvalAutomatic: string;
     approvalFull: string;
+    approvalFullConfirm: string;
+    approvalFullDescription: string;
+    approvalFullTitle: string;
+    approvalFullWarning: string;
     approvalMode: string;
     approvalRequest: string;
     askPrompt: string;
     beta: string;
     cancel: string;
     conversation: string;
+    conversations: string;
+    copied: string;
+    copyFailed: string;
+    copyMarkdown: string;
+    copyResponse: string;
+    copyText: string;
     createApiKey: string;
     defaultModel: string;
     dropFiles: string;
@@ -180,8 +190,28 @@ export interface TranslationCatalog {
     deleteConversationTitle: string;
     editMessage: string;
     executedCode: string;
+    exportFailed: string;
+    exportSaved: string;
     conversationHistory: string;
+    conversationActions: string;
     history: string;
+    historyAllConversations: string;
+    historyArchived: string;
+    historyEmpty: string;
+    historyFilterActive: string;
+    historyFilterAll: string;
+    historyFilterArchived: string;
+    historyFilterPinned: string;
+    historyLastSevenDays: string;
+    historyLastThirtyDays: string;
+    historyOlder: string;
+    historyPinned: string;
+    historySearch: string;
+    historySearchPlaceholder: string;
+    historySortOldest: string;
+    historySortRecent: string;
+    historySortTitle: string;
+    historyToday: string;
     jumpToLatest: string;
     messageVersions: string;
     nextVersion: string;
@@ -190,7 +220,15 @@ export interface TranslationCatalog {
     responseReady: string;
     rewindHere: string;
     saveEdit: string;
+    saveMarkdown: string;
     searchedWeb: string;
+    shareResponse: string;
+    archiveConversation: string;
+    pinConversation: string;
+    renameConversation: string;
+    saveConversationName: string;
+    unarchiveConversation: string;
+    unpinConversation: string;
     sources: string;
     thinkingNow: string;
     thoughtFor: string;
@@ -756,13 +794,25 @@ export const ptBR = {
     apiKeySaveError: 'N\u00e3o foi poss\u00edvel salvar a API key.',
     audioComingSoon: '\u00c1udio \u2014 Em breve',
     approvalAutomatic: 'Aprovar automaticamente',
-    approvalFull: 'Acesso completo',
+    approvalFull: 'Liberdade Total',
+    approvalFullConfirm: 'Conceder Liberdade Total',
+    approvalFullDescription:
+      'Conceder Liberdade Total autoriza o Twine a ver suas notas, acessar suas tocas e aplicar edi\u00e7\u00f5es automaticamente quando usar ferramentas locais.',
+    approvalFullTitle: 'Conceder Liberdade Total ao Twine?',
+    approvalFullWarning:
+      'Altera\u00e7\u00f5es compat\u00edveis com o hist\u00f3rico podem ser desfeitas. Revise opera\u00e7\u00f5es importantes.',
     approvalMode: 'Modo de aprova\u00e7\u00e3o',
     approvalRequest: 'Solicitar aprova\u00e7\u00e3o',
     askPrompt: 'O que faremos hoje?',
     beta: 'Beta',
     cancel: 'Cancelar',
     conversation: 'Conversa com o Twine',
+    conversations: 'Conversas',
+    copied: 'Copiado',
+    copyFailed: 'N\u00e3o foi poss\u00edvel copiar',
+    copyMarkdown: 'Copiar Markdown',
+    copyResponse: 'Copiar resposta',
+    copyText: 'Copiar texto',
     createApiKey: 'Criar API key',
     defaultModel: 'Padr\u00e3o',
     dropFiles: 'Solte os arquivos aqui',
@@ -803,7 +853,27 @@ export const ptBR = {
     editMessage: 'Editar mensagem',
     executedCode: 'Código executado',
     conversationHistory: 'Histórico de conversas',
+    conversationActions: 'Ações da conversa',
     history: 'Histórico',
+    historyAllConversations: 'Conversas',
+    historyArchived: 'Arquivadas',
+    historyEmpty: 'Nenhuma conversa encontrada.',
+    historyFilterActive: 'Ativas',
+    historyFilterAll: 'Todas',
+    historyFilterArchived: 'Arquivadas',
+    historyFilterPinned: 'Fixadas',
+    historyLastSevenDays: 'Últimos 7 dias',
+    historyLastThirtyDays: 'Últimos 30 dias',
+    historyOlder: 'Antigas',
+    historyPinned: 'Fixadas',
+    historySearch: 'Pesquisar conversas',
+    historySearchPlaceholder: 'Pesquisar no histórico',
+    historySortOldest: 'Mais antigas',
+    historySortRecent: 'Atividade recente',
+    historySortTitle: 'Nome',
+    historyToday: 'Hoje',
+    exportFailed: 'N\u00e3o foi poss\u00edvel salvar o arquivo',
+    exportSaved: 'Arquivo salvo',
     jumpToLatest: 'Ir para o fim',
     messageVersions: 'Versões da conversa',
     nextVersion: 'Próxima versão',
@@ -812,7 +882,15 @@ export const ptBR = {
     responseReady: 'Resposta concluída',
     rewindHere: 'Voltar até aqui',
     saveEdit: 'Salvar e enviar',
+    saveMarkdown: 'Salvar como .md',
     searchedWeb: 'Pesquisa na web',
+    shareResponse: 'Compartilhar resposta',
+    archiveConversation: 'Arquivar conversa',
+    pinConversation: 'Fixar conversa',
+    renameConversation: 'Renomear conversa',
+    saveConversationName: 'Salvar',
+    unarchiveConversation: 'Desarquivar conversa',
+    unpinConversation: 'Desafixar conversa',
     sources: 'Fontes',
     thinkingNow: 'Pensando…',
     thoughtFor: 'Pensou por',
@@ -1436,13 +1514,25 @@ export const enUS = {
     apiKeySaveError: 'Could not save the API key.',
     audioComingSoon: 'Audio \u2014 Coming soon',
     approvalAutomatic: 'Approve automatically',
-    approvalFull: 'Full access',
+    approvalFull: 'Total Freedom',
+    approvalFullConfirm: 'Grant Total Freedom',
+    approvalFullDescription:
+      'Granting Total Freedom authorizes Twine to view your notes, access your dens, and apply edits automatically when using local tools.',
+    approvalFullTitle: 'Grant Total Freedom to Twine?',
+    approvalFullWarning:
+      'Changes covered by history can be undone. Review important operations carefully.',
     approvalMode: 'Approval mode',
     approvalRequest: 'Request approval',
     askPrompt: 'What will we do today?',
     beta: 'Beta',
     cancel: 'Cancel',
     conversation: 'Conversation with Twine',
+    conversations: 'Conversations',
+    copied: 'Copied',
+    copyFailed: 'Could not copy',
+    copyMarkdown: 'Copy Markdown',
+    copyResponse: 'Copy response',
+    copyText: 'Copy text',
     createApiKey: 'Create API key',
     defaultModel: 'Default',
     dropFiles: 'Drop files here',
@@ -1483,7 +1573,27 @@ export const enUS = {
     editMessage: 'Edit message',
     executedCode: 'Executed code',
     conversationHistory: 'Conversation history',
+    conversationActions: 'Conversation actions',
     history: 'History',
+    historyAllConversations: 'Conversations',
+    historyArchived: 'Archived',
+    historyEmpty: 'No conversations found.',
+    historyFilterActive: 'Active',
+    historyFilterAll: 'All',
+    historyFilterArchived: 'Archived',
+    historyFilterPinned: 'Pinned',
+    historyLastSevenDays: 'Last 7 days',
+    historyLastThirtyDays: 'Last 30 days',
+    historyOlder: 'Older',
+    historyPinned: 'Pinned',
+    historySearch: 'Search conversations',
+    historySearchPlaceholder: 'Search history',
+    historySortOldest: 'Oldest',
+    historySortRecent: 'Recent activity',
+    historySortTitle: 'Name',
+    historyToday: 'Today',
+    exportFailed: 'Could not save the file',
+    exportSaved: 'File saved',
     jumpToLatest: 'Jump to latest',
     messageVersions: 'Conversation versions',
     nextVersion: 'Next version',
@@ -1492,7 +1602,15 @@ export const enUS = {
     responseReady: 'Response complete',
     rewindHere: 'Go back to here',
     saveEdit: 'Save and send',
+    saveMarkdown: 'Save as .md',
     searchedWeb: 'Web search',
+    shareResponse: 'Share response',
+    archiveConversation: 'Archive conversation',
+    pinConversation: 'Pin conversation',
+    renameConversation: 'Rename conversation',
+    saveConversationName: 'Save',
+    unarchiveConversation: 'Unarchive conversation',
+    unpinConversation: 'Unpin conversation',
     sources: 'Sources',
     thinkingNow: 'Thinking…',
     thoughtFor: 'Thought for',
