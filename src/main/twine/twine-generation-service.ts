@@ -184,7 +184,7 @@ export class TwineGenerationService {
         totalUsage = mergeTwineGenerationUsage(totalUsage, result.usage);
         if (
           (!codeRequired || result.hasCodeExecution) &&
-          (!researchRequired || result.hasSources)
+          (!researchRequired || result.hasSearchExecution)
         ) {
           for (const event of events) {
             this.emit(webContents, channel, event);
@@ -199,7 +199,7 @@ export class TwineGenerationService {
       }
 
       const failedRequirements = [
-        ...(researchRequired ? ['pesquisa com fontes verificáveis'] : []),
+        ...(researchRequired ? ['pesquisa real na web'] : []),
         ...(codeRequired ? ['execução real de código'] : []),
       ].join(' e ');
       this.emit(webContents, channel, {

@@ -69,7 +69,7 @@ export interface TwineGenAIClient {
 
 interface TwineGenerationAttempt {
   hasCodeExecution: boolean;
-  hasSources: boolean;
+  hasSearchExecution: boolean;
   usage?: TwineGenerationUsage;
 }
 
@@ -173,15 +173,18 @@ export async function runTwineGenerationAttempt({
     model,
   });
   const parser = new TwineStreamParser(request.thinkingLevel === 'high');
+  const searchQueries = new Set<string>();
   const sourceUrls = new Set<string>();
   let hasCodeExecution = false;
+  let hasSearchExecution = false;
+  let searchActivityEmitted = false;
   let lastUsage: TwineGenerationUsage | undefined;
 
   for await (const chunk of stream) {
     if (signal.aborted) {
       return {
         hasCodeExecution,
-        hasSources: false,
+        hasSearchExecution,
         usage: lastUsage,
       };
     }
@@ -231,6 +234,16 @@ export async function runTwineGenerationAttempt({
       }
     }
 
+    const newQueries = (chunk.candidates ?? [])
+      .flatMap(
+        (candidate) => candidate.groundingMetadata?.webSearchQueries ?? [],
+      )
+      .map((query) => query.trim())
+      .filter((query) => query && !searchQueries.has(query));
+    for (const query of newQueries) {
+      searchQueries.add(query);
+    }
+
     const sources = sourcesFromChunk(chunk).filter(({ url }) => {
       if (sourceUrls.has(url)) {
         return false;
@@ -238,14 +251,20 @@ export async function runTwineGenerationAttempt({
       sourceUrls.add(url);
       return true;
     });
-    if (sources.length > 0) {
+    if (newQueries.length > 0 || sources.length > 0) {
+      hasSearchExecution = true;
+    }
+    if (hasSearchExecution && !searchActivityEmitted) {
+      searchActivityEmitted = true;
       emit({
         phase: 'result',
         requestId: request.requestId,
-        text: '',
+        text: Array.from(searchQueries).join('\n'),
         tool: 'search',
         type: 'tool',
       });
+    }
+    if (sources.length > 0) {
       emit({
         requestId: request.requestId,
         sources,
@@ -263,7 +282,7 @@ export async function runTwineGenerationAttempt({
 
   return {
     hasCodeExecution,
-    hasSources: sourceUrls.size > 0,
+    hasSearchExecution,
     usage: lastUsage,
   };
 }

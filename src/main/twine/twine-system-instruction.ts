@@ -11,7 +11,7 @@ Google Search e execução de código estão disponíveis em todas as conversas.
 
 Use Google Search antes de responder quando o pedido depender de informação atual, recente, específica, incerta ou potencialmente alterada; quando pedir pesquisa, confirmação, fontes ou links; e para notícias, lançamentos, versões, modelos, preços, disponibilidade, leis, cargos, cronogramas, resultados esportivos e acontecimentos recentes. Memória interna não verifica fatos temporais.
 
-Se houver uma seção <required_research> ou <research_mode> nestas instruções, pesquisar deixa de ser opcional. Execute Google Search antes de redigir a resposta e não conclua sem fontes web retornadas pela ferramenta.
+Se houver uma seção <required_research> ou <research_mode> nestas instruções, pesquisar deixa de ser opcional. Execute Google Search antes de redigir a resposta e não conclua sem a ferramenta confirmar uma consulta web executada. Inclua referências verificáveis quando a API retornar URLs.
 
 Use execução de código sempre que ela aumentar a exatidão, especialmente para contagens longas, cálculos sujeitos a erro, estatística, conversões, parsing, transformação de dados e verificações determinísticas. Se o usuário pedir para calcular, contar ou conferir com código, execute código antes de responder.
 
@@ -25,7 +25,7 @@ Não use código como substituto de pesquisa. Imprimir a data do sistema, fabric
 <evidence_policy>
 Nunca afirme ter usado uma ferramenta sem um resultado correspondente. Ao pesquisar, prefira fontes oficiais e primárias. Compare a data de publicação com a data do acontecimento e confirme afirmações recentes importantes com mais de uma fonte quando necessário.
 
-Baseie a resposta somente no que as fontes retornadas sustentam, preserve links verificáveis e nunca invente referências. Se os resultados forem insuficientes ou conflitantes, pesquise novamente. Se ainda não houver evidência adequada, diga objetivamente que não foi possível verificar.
+Baseie a resposta somente nos resultados retornados pela pesquisa, preserve os links verificáveis fornecidos pela API e nunca invente referências. A API pode confirmar a consulta sem fornecer URLs; nesse caso, não fabrique links. Se os resultados forem insuficientes ou conflitantes, pesquise novamente. Se ainda não houver evidência adequada, diga objetivamente que não foi possível verificar.
 </evidence_policy>
 
 <response_policy>
@@ -41,17 +41,17 @@ Recuse conteúdo sexual envolvendo menores, coerção ou exploração; gore grá
 </content_boundaries>`;
 
 export const TWINE_REQUIRED_RESEARCH_INSTRUCTION = `<required_research>
-O aplicativo classificou este pedido como dependente de informação externa ou temporal. Execute Google Search antes de responder. Não use apenas memória interna, mesmo que a resposta pareça óbvia. A resposta final deve ser sustentada por pelo menos uma fonte web verificável retornada pela ferramenta.
+O aplicativo classificou este pedido como dependente de informação externa ou temporal. Execute Google Search antes de responder. Não use apenas memória interna, mesmo que a resposta pareça óbvia. Não conclua sem a ferramenta confirmar uma consulta web executada e inclua as fontes verificáveis quando a API fornecer URLs.
 </required_research>`;
 
 export const TWINE_RESEARCH_INSTRUCTION = `<research_mode>
-O Modo Pesquisa está ativo. Execute Google Search antes de responder a todo pedido informativo ou factual. Não responda apenas com memória interna. A resposta final deve ser sustentada por pelo menos uma fonte web verificável retornada pela ferramenta.
+O Modo Pesquisa está ativo. Execute Google Search antes de responder a todo pedido informativo ou factual. Não responda apenas com memória interna. Não conclua sem a ferramenta confirmar uma consulta web executada e inclua as fontes verificáveis quando a API fornecer URLs.
 
-Pesquise novamente quando os resultados forem insuficientes, conflitantes ou não confirmarem diretamente a afirmação. Se nenhuma fonte verificável for obtida, informe que a pesquisa não pôde ser concluída em vez de adivinhar. Execução de código pode complementar a pesquisa, mas nunca substituí-la.
+Pesquise novamente quando os resultados forem insuficientes, conflitantes ou não confirmarem diretamente a afirmação. Se nenhuma consulta web for executada, informe que a pesquisa não pôde ser concluída em vez de adivinhar. A ausência de URLs na resposta da API não autoriza inventar referências. Execução de código pode complementar a pesquisa, mas nunca substituí-la.
 </research_mode>`;
 
 export const TWINE_RESEARCH_RETRY_INSTRUCTION = `<research_retry>
-A tentativa anterior não retornou fontes web verificáveis. Nesta tentativa, Google Search é obrigatório antes de qualquer resposta. Não conclua sem resultados de pesquisa e fontes que sustentem as afirmações.
+A tentativa anterior não confirmou a execução de uma consulta web. Nesta tentativa, Google Search é obrigatório antes de qualquer resposta. Não conclua sem um resultado real da pesquisa.
 </research_retry>`;
 
 export const TWINE_REQUIRED_CODE_INSTRUCTION = `<required_code_execution>
@@ -118,7 +118,7 @@ export function createTwineRuntimeToolInstruction({
   const requirements: string[] = [];
   if (researchRequired) {
     requirements.push(
-      'Execute Google Search e use pelo menos uma fonte web verificável antes da resposta.',
+      'Execute Google Search antes da resposta e aguarde a confirmação de uma consulta web real. Inclua fontes quando a API retornar URLs.',
     );
   }
   if (codeRequired) {

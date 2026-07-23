@@ -145,7 +145,7 @@ describe('Twine generation config', () => {
       TWINE_RESEARCH_RETRY_INSTRUCTION,
     );
     expect(config.systemInstruction).toContain(
-      'A resposta final deve ser sustentada por pelo menos uma fonte web verificável',
+      'Não conclua sem a ferramenta confirmar uma consulta web executada',
     );
   });
 });
@@ -451,7 +451,126 @@ describe('Twine research enforcement', () => {
     });
   });
 
-  it('returns a clear error after two attempts without sources', async () => {
+  it('accepts confirmed search execution when the provider omits source URLs', async () => {
+    googleGenAiMocks.generateContentStream.mockReturnValueOnce(
+      chunkStream({
+        candidates: [
+          {
+            content: {
+              parts: [{ text: 'O preço atual foi consultado na web.' }],
+            },
+            groundingMetadata: {
+              webSearchQueries: ['preço atual do Bitcoin'],
+            },
+          },
+        ],
+      }),
+    );
+    const target = createEventTarget();
+
+    new TwineGenerationService().start(
+      {
+        ...baseRequest,
+        messages: [
+          {
+            role: 'user',
+            text: 'Não pesquise. Qual é o preço do Bitcoin agora?',
+          },
+        ],
+        researchEnabled: true,
+      },
+      'test-key',
+      target.webContents,
+      'twine:generation',
+    );
+    await target.terminal;
+
+    expect(googleGenAiMocks.generateContentStream).toHaveBeenCalledTimes(1);
+    expect(target.events).toContainEqual({
+      phase: 'result',
+      requestId: baseRequest.requestId,
+      text: 'preço atual do Bitcoin',
+      tool: 'search',
+      type: 'tool',
+    });
+    expect(target.events).not.toContainEqual(
+      expect.objectContaining({ type: 'sources' }),
+    );
+    expect(target.events.at(-1)).toEqual({
+      requestId: baseRequest.requestId,
+      type: 'done',
+    });
+  });
+
+  it('requires both a search query and code result for mixed requests', async () => {
+    googleGenAiMocks.generateContentStream.mockReturnValueOnce(
+      chunkStream({
+        candidates: [
+          {
+            content: {
+              parts: [
+                {
+                  executableCode: {
+                    code: 'print(65676.14 * 2.75)',
+                    language: 'PYTHON',
+                  },
+                },
+                {
+                  codeExecutionResult: {
+                    outcome: 'OUTCOME_OK',
+                    output: '180609.385\n',
+                  },
+                },
+                { text: 'O total calculado é US$ 180.609,39.' },
+              ],
+            },
+            groundingMetadata: {
+              webSearchQueries: ['preço atual Bitcoin USD'],
+            },
+          },
+        ],
+      }),
+    );
+    const target = createEventTarget();
+
+    new TwineGenerationService().start(
+      {
+        ...baseRequest,
+        messages: [
+          {
+            role: 'user',
+            text: 'Pesquise o preço atual do Bitcoin e use código para calcular quanto custam 2,75 BTC.',
+          },
+        ],
+      },
+      'test-key',
+      target.webContents,
+      'twine:generation',
+    );
+    await target.terminal;
+
+    expect(googleGenAiMocks.generateContentStream).toHaveBeenCalledTimes(1);
+    expect(target.events).toContainEqual(
+      expect.objectContaining({
+        phase: 'result',
+        tool: 'search',
+        type: 'tool',
+      }),
+    );
+    expect(target.events).toContainEqual(
+      expect.objectContaining({
+        phase: 'result',
+        tool: 'code',
+        type: 'tool',
+      }),
+    );
+    expect(target.events.at(-1)).toEqual({
+      requestId: baseRequest.requestId,
+      type: 'done',
+    });
+  });
+
+  it('returns a clear error after two attempts without search execution', async () => {
     googleGenAiMocks.generateContentStream
       .mockReturnValueOnce(
         chunkStream({
@@ -481,7 +600,7 @@ describe('Twine research enforcement', () => {
     });
     expect(target.events[1]).toEqual({
       message:
-        'O Twine não conseguiu concluir pesquisa com fontes verificáveis. Tente novamente.',
+        'O Twine não conseguiu concluir pesquisa real na web. Tente novamente.',
       requestId: baseRequest.requestId,
       type: 'error',
     });
