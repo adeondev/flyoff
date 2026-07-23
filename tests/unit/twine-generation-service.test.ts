@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   createTwineGenerateContentConfig,
+  TWINE_RESEARCH_INSTRUCTION,
   TWINE_SYSTEM_INSTRUCTION,
 } from '../../src/main/twine';
 
@@ -40,6 +41,15 @@ describe('Twine generation config', () => {
 
     expect(config.thinkingConfig.thinkingLevel).toBe('HIGH');
     expect(config.thinkingConfig.includeThoughts).toBe(true);
+    expect(config.systemInstruction).toBe(
+      `${TWINE_SYSTEM_INSTRUCTION}\n\n${TWINE_RESEARCH_INSTRUCTION}`,
+    );
+    expect(config.systemInstruction).toContain(
+      'Pesquisa é obrigatória para notícias',
+    );
+    expect(config.systemInstruction).toContain(
+      'nunca responda apenas com conhecimento interno',
+    );
     expect(config.tools).toEqual([
       { googleSearch: {} },
       { codeExecution: {} },

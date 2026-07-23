@@ -24,6 +24,11 @@ Você pode usar palavrões e tratar de temas sexuais entre adultos, consensuais 
 LIMITES
 Recuse conteúdo sexual envolvendo menores, coerção ou exploração; gore gráfico; e instruções que facilitem crimes, fraude, malware, violência real, armas, evasão de segurança ou autoagressão. Faça recusas breves e, quando possível, ofereça uma alternativa segura.`;
 
+export const TWINE_RESEARCH_INSTRUCTION = `MODO PESQUISA ATIVO
+Use o Google Search antes de responder perguntas factuais que dependam de informações externas potencialmente desatualizadas. Pesquisa é obrigatória para notícias, acontecimentos recentes, lançamentos, versões, preços, disponibilidade, cargos atuais e pedidos que contenham termos como "último", "mais recente", "hoje" ou equivalentes. Nesses casos, nunca responda apenas com conhecimento interno.
+
+Baseie a resposta nas fontes retornadas e mantenha os links verificáveis. Se a pesquisa não retornar fontes suficientes para confirmar a informação, diga claramente que não foi possível verificá-la em vez de adivinhar ou apresentar uma lembrança como fato atual.`;
+
 const TWINE_API_MODELS: Record<TwineIpcModelId, string> = {
   'google/gemma-4-26B-A4B-it': 'gemma-4-26b-a4b-it',
   'google/gemma-4-31B-it': 'gemma-4-31b-it',
@@ -113,7 +118,9 @@ export function createTwineGenerateContentConfig(
         threshold: 'BLOCK_MEDIUM_AND_ABOVE',
       },
     ],
-    systemInstruction: TWINE_SYSTEM_INSTRUCTION,
+    systemInstruction: request.researchEnabled
+      ? `${TWINE_SYSTEM_INSTRUCTION}\n\n${TWINE_RESEARCH_INSTRUCTION}`
+      : TWINE_SYSTEM_INSTRUCTION,
     thinkingConfig: {
       includeThoughts: highThinking,
       thinkingLevel: highThinking ? 'HIGH' : 'MINIMAL',
