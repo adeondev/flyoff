@@ -68,6 +68,7 @@ export interface TwineGenAIClient {
 }
 
 interface TwineGenerationAttempt {
+  hasCodeExecution: boolean;
   hasSources: boolean;
   usage?: TwineGenerationUsage;
 }
@@ -78,6 +79,7 @@ interface TwineGenerationAttemptOptions {
   emit: (event: TwineGenerationEvent) => void;
   model: string;
   request: TwineGenerationRequest;
+  runtimeInstruction?: string;
   signal: AbortSignal;
 }
 
@@ -149,23 +151,39 @@ export async function runTwineGenerationAttempt({
   emit,
   model,
   request,
+  runtimeInstruction,
   signal,
 }: TwineGenerationAttemptOptions): Promise<TwineGenerationAttempt> {
+  const latestUserMessageIndex = request.messages.findLastIndex(
+    (message) => message.role === 'user',
+  );
   const stream = await ai.models.generateContentStream({
     config: { ...config, abortSignal: signal },
-    contents: request.messages.map((message) => ({
-      parts: [{ text: message.text }],
+    contents: request.messages.map((message, index) => ({
+      parts: [
+        {
+          text:
+            runtimeInstruction && index === latestUserMessageIndex
+              ? `${message.text}\n\n${runtimeInstruction}`
+              : message.text,
+        },
+      ],
       role: message.role === 'assistant' ? 'model' : 'user',
     })),
     model,
   });
   const parser = new TwineStreamParser(request.thinkingLevel === 'high');
   const sourceUrls = new Set<string>();
+  let hasCodeExecution = false;
   let lastUsage: TwineGenerationUsage | undefined;
 
   for await (const chunk of stream) {
     if (signal.aborted) {
-      return { hasSources: false, usage: lastUsage };
+      return {
+        hasCodeExecution,
+        hasSources: false,
+        usage: lastUsage,
+      };
     }
 
     lastUsage = usageFromChunk(chunk) ?? lastUsage;
@@ -198,7 +216,10 @@ export async function runTwineGenerationAttempt({
             type: 'tool',
           });
         }
-        if (part.codeExecutionResult?.output) {
+        if (part.codeExecutionResult) {
+          hasCodeExecution = true;
+        }
+        if (part.codeExecutionResult?.output !== undefined) {
           emit({
             phase: 'result',
             requestId: request.requestId,
@@ -241,6 +262,7 @@ export async function runTwineGenerationAttempt({
   }
 
   return {
+    hasCodeExecution,
     hasSources: sourceUrls.size > 0,
     usage: lastUsage,
   };

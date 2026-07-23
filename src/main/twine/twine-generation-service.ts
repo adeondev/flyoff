@@ -6,13 +6,18 @@ import type {
   TwineGenerationUsage,
   TwineIpcModelId,
 } from '../../shared/contracts';
+import { shouldRequireTwineCodeExecution } from './twine-code-policy';
 import {
   mergeTwineGenerationUsage,
   runTwineGenerationAttempt,
   type TwineGenAIClient,
   type TwineGenerateContentConfig,
 } from './twine-generation-attempt';
-import { createTwineSystemInstruction } from './twine-system-instruction';
+import { shouldRequireTwineResearch } from './twine-research-policy';
+import {
+  createTwineRuntimeToolInstruction,
+  createTwineSystemInstruction,
+} from './twine-system-instruction';
 
 const TWINE_API_MODELS: Record<TwineIpcModelId, string> = {
   'google/gemma-4-26B-A4B-it': 'gemma-4-26b-a4b-it',
@@ -20,7 +25,10 @@ const TWINE_API_MODELS: Record<TwineIpcModelId, string> = {
 };
 
 interface TwineGenerationConfigOptions {
+  codeRequired?: boolean;
+  codeRetry?: boolean;
   currentDate?: Date;
+  researchRequired?: boolean;
   researchRetry?: boolean;
 }
 
@@ -49,8 +57,11 @@ export function createTwineGenerateContentConfig(
       },
     ],
     systemInstruction: createTwineSystemInstruction({
+      codeRequired: options.codeRequired,
+      codeRetry: options.codeRetry,
       currentDate: options.currentDate,
       researchEnabled: request.researchEnabled,
+      researchRequired: options.researchRequired,
       researchRetry: options.researchRetry,
     }),
     thinkingConfig: {
@@ -120,8 +131,12 @@ export class TwineGenerationService {
       const { GoogleGenAI } = await import('@google/genai');
       const ai = new GoogleGenAI({ apiKey }) as TwineGenAIClient;
       const currentDate = new Date();
+      const codeRequired = shouldRequireTwineCodeExecution(request);
+      const researchRequired =
+        request.researchEnabled ||
+        shouldRequireTwineResearch(request, currentDate);
 
-      if (!request.researchEnabled) {
+      if (!codeRequired && !researchRequired) {
         const result = await runTwineGenerationAttempt({
           ai,
           config: createTwineGenerateContentConfig(request, { currentDate }),
@@ -146,12 +161,20 @@ export class TwineGenerationService {
         const result = await runTwineGenerationAttempt({
           ai,
           config: createTwineGenerateContentConfig(request, {
+            codeRequired,
+            codeRetry: codeRequired && attemptIndex > 0,
             currentDate,
-            researchRetry: attemptIndex > 0,
+            researchRequired,
+            researchRetry: researchRequired && attemptIndex > 0,
           }),
           emit: (event) => events.push(event),
           model: TWINE_API_MODELS[request.modelId],
           request,
+          runtimeInstruction: createTwineRuntimeToolInstruction({
+            codeRequired,
+            researchRequired,
+            retry: attemptIndex > 0,
+          }),
           signal: controller.signal,
         });
         if (controller.signal.aborted) {
@@ -159,7 +182,10 @@ export class TwineGenerationService {
         }
 
         totalUsage = mergeTwineGenerationUsage(totalUsage, result.usage);
-        if (result.hasSources) {
+        if (
+          (!codeRequired || result.hasCodeExecution) &&
+          (!researchRequired || result.hasSources)
+        ) {
           for (const event of events) {
             this.emit(webContents, channel, event);
           }
@@ -172,9 +198,12 @@ export class TwineGenerationService {
         }
       }
 
+      const failedRequirements = [
+        ...(researchRequired ? ['pesquisa com fontes verificáveis'] : []),
+        ...(codeRequired ? ['execução real de código'] : []),
+      ].join(' e ');
       this.emit(webContents, channel, {
-        message:
-          'O Modo Pesquisa não conseguiu obter fontes verificáveis. Tente novamente ou revise a conexão com o Google Search.',
+        message: `O Twine não conseguiu concluir ${failedRequirements}. Tente novamente.`,
         requestId: request.requestId,
         type: 'error',
       });

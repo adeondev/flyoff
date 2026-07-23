@@ -22,6 +22,7 @@
     "test": "vitest run --configLoader native --pool=threads",
     "test:watch": "vitest --configLoader native --pool=threads",
     "test:native": "npm run test --workspace=@flyoff/native-core",
+    "test:twine-live": "node --env-file=.env.local --import tsx scripts/evaluate-twine-live.ts",
     "test:e2e": "playwright test",
     "assets:twemoji": "node scripts/sync-twemoji-assets.mjs",
     "seed:apollo-11": "tsx scripts/seed-apollo-11.ts",
