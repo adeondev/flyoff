@@ -1,3 +1,5 @@
+import { suppressFlyoffTooltip } from '../tooltip';
+
 interface RootLockState {
   count: number;
   root?: HTMLElement;
@@ -60,12 +62,17 @@ function canRestoreFocus(element: HTMLElement): boolean {
   );
 }
 
+function restoreFocus(element: HTMLElement): void {
+  suppressFlyoffTooltip(element);
+  element.focus();
+}
+
 export function restoreModalFocus(
   previousFocus: Element | null,
   closingDialog?: HTMLElement | null,
 ): void {
   if (previousFocus instanceof HTMLElement && canRestoreFocus(previousFocus)) {
-    previousFocus.focus();
+    restoreFocus(previousFocus);
     return;
   }
 
@@ -74,8 +81,11 @@ export function restoreModalFocus(
       '[role="dialog"] [data-dialog-initial-focus], [role="dialog"] button:not([disabled]), [role="dialog"] input:not([disabled])',
     ),
   ).reverse();
-  candidates.find(
+  const candidate = candidates.find(
     (candidate) =>
       !closingDialog?.contains(candidate) && canRestoreFocus(candidate),
-  )?.focus();
+  );
+  if (candidate) {
+    restoreFocus(candidate);
+  }
 }

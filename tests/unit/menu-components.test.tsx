@@ -104,7 +104,12 @@ describe('reusable dropdown menu', () => {
       screen
         .getByRole('menuitemcheckbox', { name: 'Checked' })
         .querySelector('.flyoff-menu__item-icon'),
-    ).toBeNull();
+    ).not.toBeNull();
+    expect(
+      screen
+        .getByRole('menuitemcheckbox', { name: 'Checked' })
+        .querySelector('.flyoff-menu__check'),
+    ).not.toBeNull();
 
     fireEvent.click(screen.getByRole('menuitem', { name: 'Disabled' }));
     expect(onAction).not.toHaveBeenCalled();
@@ -204,6 +209,41 @@ describe('reusable dropdown menu', () => {
     fireEvent.keyDown(document, { key: 'Escape' });
     await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
     expect(trigger.getAttribute('aria-expanded')).toBe('false');
+  });
+});
+
+describe('Flyoff tooltips', () => {
+  it('dismisses and suppresses tooltips on pointer and keyboard activation', () => {
+    render(
+      <>
+        <button {...getTooltipTargetProps('Action details')}>Action</button>
+        <button>Other</button>
+        <TooltipHost />
+      </>,
+    );
+    const action = screen.getByRole('button', { name: 'Action' });
+    const other = screen.getByRole('button', { name: 'Other' });
+
+    fireEvent.focusIn(action);
+    expect(screen.getByRole('tooltip').textContent).toBe('Action details');
+    fireEvent.click(action);
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    fireEvent.focusIn(action);
+    fireEvent.pointerOver(action);
+    expect(screen.queryByRole('tooltip')).toBeNull();
+
+    fireEvent.pointerOut(action, { relatedTarget: other });
+    fireEvent.focusOut(action, { relatedTarget: other });
+    fireEvent.focusIn(action, { relatedTarget: other });
+    expect(screen.getByRole('tooltip')).toBeTruthy();
+    fireEvent.keyDown(action, { key: 'Enter' });
+    expect(screen.queryByRole('tooltip')).toBeNull();
+
+    fireEvent.focusOut(action, { relatedTarget: other });
+    fireEvent.focusIn(action, { relatedTarget: other });
+    expect(screen.getByRole('tooltip')).toBeTruthy();
+    fireEvent.click(other);
+    expect(screen.queryByRole('tooltip')).toBeNull();
   });
 });
 

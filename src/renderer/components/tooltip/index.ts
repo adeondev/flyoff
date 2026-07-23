@@ -1,5 +1,6 @@
 export {
   TooltipHost,
+  dismissFlyoffTooltip,
   getTooltipTargetProps,
   suppressFlyoffTooltip,
 } from './TooltipHost';

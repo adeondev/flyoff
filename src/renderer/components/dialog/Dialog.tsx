@@ -3,17 +3,21 @@ import {
   useId,
   useRef,
   type KeyboardEvent,
+  type PointerEvent,
   type ReactNode,
 } from 'react';
 import { createPortal } from 'react-dom';
 
-import { getTooltipTargetProps } from '../tooltip';
+import { dismissFlyoffTooltip, getTooltipTargetProps } from '../tooltip';
 import { TwemojiText } from '../twemoji';
 import { acquireModalRootLock, restoreModalFocus } from './modal-root-lock';
+
+export type DialogDismissReason = 'backdrop' | 'close-button' | 'escape';
 
 export interface DialogProps {
   title: string;
   closeLabel: string;
+  className?: string;
   children?: ReactNode;
   description?: string;
   busy?: boolean;
@@ -21,7 +25,9 @@ export interface DialogProps {
   footerEnd?: ReactNode;
   size?: 'compact' | 'standard' | 'wide';
   bodyPadding?: 'default' | 'none';
-  onCancel: () => void;
+  closeOnBackdrop?: boolean;
+  restoreFocus?: boolean;
+  onCancel: (reason: DialogDismissReason) => void;
 }
 
 function firstDialogFocusTarget(dialog: HTMLElement): HTMLElement | null {
@@ -38,11 +44,14 @@ export function Dialog({
   bodyPadding = 'default',
   busy = false,
   children,
+  className,
   closeLabel,
+  closeOnBackdrop = false,
   description,
   footerEnd,
   footerStart,
   onCancel,
+  restoreFocus = true,
   size = 'standard',
   title,
 }: DialogProps) {
@@ -53,6 +62,7 @@ export function Dialog({
   const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    dismissFlyoffTooltip();
     const previousFocus = document.activeElement;
     const dialogElement = dialogRef.current;
     const releaseRootLock = acquireModalRootLock();
@@ -62,15 +72,23 @@ export function Dialog({
 
     return () => {
       releaseRootLock();
-      restoreModalFocus(previousFocus, dialogElement);
+      if (restoreFocus) {
+        restoreModalFocus(previousFocus, dialogElement);
+      }
     };
-  }, []);
+  }, [restoreFocus]);
 
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
     if (event.key === 'Escape') {
+      if (
+        event.target instanceof Element &&
+        event.target.closest('.flyoff-menu')
+      ) {
+        return;
+      }
       event.preventDefault();
       if (!busy) {
-        onCancel();
+        onCancel('escape');
       }
       return;
     }
@@ -101,8 +119,23 @@ export function Dialog({
     focusable[nextIndex]?.focus();
   }
 
+  function handleBackdropPointerDown(
+    event: PointerEvent<HTMLDivElement>,
+  ): void {
+    if (
+      closeOnBackdrop &&
+      !busy &&
+      event.target === event.currentTarget
+    ) {
+      onCancel('backdrop');
+    }
+  }
+
   return createPortal(
-    <div className="flyoff-dialog__backdrop">
+    <div
+      className="flyoff-dialog__backdrop"
+      onPointerDown={handleBackdropPointerDown}
+    >
       <div
         aria-busy={busy}
         aria-describedby={description ? descriptionId : undefined}
@@ -110,7 +143,7 @@ export function Dialog({
         aria-modal="true"
         className={`flyoff-dialog flyoff-dialog--${size}${
           hasBody ? '' : ' flyoff-dialog--bodyless'
-        }`}
+        }${className ? ` ${className}` : ''}`}
         onKeyDown={handleKeyDown}
         ref={dialogRef}
         role="dialog"
@@ -130,7 +163,7 @@ export function Dialog({
             aria-label={closeLabel}
             className="flyoff-dialog__close"
             disabled={busy}
-            onClick={onCancel}
+            onClick={() => onCancel('close-button')}
             type="button"
             {...getTooltipTargetProps(closeLabel, 'bottom')}
           >

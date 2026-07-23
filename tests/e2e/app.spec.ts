@@ -327,6 +327,190 @@ test.describe('Flyoff desktop shell', () => {
     await page.getByRole('button', { name: homeLabel, exact: true }).click();
   });
 
+  test('opens Twine with Flyoff controls and resets the composer scroll', async () => {
+    const labels = await page.evaluate(() =>
+      document.documentElement.lang === 'en-US'
+        ? {
+            approval: 'Approval mode: Request approval',
+            closeDialog: 'Close',
+            closeTwine: 'Close tab: Twine',
+            fullAccess: 'Total Freedom',
+            fullAccessConfirm: 'Grant Total Freedom',
+            fullAccessDialog: 'Grant Total Freedom to Twine?',
+            high: 'High',
+            history: 'History',
+            home: 'Home',
+            keyLater: 'Not now',
+            message: 'Message Twine',
+            thinking: 'Thinking level: Low',
+          }
+        : {
+            approval: 'Modo de aprovação: Solicitar aprovação',
+            closeDialog: 'Fechar',
+            closeTwine: 'Fechar aba: Twine',
+            fullAccess: 'Liberdade Total',
+            fullAccessConfirm: 'Conceder Liberdade Total',
+            fullAccessDialog: 'Conceder Liberdade Total ao Twine?',
+            high: 'Alto',
+            history: 'Histórico',
+            home: 'Início',
+            keyLater: 'Agora não',
+            message: 'Mensagem para o Twine',
+            thinking: 'Nível de pensamento: Baixo',
+          },
+    );
+
+    await page.getByRole('button', { name: /Twine, Beta/ }).click();
+    const keyDialog = page.getByRole('dialog');
+    await keyDialog.getByRole('button', { name: labels.keyLater }).click();
+
+    await expect(page.locator('.twine-empty-state__brand')).toContainText('Twine');
+    await expect(page.locator('.twine-conversation-sidebar')).toHaveCount(0);
+    const workspaceWidth = await page.locator('.twine-page__workspace').evaluate(
+      (element) => element.getBoundingClientRect().width,
+    );
+    const historyTrigger = page.getByRole('button', { name: labels.history });
+    await historyTrigger.hover();
+    await expect(page.getByRole('tooltip')).toHaveText(labels.history);
+    await historyTrigger.click();
+    await expect(page.getByRole('tooltip')).toHaveCount(0);
+    const historyDialog = page.getByRole('dialog', { name: labels.history });
+    const historySearch = historyDialog.getByRole('searchbox', {
+      name: /Pesquisar conversas|Search conversations/,
+    });
+    await expect(historySearch).toBeVisible();
+    await expect(historySearch).toHaveCSS('outline-style', 'none');
+    await expect(historyDialog).toHaveCSS('border-radius', '16px');
+    await expect(page.locator('.twine-history__search')).toHaveCSS(
+      'border-radius',
+      '999px',
+    );
+    const historyFilter = historyDialog.locator('.twine-history__select').first();
+    await expect(historyFilter).toHaveCSS('border-radius', '999px');
+    await expect(
+      historyFilter.locator('.twine-history__button-icon'),
+    ).toHaveCSS('width', '12px');
+    await historyFilter.click();
+    await expect(page.locator('.twine-history-menu')).toBeVisible();
+    await expect(page.locator('.twine-history-menu')).toHaveCSS(
+      'border-radius',
+      '14px',
+    );
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('menu')).toHaveCount(0);
+    await expect(historyFilter).toBeFocused();
+    expect(
+      await page.locator('.twine-page__workspace').evaluate(
+        (element) => element.getBoundingClientRect().width,
+      ),
+    ).toBe(workspaceWidth);
+    await page.keyboard.press('Escape');
+    await expect(historyDialog).toHaveCount(0);
+    const composer = page.getByRole('textbox', { name: labels.message });
+    await expect(composer).toBeFocused();
+    await expect(historyTrigger).not.toBeFocused();
+
+    await historyTrigger.click();
+    await expect(historyDialog).toBeVisible();
+    await page.locator('.flyoff-dialog__backdrop').click({
+      position: { x: 4, y: 4 },
+    });
+    await expect(historyDialog).toHaveCount(0);
+    await expect(composer).toBeFocused();
+
+    await historyTrigger.click();
+    await expect(historyDialog).toBeVisible();
+    await historyDialog
+      .getByRole('button', { name: labels.closeDialog })
+      .click();
+    await expect(historyDialog).toHaveCount(0);
+    await expect(composer).toBeFocused();
+    await expect(historyTrigger).not.toBeFocused();
+    await expect(page.getByRole('tooltip')).toHaveCount(0);
+    await page.getByRole('button', { name: labels.thinking }).click();
+    await expect(
+      page.getByRole('menuitemcheckbox', { name: labels.high }).locator('.home__icon'),
+    ).toHaveCount(0);
+    await page.keyboard.press('Escape');
+
+    await page.getByRole('button', { name: labels.approval }).click();
+    const fullAccessItem = page.getByRole('menuitemcheckbox', {
+      name: labels.fullAccess,
+    });
+    await fullAccessItem.click();
+    const fullAccessDialog = page.getByRole('dialog', {
+      name: labels.fullAccessDialog,
+    });
+    await expect(
+      fullAccessDialog.locator('.twine-full-access-dialog__icon'),
+    ).toBeVisible();
+    await fullAccessDialog
+      .getByRole('button', { name: labels.fullAccessConfirm })
+      .click();
+    const fullAccessTrigger = page.getByRole('button', {
+      name: new RegExp(labels.fullAccess),
+    });
+    await expect(fullAccessTrigger).toHaveCSS('color', 'rgb(240, 161, 90)');
+    await fullAccessTrigger.click();
+    const selectedFullAccessItem = page.getByRole('menuitemcheckbox', {
+      name: labels.fullAccess,
+    });
+    const fullAccessIcon = selectedFullAccessItem.locator(
+      '.flyoff-menu__leading-icon',
+    );
+    const fullAccessCheck = selectedFullAccessItem.locator(
+      '.flyoff-menu__check',
+    );
+    await expect(fullAccessIcon.locator('.home__icon')).toHaveCount(1);
+    await expect(fullAccessCheck).toHaveCount(1);
+    expect((await fullAccessCheck.boundingBox())!.x).toBeGreaterThan(
+      (await fullAccessIcon.boundingBox())!.x,
+    );
+    await page.keyboard.press('Escape');
+
+    const longDraft = Array.from(
+      { length: 20 },
+      (_, index) => `line ${index}`,
+    ).join('\n');
+    await composer.fill(longDraft);
+    await composer.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+    await page.getByRole('button', { name: labels.home, exact: true }).click();
+    await page.getByRole('button', { name: 'Twine', exact: true }).click();
+    await expect(composer).toHaveJSProperty('scrollTop', 0);
+
+    const twinePane = page
+      .locator('.workspace-pane')
+      .filter({ has: page.getByRole('tab', { name: 'Twine' }) });
+    const twinePaneBounds = await twinePane.boundingBox();
+    expect(twinePaneBounds).not.toBeNull();
+    await dispatchWorkspaceDrag(
+      twinePane.getByRole('tab', { name: 'Twine' }),
+      twinePane,
+      {
+        x: twinePaneBounds!.width - 18,
+        y: twinePaneBounds!.height / 2,
+      },
+    );
+    await expect(page.locator('.workspace-pane')).toHaveCount(2);
+    await expect(
+      page.getByRole('textbox', { name: labels.message }),
+    ).toHaveValue(longDraft);
+    await expect(
+      page.getByRole('textbox', { name: labels.message }),
+    ).toBeVisible();
+    await expect(page.locator('.twine-conversation-sidebar')).toHaveCount(0);
+
+    await page.getByRole('button', { name: labels.closeTwine }).click();
+    await expect(page.locator('.workspace-pane')).toHaveCount(1);
+    await page.getByRole('button', { name: labels.home, exact: true }).click();
+    await expect(page.getByRole('tab', { name: labels.home })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+  });
+
   test('keeps Node and Electron out of the renderer world', async () => {
     const exposure = await page.evaluate(() => {
       const pageGlobal = globalThis as typeof globalThis & {
@@ -426,6 +610,30 @@ test.describe('Flyoff desktop shell', () => {
         listProjectBacklinksType:
           typeof window.flyoff.listProjectBacklinks,
         searchProjectType: typeof window.flyoff.searchProject,
+        getTwineCredentialStatusType:
+          typeof window.flyoff.getTwineCredentialStatus,
+        saveTwineApiKeyType: typeof window.flyoff.saveTwineApiKey,
+        removeTwineApiKeyType: typeof window.flyoff.removeTwineApiKey,
+        copyTwineContentType: typeof window.flyoff.copyTwineContent,
+        exportTwineMarkdownType: typeof window.flyoff.exportTwineMarkdown,
+        listTwineConversationsType:
+          typeof window.flyoff.listTwineConversations,
+        queryTwineConversationsType:
+          typeof window.flyoff.queryTwineConversations,
+        loadTwineConversationType:
+          typeof window.flyoff.loadTwineConversation,
+        saveTwineConversationType:
+          typeof window.flyoff.saveTwineConversation,
+        createTwineConversationType:
+          typeof window.flyoff.createTwineConversation,
+        updateTwineConversationType:
+          typeof window.flyoff.updateTwineConversation,
+        deleteTwineConversationType:
+          typeof window.flyoff.deleteTwineConversation,
+        startTwineGenerationType: typeof window.flyoff.startTwineGeneration,
+        cancelTwineGenerationType: typeof window.flyoff.cancelTwineGeneration,
+        onTwineGenerationEventType:
+          typeof window.flyoff.onTwineGenerationEvent,
         bufferType: typeof pageGlobal.Buffer,
         electronType: typeof pageGlobal.electron,
         ipcRendererType: typeof pageGlobal.ipcRenderer,
@@ -499,6 +707,21 @@ test.describe('Flyoff desktop shell', () => {
         'resolveProjectInternalLink',
         'listProjectBacklinks',
         'searchProject',
+        'getTwineCredentialStatus',
+        'saveTwineApiKey',
+        'removeTwineApiKey',
+        'copyTwineContent',
+        'exportTwineMarkdown',
+        'listTwineConversations',
+        'queryTwineConversations',
+        'loadTwineConversation',
+        'saveTwineConversation',
+        'createTwineConversation',
+        'updateTwineConversation',
+        'deleteTwineConversation',
+        'startTwineGeneration',
+        'cancelTwineGeneration',
+        'onTwineGenerationEvent',
       ].sort(),
       getBootstrapStateType: 'function',
       getWindowStateType: 'function',
@@ -560,6 +783,21 @@ test.describe('Flyoff desktop shell', () => {
       resolveProjectInternalLinkType: 'function',
       listProjectBacklinksType: 'function',
       searchProjectType: 'function',
+      getTwineCredentialStatusType: 'function',
+      saveTwineApiKeyType: 'function',
+      removeTwineApiKeyType: 'function',
+      copyTwineContentType: 'function',
+      exportTwineMarkdownType: 'function',
+      listTwineConversationsType: 'function',
+      queryTwineConversationsType: 'function',
+      loadTwineConversationType: 'function',
+      saveTwineConversationType: 'function',
+      createTwineConversationType: 'function',
+      updateTwineConversationType: 'function',
+      deleteTwineConversationType: 'function',
+      startTwineGenerationType: 'function',
+      cancelTwineGenerationType: 'function',
+      onTwineGenerationEventType: 'function',
       bufferType: 'undefined',
       electronType: 'undefined',
       ipcRendererType: 'undefined',

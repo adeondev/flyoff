@@ -1,4 +1,4 @@
-export type MenuItemTone = 'default' | 'danger';
+export type MenuItemTone = 'default' | 'danger' | 'warning';
 
 export interface MenuActionItem {
   kind: 'action';
@@ -9,6 +9,7 @@ export interface MenuActionItem {
   disabled?: boolean;
   checked?: boolean;
   icon?: string;
+  imageIcon?: string;
   tone?: MenuItemTone;
 }
 
@@ -30,6 +31,7 @@ export interface MenuSubmenuItem {
   children: readonly MenuItem[];
   disabled?: boolean;
   icon?: string;
+  imageIcon?: string;
 }
 
 export type MenuItem =

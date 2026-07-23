@@ -35,6 +35,39 @@ describe('renderer tab state', () => {
     expect(hasNonHomeTabs(reopened)).toBe(true);
   });
 
+  it('opens Twine once and restores its registered page state', () => {
+    const initial = createInitialTabState();
+    const opened = tabReducer(initial, {
+      type: 'open-page',
+      pageId: INTERNAL_PAGE_IDS.twine,
+    });
+    const selectedHome = tabReducer(opened, {
+      type: 'select-tab',
+      tabId: 'page:home',
+    });
+    const reopened = tabReducer(selectedHome, {
+      type: 'open-page',
+      pageId: INTERNAL_PAGE_IDS.twine,
+    });
+    const restored = normalizeRendererTabSession(reopened);
+
+    expect(restored.tabs.map(({ tabId }) => tabId)).toEqual([
+      'page:home',
+      'page:twine',
+    ]);
+    expect(restored.activeTabId).toBe('page:twine');
+    expect(restored.tabs[1]?.pageState).toEqual({
+      version: 3,
+      data: {
+        activeConversationId: null,
+        modelId: 'google/gemma-4-26B-A4B-it',
+        approvalMode: 'request',
+        researchEnabled: false,
+        thinkingLevel: 'low',
+      },
+    });
+  });
+
   it('opens project targets once by their stable identity', () => {
     const initial = createInitialTabState();
     const overview = tabReducer(initial, {

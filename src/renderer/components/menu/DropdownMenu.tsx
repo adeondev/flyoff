@@ -10,7 +10,7 @@ import {
 import { MenuTree } from './MenuTree';
 import type { MenuPlacement } from './menu-position';
 import type { MenuItem } from './menu-types';
-import { suppressFlyoffTooltip } from '../tooltip';
+import { dismissFlyoffTooltip, suppressFlyoffTooltip } from '../tooltip';
 
 export interface DropdownMenuTriggerProps {
   'aria-controls': string;
@@ -23,6 +23,7 @@ export interface DropdownMenuTriggerProps {
 }
 
 export interface DropdownMenuProps {
+  menuClassName?: string;
   items: readonly MenuItem[];
   onAction: (id: string) => void;
   placement?: MenuPlacement;
@@ -30,6 +31,7 @@ export interface DropdownMenuProps {
 }
 
 export function DropdownMenu({
+  menuClassName,
   items,
   onAction,
   placement = 'bottom-start',
@@ -59,6 +61,7 @@ export function DropdownMenu({
 
   function openFromKeyboard(focus: 'first' | 'last'): void {
     if (anchor) {
+      suppressFlyoffTooltip(anchor);
       setInitialFocus(focus);
       setOpen(true);
     }
@@ -73,6 +76,7 @@ export function DropdownMenu({
         'aria-expanded': open,
         'aria-haspopup': 'menu',
         onClick: () => {
+          dismissFlyoffTooltip();
           setInitialFocus('first');
           setOpen((current) => !current);
         },
@@ -93,6 +97,7 @@ export function DropdownMenu({
           id={menuId}
           initialFocus={initialFocus}
           items={items}
+          className={menuClassName}
           onAction={onAction}
           onClose={close}
           placement={placement}

@@ -21,6 +21,19 @@ import type {
   WindowState,
 } from './window-controls';
 import type {
+  TwineCredentialStatus,
+  TwineContentActionResult,
+  TwineCopyContentRequest,
+  TwineConversationSnapshot,
+  TwineConversationMutationRequest,
+  TwineConversationQuery,
+  TwineConversationQueryResult,
+  TwineConversationStoreSnapshot,
+  TwineExportMarkdownRequest,
+  TwineGenerationEvent,
+  TwineGenerationRequest,
+} from './twine';
+import type {
   CreateProjectNodeRequest,
   ChangeProjectPagePasswordRequest,
   CreateProjectRequest,
@@ -132,6 +145,33 @@ export interface FlyoffApi {
   openExternalLink(
     request: OpenExternalLinkRequest,
   ): Promise<OpenExternalLinkResult>;
+  getTwineCredentialStatus(): Promise<TwineCredentialStatus>;
+  saveTwineApiKey(apiKey: string): Promise<TwineCredentialStatus>;
+  removeTwineApiKey(): Promise<TwineCredentialStatus>;
+  copyTwineContent(
+    request: TwineCopyContentRequest,
+  ): Promise<TwineContentActionResult>;
+  exportTwineMarkdown(
+    request: TwineExportMarkdownRequest,
+  ): Promise<TwineContentActionResult>;
+  listTwineConversations(): Promise<TwineConversationStoreSnapshot>;
+  queryTwineConversations(
+    query: TwineConversationQuery,
+  ): Promise<TwineConversationQueryResult>;
+  loadTwineConversation(id: string): Promise<TwineConversationSnapshot | null>;
+  saveTwineConversation(
+    conversation: TwineConversationSnapshot,
+  ): Promise<TwineConversationStoreSnapshot>;
+  createTwineConversation(): Promise<TwineConversationSnapshot>;
+  updateTwineConversation(
+    request: TwineConversationMutationRequest,
+  ): Promise<TwineConversationStoreSnapshot>;
+  deleteTwineConversation(id: string): Promise<TwineConversationStoreSnapshot>;
+  startTwineGeneration(request: TwineGenerationRequest): Promise<void>;
+  cancelTwineGeneration(requestId: string): Promise<void>;
+  onTwineGenerationEvent(
+    listener: (event: TwineGenerationEvent) => void,
+  ): () => void;
   onRendererMenuCommand(
     listener: (command: RendererMenuCommand) => void,
   ): () => void;

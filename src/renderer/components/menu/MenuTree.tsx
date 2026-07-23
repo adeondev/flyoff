@@ -26,6 +26,7 @@ interface MenuTreeProps {
   anchor: HTMLElement;
   ariaLabel?: string;
   ariaLabelledBy?: string;
+  className?: string;
   id: string;
   initialFocus: InitialFocus;
   items: readonly MenuItem[];
@@ -145,6 +146,7 @@ function MenuSurface({
   anchor,
   ariaLabel,
   ariaLabelledBy,
+  className,
   id,
   initialFocus,
   items,
@@ -158,6 +160,9 @@ function MenuSurface({
   const interactiveItems = useMemo(
     () => items.filter(isInteractive),
     [items],
+  );
+  const usesModalLayer = Boolean(
+    anchor.closest('[role="dialog"], .flyoff-menu--modal'),
   );
   const [activeId, setActiveId] = useState<string | undefined>(
     interactiveItems[0] ? itemId(interactiveItems[0]) : undefined,
@@ -359,6 +364,7 @@ function MenuSurface({
         return;
       case 'Escape':
         event.preventDefault();
+        event.stopPropagation();
         if (onCloseSubmenu) {
           onCloseSubmenu(true);
         } else {
@@ -377,7 +383,9 @@ function MenuSurface({
     <div
       aria-label={ariaLabel}
       aria-labelledby={ariaLabelledBy}
-      className="flyoff-menu"
+      className={`flyoff-menu${usesModalLayer ? ' flyoff-menu--modal' : ''}${
+        className ? ` ${className}` : ''
+      }`}
       data-positioned={positioned}
       id={id}
       ref={(element) => {
@@ -428,7 +436,9 @@ function MenuSurface({
             className={`flyoff-menu__item${
               item.kind === 'action' && item.tone === 'danger'
                 ? ' flyoff-menu__item--danger'
-                : ''
+                : item.kind === 'action' && item.tone === 'warning'
+                  ? ' flyoff-menu__item--warning'
+                  : ''
             }${disabled ? ' flyoff-menu__item--disabled' : ''}`}
             id={`${id}-item-${item.id}`}
             key={item.id}
@@ -457,22 +467,35 @@ function MenuSurface({
             tabIndex={activeId === item.id ? 0 : -1}
             type="button"
           >
-            <span aria-hidden="true" className="flyoff-menu__check">
-              {!(item.kind === 'action' && item.checked) && item.icon ? (
+            <span aria-hidden="true" className="flyoff-menu__leading-icon">
+              {item.icon ? (
                 <MaskedIcon
                   className="flyoff-menu__item-icon"
                   icon={item.icon}
                 />
               ) : null}
             </span>
-            <TwemojiText
-              className="flyoff-menu__item-label"
-              text={item.label}
-            />
+            <span className="flyoff-menu__item-label">
+              {item.imageIcon ? (
+                <img
+                  alt=""
+                  aria-hidden="true"
+                  className="flyoff-menu__item-image-icon"
+                  src={item.imageIcon}
+                />
+              ) : null}
+              <TwemojiText
+                className="flyoff-menu__item-label-text"
+                text={item.label}
+              />
+            </span>
             {item.kind === 'action' && item.shortcut ? (
               <span aria-hidden="true" className="flyoff-menu__shortcut">
                 {item.shortcut}
               </span>
+            ) : null}
+            {item.kind === 'action' && item.checked ? (
+              <span aria-hidden="true" className="flyoff-menu__check" />
             ) : null}
             {hasSubmenu ? (
               <span
@@ -507,6 +530,7 @@ export function MenuTree({
   anchor,
   ariaLabel,
   ariaLabelledBy,
+  className,
   id,
   initialFocus,
   items,
@@ -563,6 +587,7 @@ export function MenuTree({
       anchor={anchor}
       ariaLabel={ariaLabel}
       ariaLabelledBy={ariaLabelledBy}
+      className={className}
       id={id}
       initialFocus={initialFocus}
       items={items}

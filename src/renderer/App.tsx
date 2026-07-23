@@ -2906,6 +2906,12 @@ export function App() {
               {...(props as InternalPageProps)}
               onNewProject={openCreateProjectDialog}
               onOpenProject={() => void openProject()}
+              onOpenTwine={() =>
+                void dispatchGuardedTabAction({
+                  type: 'open-page',
+                  pageId: INTERNAL_PAGE_IDS.twine,
+                })
+              }
             />
           );
         }
@@ -2978,6 +2984,7 @@ export function App() {
       );
     },
     [
+      dispatchGuardedTabAction,
       graphRefreshSignal,
       loadProjectGraph,
       notifyProjectError,

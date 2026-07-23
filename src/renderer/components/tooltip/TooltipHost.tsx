@@ -78,6 +78,10 @@ export function suppressFlyoffTooltip(target: HTMLElement): void {
   );
 }
 
+export function dismissFlyoffTooltip(): void {
+  document.dispatchEvent(new CustomEvent(SUPPRESS_EVENT));
+}
+
 export function TooltipHost() {
   const tooltipId = `flyoff-tooltip-${useId()}`;
   const tooltipRef = useRef<HTMLDivElement>(null);
@@ -145,9 +149,15 @@ export function TooltipHost() {
   ): void => {
     clearOpenTimer();
     clearCloseTimer();
-    if (suppress) {
-      suppressedTargetRef.current = { target: suppress, untilInactive };
+    const suppressionTarget =
+      suppress === undefined ? visibleTargetRef.current : suppress;
+    if (suppressionTarget) {
+      suppressedTargetRef.current = {
+        target: suppressionTarget,
+        untilInactive,
+      };
     }
+    tooltipRef.current?.setAttribute('hidden', '');
     visibleTargetRef.current = null;
     tooltipHoveredRef.current = false;
     restoreDescription();
@@ -362,6 +372,10 @@ export function TooltipHost() {
       const suppress = anchor ?? visibleTargetRef.current;
       hide(suppress);
     };
+    const handleClick = (event: MouseEvent): void => {
+      const anchor = tooltipTarget(event.target);
+      hide(anchor ?? visibleTargetRef.current);
+    };
     const handleKeyDown = (event: KeyboardEvent): void => {
       if (
         event.key === 'Escape' &&
@@ -374,6 +388,9 @@ export function TooltipHost() {
             pointerTargetRef.current,
           false,
         );
+      } else if (event.key === 'Enter' || event.key === ' ') {
+        const anchor = tooltipTarget(event.target);
+        hide(anchor ?? visibleTargetRef.current);
       }
     };
     const handleVisibilityChange = (): void => {
@@ -382,7 +399,7 @@ export function TooltipHost() {
       }
     };
     const handleSuppress = (event: Event): void => {
-      const target = (event as CustomEvent<HTMLElement>).detail;
+      const target = (event as CustomEvent<HTMLElement | undefined>).detail;
       hide(target);
     };
     const closeTooltip = (): void => hide();
@@ -390,6 +407,7 @@ export function TooltipHost() {
     document.addEventListener('pointerover', handlePointerOver);
     document.addEventListener('pointerout', handlePointerOut);
     document.addEventListener('pointerdown', handlePointerDown, true);
+    document.addEventListener('click', handleClick, true);
     document.addEventListener('focusin', handleFocusIn);
     document.addEventListener('focusout', handleFocusOut);
     document.addEventListener('keydown', handleKeyDown);
@@ -406,6 +424,7 @@ export function TooltipHost() {
       document.removeEventListener('pointerover', handlePointerOver);
       document.removeEventListener('pointerout', handlePointerOut);
       document.removeEventListener('pointerdown', handlePointerDown, true);
+      document.removeEventListener('click', handleClick, true);
       document.removeEventListener('focusin', handleFocusIn);
       document.removeEventListener('focusout', handleFocusOut);
       document.removeEventListener('keydown', handleKeyDown);

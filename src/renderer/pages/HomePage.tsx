@@ -3,17 +3,20 @@ import projectIcon from '../../../public/images/icons/instances/project.svg';
 import tableIcon from '../../../public/images/icons/instances/table.svg';
 import flyoffLogo from '../../../public/images/flyoff/flyoff-logo.svg';
 import flyoffWordmark from '../../../public/images/flyoff/text_black_mode.svg';
+import twineIcon from '../../../public/images/twine/icon.svg';
 import { MaskedIcon } from '../components/MaskedIcon';
 import type { InternalPageProps } from './page-types';
 
 export interface HomePageProps extends InternalPageProps {
   onNewProject?: () => void;
   onOpenProject?: () => void;
+  onOpenTwine?: () => void;
 }
 
 export function HomePage({
   onNewProject,
   onOpenProject,
+  onOpenTwine,
   translate,
 }: HomePageProps) {
   return (
@@ -54,6 +57,24 @@ export function HomePage({
           <button aria-disabled="true" disabled type="button">
             <MaskedIcon icon={tableIcon} />
             {translate('home.templates')}
+          </button>
+          <button
+            aria-label={`${translate('pages.twine')}, ${translate('twine.beta')}`}
+            aria-disabled={!onOpenTwine}
+            disabled={!onOpenTwine}
+            onClick={onOpenTwine}
+            type="button"
+          >
+            <img
+              aria-hidden="true"
+              className="home__action-image"
+              src={twineIcon}
+              alt=""
+            />
+            <span>{translate('pages.twine')}</span>
+            <span className="beta-badge">
+              {translate('twine.beta')}
+            </span>
           </button>
         </div>
         <div className="home__drop-zone" aria-disabled="true">
