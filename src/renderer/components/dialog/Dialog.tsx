@@ -78,6 +78,35 @@ export function Dialog({
     };
   }, [restoreFocus]);
 
+  useEffect(() => {
+    const closeForExternalEscape = (event: globalThis.KeyboardEvent): void => {
+      const dialogElement = dialogRef.current;
+      const target = event.target;
+      if (
+        event.key !== 'Escape' ||
+        event.defaultPrevented ||
+        busy ||
+        !dialogElement ||
+        (target instanceof Node && dialogElement.contains(target)) ||
+        document.querySelector('.flyoff-menu--modal')
+      ) {
+        return;
+      }
+
+      const dialogs = document.querySelectorAll<HTMLElement>('.flyoff-dialog');
+      if (dialogs.item(dialogs.length - 1) !== dialogElement) {
+        return;
+      }
+
+      event.preventDefault();
+      onCancel('escape');
+    };
+
+    document.addEventListener('keydown', closeForExternalEscape);
+    return () =>
+      document.removeEventListener('keydown', closeForExternalEscape);
+  }, [busy, onCancel]);
+
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
     if (event.key === 'Escape') {
       if (
