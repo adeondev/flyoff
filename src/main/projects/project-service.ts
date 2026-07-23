@@ -25,6 +25,7 @@ import {
   type ProjectLinkTarget,
   type ProjectPathRequest,
   type ProjectPageProperties,
+  type ProjectPageNode,
   type ProjectResult,
   type ProjectSearchOutcome,
   type ProjectSearchRequest,
@@ -46,6 +47,18 @@ import type {
   ProjectNoteActivityEntry,
   ProjectNoteActivityEvent,
 } from '../../shared/contracts/project-note-activity';
+import type {
+  CommitDiagramImportOutcome,
+  CreateDiagramDocumentRequest,
+  DiagramDocumentEnvelope,
+  ReadDiagramDocumentRequest,
+  SaveDiagramDocumentRequest,
+} from '../../shared/contracts/diagrams';
+import {
+  createDiagramDocument,
+  type DiagramDiagnostic,
+  type DiagramDocument,
+} from '../../shared/diagram';
 import { ProjectOperationError, normalizeProjectError, projectErrorResult } from './errors';
 import type { ProjectCatalogStore } from './project-catalog-store';
 import {
@@ -304,6 +317,81 @@ export class ProjectService {
           ));
       this.invalidateProjectReferenceIndexes(repository.summary.projectId);
       return node;
+    });
+  }
+
+  createDiagram(
+    senderKey: ProjectSenderKey,
+    request: CreateDiagramDocumentRequest,
+  ): Promise<ProjectResult<ProjectTreeNode>> {
+    return this.withActiveProject(senderKey, async (repository) => {
+      const node = await repository.createDiagramPage(
+        request.parentId,
+        request.name,
+        createDiagramDocument(request.diagramType, this.createId),
+      );
+      this.invalidateProjectReferenceIndexes(repository.summary.projectId);
+      return node;
+    });
+  }
+
+  readDiagram(
+    senderKey: ProjectSenderKey,
+    request: ReadDiagramDocumentRequest,
+  ): Promise<ProjectResult<DiagramDocumentEnvelope>> {
+    return this.withActiveProject(senderKey, (repository) =>
+      repository.readDiagram(request.nodeId),
+    );
+  }
+
+  saveDiagram(
+    senderKey: ProjectSenderKey,
+    request: SaveDiagramDocumentRequest,
+  ): Promise<ProjectResult<DiagramDocumentEnvelope>> {
+    return this.withActiveProject(senderKey, (repository) =>
+      repository.saveDiagram(request),
+    );
+  }
+
+  importDiagrams(
+    senderKey: ProjectSenderKey,
+    parentId: string | null,
+    diagrams: readonly {
+      name: string;
+      document: DiagramDocument;
+      diagnostics: readonly DiagramDiagnostic[];
+    }[],
+  ): Promise<ProjectResult<CommitDiagramImportOutcome>> {
+    return this.withActiveProject(senderKey, async (repository) => {
+      const nodes: ProjectTreeNode[] = [];
+      const diagnostics = diagrams.flatMap((diagram) => diagram.diagnostics);
+      for (const diagram of diagrams) {
+        let node: ProjectTreeNode | undefined;
+        for (let suffix = 1; suffix <= 1_000 && !node; suffix += 1) {
+          const name = suffix === 1 ? diagram.name : `${diagram.name} (${suffix})`;
+          try {
+            node = await repository.createDiagramPage(
+              parentId,
+              name.slice(0, 100),
+              diagram.document,
+            );
+          } catch (error) {
+            const normalized = normalizeProjectError(error);
+            if (normalized.code !== 'collision') {
+              throw error;
+            }
+          }
+        }
+        if (!node || node.kind !== 'page') {
+          throw new ProjectOperationError(
+            'collision',
+            'Flyoff could not find an available name for an imported diagram.',
+          );
+        }
+        nodes.push(node);
+      }
+      this.invalidateProjectReferenceIndexes(repository.summary.projectId);
+      return { nodes: nodes as ProjectPageNode[], diagnostics };
     });
   }
 

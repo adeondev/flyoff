@@ -76,7 +76,10 @@ export function useProjectPageProperties({
 
   const acceptProperties = useCallback(
     (properties: ProjectPageProperties): void => {
-      const snapshot = controller.getSnapshot(properties.nodeId);
+      const snapshot =
+        properties.pageType === 'markdown'
+          ? controller.getSnapshot(properties.nodeId)
+          : undefined;
       if (snapshot) {
         if (snapshot.dirty || snapshot.status === 'saving') {
           controller.applyReadOnlyPolicy(
@@ -143,9 +146,6 @@ export function useProjectPageProperties({
 
   const open = useCallback(
     (node: ProjectPageNode): void => {
-      if (node.pageType !== 'markdown') {
-        return;
-      }
       setTargetNodeId(node.nodeId);
       void load(node.nodeId);
     },
@@ -192,10 +192,12 @@ export function useProjectPageProperties({
 
   const applyProperties = useCallback(
     (properties: ProjectPageProperties): void => {
-      controller.adoptProperties(properties.nodeId, {
-        readOnly: properties.readOnly,
-        revision: properties.revision,
-      });
+      if (properties.pageType === 'markdown') {
+        controller.adoptProperties(properties.nodeId, {
+          readOnly: properties.readOnly,
+          revision: properties.revision,
+        });
+      }
       acceptProperties(properties);
     },
     [acceptProperties, controller],
@@ -462,8 +464,8 @@ export function useProjectPageProperties({
 
   const nodeCandidate = targetNodeId ? nodes.get(targetNodeId) : undefined;
   const node =
-    nodeCandidate?.kind === 'page' && nodeCandidate.pageType === 'markdown'
-      ? (nodeCandidate as ProjectPageNode & { pageType: 'markdown' })
+    nodeCandidate?.kind === 'page'
+      ? nodeCandidate
       : undefined;
   const logicalPath = node
     ? projectNodeLogicalPath(nodes, node.nodeId) ??

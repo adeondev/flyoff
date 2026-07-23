@@ -110,9 +110,8 @@ export interface MarkdownDocument {
   readOnly: boolean;
 }
 
-export interface ProjectPageProperties {
+interface ProjectPagePropertiesBase {
   nodeId: string;
-  pageType: 'markdown';
   contentSizeBytes: number;
   diskSizeBytes: number;
   createdAt: string | null;
@@ -122,6 +121,21 @@ export interface ProjectPageProperties {
   passwordProtected: boolean;
   locked: boolean;
 }
+
+export interface MarkdownProjectPageProperties extends ProjectPagePropertiesBase {
+  pageType: 'markdown';
+}
+
+export interface DiagramProjectPageProperties extends ProjectPagePropertiesBase {
+  pageType: 'diagram';
+  diagramType: 'class' | 'use-case' | 'sequence' | 'activity';
+  elementCount: number;
+  relationshipCount: number;
+}
+
+export type ProjectPageProperties =
+  | MarkdownProjectPageProperties
+  | DiagramProjectPageProperties;
 
 export interface ProjectLocationSelection {
   token: string;
@@ -429,6 +443,7 @@ export function isProjectIdentifier(value: unknown): value is string {
 
 const builtInProjectInstanceTypes = new Set([
   'markdown',
+  'diagram',
   'checklist',
   'kanban',
   'gallery',
@@ -563,9 +578,10 @@ export function isMarkdownDocument(
 export function isProjectPageProperties(
   value: unknown,
 ): value is ProjectPageProperties {
-  if (
-    !isRecord(value) ||
-    !hasExactKeys(value, [
+  if (!isRecord(value)) {
+    return false;
+  }
+  const commonKeys = [
       'nodeId',
       'pageType',
       'contentSizeBytes',
@@ -576,18 +592,24 @@ export function isProjectPageProperties(
       'readOnly',
       'passwordProtected',
       'locked',
-    ])
-  ) {
+    ];
+  const keys =
+    value.pageType === 'diagram'
+      ? [...commonKeys, 'diagramType', 'elementCount', 'relationshipCount']
+      : commonKeys;
+  if (!hasExactKeys(value, keys)) {
     return false;
   }
 
-  return (
+  const commonValid =
     isProjectIdentifier(value.nodeId) &&
-    value.pageType === 'markdown' &&
     typeof value.contentSizeBytes === 'number' &&
     Number.isSafeInteger(value.contentSizeBytes) &&
     value.contentSizeBytes >= 0 &&
-    value.contentSizeBytes <= MARKDOWN_DOCUMENT_MAX_BYTES &&
+    value.contentSizeBytes <=
+      (value.pageType === 'diagram'
+        ? 16 * 1024 * 1024
+        : MARKDOWN_DOCUMENT_MAX_BYTES) &&
     typeof value.diskSizeBytes === 'number' &&
     Number.isSafeInteger(value.diskSizeBytes) &&
     value.diskSizeBytes >= value.contentSizeBytes &&
@@ -597,8 +619,25 @@ export function isProjectPageProperties(
     typeof value.readOnly === 'boolean' &&
     typeof value.passwordProtected === 'boolean' &&
     typeof value.locked === 'boolean' &&
-    (!value.locked || value.passwordProtected)
-  );
+    (!value.locked || value.passwordProtected);
+  if (!commonValid) {
+    return false;
+  }
+  return value.pageType === 'markdown' ||
+    (value.pageType === 'diagram' &&
+      (value.diagramType === 'class' ||
+        value.diagramType === 'use-case' ||
+        value.diagramType === 'sequence' ||
+        value.diagramType === 'activity') &&
+      Number.isSafeInteger(value.elementCount) &&
+      Number(value.elementCount) >= 0 &&
+      Number(value.elementCount) <= 10_000 &&
+      Number.isSafeInteger(value.relationshipCount) &&
+      Number(value.relationshipCount) >= 0 &&
+      Number(value.relationshipCount) <= 20_000 &&
+      value.readOnly === false &&
+      value.passwordProtected === false &&
+      value.locked === false);
 }
 
 export function isProjectLocationSelection(

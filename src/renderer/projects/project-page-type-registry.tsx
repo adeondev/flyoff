@@ -4,6 +4,7 @@ import checklistIcon from '../../../public/images/icons/instances/checklist.svg'
 import galleryIcon from '../../../public/images/icons/instances/image-solid.svg';
 import markdownPageIcon from '../../../public/images/icons/instances/note-solid.svg';
 import kanbanIcon from '../../../public/images/icons/instances/table.svg';
+import diagramIcon from '../../../public/images/icons/instances/diagram.svg';
 import type {
   MarkdownDocument,
   ListProjectBacklinksRequest,
@@ -15,6 +16,12 @@ import type {
   ProjectLinkTarget,
   ProjectPageNode,
   ProjectResult,
+  DiagramDocumentEnvelope,
+  CommitDiagramImportOutcome,
+  CommitDiagramImportRequest,
+  ExportDiagramOutcome,
+  ExportDiagramRequest,
+  SelectDiagramImportOutcome,
 } from '../../shared/contracts';
 import { isProjectInstanceTypeId } from '../../shared/contracts';
 import type { TranslationKey } from '../../shared/i18n/catalogs';
@@ -29,6 +36,8 @@ import type { MarkdownDocumentController } from './markdown-document-controller'
 import { MarkdownEditor } from './MarkdownEditor';
 import { MarkdownLockedView } from './MarkdownLockedView';
 import { projectNodeDisplayName } from './project-node-name';
+import { DiagramPage } from './diagram/DiagramPage';
+import type { DiagramController } from './diagram/diagram-controller';
 
 export interface MarkdownPageRuntime {
   controller: MarkdownDocumentController;
@@ -72,6 +81,20 @@ export interface MarkdownLinkRuntime {
 
 export interface ProjectPageRuntime {
   markdown: MarkdownPageRuntime;
+  diagram: {
+    controller: DiagramController;
+    readDocument: (
+      nodeId: string,
+    ) => Promise<ProjectResult<DiagramDocumentEnvelope>>;
+    selectImport: () => Promise<ProjectResult<SelectDiagramImportOutcome>>;
+    commitImport: (
+      request: CommitDiagramImportRequest,
+    ) => Promise<ProjectResult<CommitDiagramImportOutcome>>;
+    exportDocument: (
+      request: ExportDiagramRequest,
+    ) => Promise<ProjectResult<ExportDiagramOutcome>>;
+    onImported: (nodes: readonly ProjectPageNode[]) => void;
+  };
   onError?: (message: string) => void;
 }
 
@@ -266,6 +289,14 @@ export const PROJECT_PAGE_TYPE_DEFINITIONS = {
     descriptionKey: 'projects.instanceNoteDescription',
     availability: 'available',
     Page: MarkdownProjectPage,
+  },
+  diagram: {
+    pageType: 'diagram',
+    icon: diagramIcon,
+    titleKey: 'projects.instanceDiagram',
+    descriptionKey: 'projects.instanceDiagramDescription',
+    availability: 'available',
+    Page: DiagramPage,
   },
   checklist: {
     pageType: 'checklist',

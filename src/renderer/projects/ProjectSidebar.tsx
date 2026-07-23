@@ -21,6 +21,7 @@ import folderIcon from '../../../public/images/icons/instances/folder-solid.svg'
 import noteIcon from '../../../public/images/icons/instances/note-solid.svg';
 import type {
   CreateProjectNodeRequest,
+  CreateDiagramDocumentRequest,
   FlyoffPlatform,
   ListProjectChildrenRequest,
   MoveProjectNodeRequest,
@@ -39,6 +40,7 @@ import type {
   TrashProjectNodesRequest,
   TrashProjectNodeOutcome,
 } from '../../shared/contracts';
+import type { DiagramType } from '../../shared/diagram';
 import { MaskedIcon } from '../components/MaskedIcon';
 import { TwemojiText } from '../components/twemoji';
 import { ContextMenu, type MenuItem } from '../components/menu';
@@ -63,6 +65,7 @@ import {
 } from './project-tree-controller';
 import { TrashProjectNodeDialog } from './TrashProjectNodeDialog';
 import { TrashProjectNodesDialog } from './TrashProjectNodesDialog';
+import { DiagramTypeDialog } from './diagram/DiagramTypeDialog';
 
 function createTreeController(
   projectId: string,
@@ -106,6 +109,9 @@ export interface ProjectSidebarProps {
   ) => Promise<ProjectResult<ProjectSearchOutcome>>;
   onCreateNode: (
     request: CreateProjectNodeRequest,
+  ) => Promise<ProjectResult<ProjectTreeNode>>;
+  onCreateDiagram: (
+    request: CreateDiagramDocumentRequest,
   ) => Promise<ProjectResult<ProjectTreeNode>>;
   onRenameNode: (
     request: RenameProjectNodeRequest,
@@ -176,6 +182,7 @@ export const ProjectSidebar = forwardRef<
   onCopyPaths,
   onCreateRequestHandled,
   onCreateNode,
+  onCreateDiagram,
   onError,
   onMoveNode,
   onMoveNodes,
@@ -227,6 +234,9 @@ export const ProjectSidebar = forwardRef<
     parentId: string | null;
     position: { x: number; y: number };
     restoreFocus?: HTMLElement | null;
+  }>();
+  const [diagramTypePicker, setDiagramTypePicker] = useState<{
+    parentId: string | null;
   }>();
   const [branchMenu, setBranchMenu] = useState<{
     parentId: string | null;
@@ -337,11 +347,12 @@ export const ProjectSidebar = forwardRef<
       parentId: string | null,
       kind: ProjectTreeNode['kind'],
       pageType?: string,
+      diagramType?: DiagramType,
     ): Promise<void> => {
       if (parentId) {
         await controller.setExpanded(parentId, true);
       }
-      setEdit({ mode: 'create', parentId, kind, pageType });
+      setEdit({ mode: 'create', parentId, kind, pageType, diagramType });
     },
     [controller],
   );
@@ -385,16 +396,25 @@ export const ProjectSidebar = forwardRef<
     setPending(true);
     try {
       if (edit.mode === 'create') {
-        const result = await onCreateNode(
-          edit.kind === 'folder'
-            ? { kind: 'folder', name: requestName, parentId: edit.parentId }
-            : {
-                kind: 'page',
+        const result =
+          edit.kind === 'page' &&
+          edit.pageType === 'diagram' &&
+          edit.diagramType
+            ? await onCreateDiagram({
                 name: requestName,
-                pageType: edit.pageType ?? 'markdown',
                 parentId: edit.parentId,
-              },
-        );
+                diagramType: edit.diagramType,
+              })
+            : await onCreateNode(
+                edit.kind === 'folder'
+                  ? { kind: 'folder', name: requestName, parentId: edit.parentId }
+                  : {
+                      kind: 'page',
+                      name: requestName,
+                      pageType: edit.pageType ?? 'markdown',
+                      parentId: edit.parentId,
+                    },
+              );
         if (!result.ok) {
           reportError(result.error.message);
           return;
@@ -574,6 +594,10 @@ export const ProjectSidebar = forwardRef<
   function chooseInstance(choice: AddInstanceChoice): void {
     const target = instancePicker;
     if (!target) {
+      return;
+    }
+    if (choice.kind === 'page' && choice.pageType === 'diagram') {
+      setDiagramTypePicker({ parentId: target.parentId });
       return;
     }
     void startCreate(target.parentId, choice.kind, choice.pageType);
@@ -920,6 +944,17 @@ export const ProjectSidebar = forwardRef<
           parentId={instancePicker.parentId}
           position={instancePicker.position}
           restoreFocus={instancePicker.restoreFocus}
+          translate={translate}
+        />
+      ) : null}
+      {diagramTypePicker ? (
+        <DiagramTypeDialog
+          onCancel={() => setDiagramTypePicker(undefined)}
+          onSelect={(diagramType) => {
+            const parentId = diagramTypePicker.parentId;
+            setDiagramTypePicker(undefined);
+            void startCreate(parentId, 'page', 'diagram', diagramType);
+          }}
           translate={translate}
         />
       ) : null}

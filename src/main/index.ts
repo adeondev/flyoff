@@ -11,6 +11,7 @@ import {
 
 import {
   isFlyoffPlatform,
+  DIAGRAM_IPC_CHANNELS,
   RENDERER_MENU_COMMAND_CHANNEL,
   type BootstrapState,
   type FlyoffPlatform,
@@ -24,12 +25,15 @@ import {
   registerMenuCommandHandler,
   applySpellcheckPreferences,
   registerPreferencesHandlers,
+  registerDiagramHandlers,
   registerProjectNoteActivityHandlers,
   registerProjectHandlers,
   registerTabSessionHandlers,
   registerUiStateHandlers,
   registerWindowControlHandlers,
   type SelectProjectDirectory,
+  type SelectDiagramExportFile,
+  type SelectDiagramImportFile,
 } from './ipc';
 import { CloseCoordinator } from './lifecycle';
 import { createApplicationMenuTemplate } from './menu';
@@ -65,6 +69,40 @@ import {
   UiStateStore,
   WindowStateStore,
 } from './window';
+import { handleSquirrelFileAssociationEvent } from './file-associations';
+import { queuePendingDiagramOpen } from './diagrams/pending-diagram-open';
+
+const handledSquirrelEvent = handleSquirrelFileAssociationEvent();
+const hasSingleInstanceLock =
+  handledSquirrelEvent || app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) {
+  app.quit();
+}
+for (const argument of process.argv.slice(1)) {
+  queuePendingDiagramOpen(argument);
+}
+
+app.on('open-file', (event, filePath) => {
+  if (queuePendingDiagramOpen(filePath)) {
+    event.preventDefault();
+    notifyPendingDiagramOpen();
+  }
+});
+
+app.on('second-instance', (_event, commandLine) => {
+  for (const argument of commandLine.slice(1)) {
+    queuePendingDiagramOpen(argument);
+  }
+  notifyPendingDiagramOpen();
+  const window = mainWindow;
+  if (window && !window.isDestroyed()) {
+    if (window.isMinimized()) {
+      window.restore();
+    }
+    window.show();
+    window.focus();
+  }
+});
 
 hardenCommandLine(app.commandLine, app.isPackaged);
 registerFlyoffScheme();
@@ -110,10 +148,49 @@ let bootstrapState: BootstrapState | undefined;
 let closeCoordinator: CloseCoordinator | undefined;
 let coreClient: NativeCoreClient | undefined;
 let mainWindow: BrowserWindow | undefined;
+
+function notifyPendingDiagramOpen(): void {
+  const window = mainWindow;
+  if (
+    window &&
+    !window.isDestroyed() &&
+    !window.webContents.isDestroyed()
+  ) {
+    window.webContents.send(DIAGRAM_IPC_CHANNELS.pendingChanged);
+  }
+}
+
+function e2eAbsolutePath(variable: string): string | undefined {
+  const value = process.env[variable];
+  if (!value) {
+    return undefined;
+  }
+  if (!path.isAbsolute(value)) {
+    throw new Error(`${variable} must be an absolute path.`);
+  }
+  return value;
+}
+
+function createE2eDiagramImportSelector(): SelectDiagramImportFile | undefined {
+  if (process.env.FLYOFF_E2E !== '1') {
+    return undefined;
+  }
+  const filePath = e2eAbsolutePath('FLYOFF_E2E_DIAGRAM_IMPORT');
+  return filePath ? async () => filePath : undefined;
+}
+
+function createE2eDiagramExportSelector(): SelectDiagramExportFile | undefined {
+  if (process.env.FLYOFF_E2E !== '1') {
+    return undefined;
+  }
+  const filePath = e2eAbsolutePath('FLYOFF_E2E_DIAGRAM_EXPORT');
+  return filePath ? async () => filePath : undefined;
+}
 let removeBootstrapHandler: (() => void) | undefined;
 let removeExternalLinkHandler: (() => void) | undefined;
 let removeMenuCommandHandler: (() => void) | undefined;
 let removePreferencesHandlers: (() => void) | undefined;
+let removeDiagramHandlers: (() => void) | undefined;
 let removeProjectNoteActivityHandlers: (() => void) | undefined;
 let removeProjectHandlers: (() => void) | undefined;
 let removeTabSessionHandlers: (() => void) | undefined;
@@ -157,6 +234,8 @@ function cleanupApplication(): void {
   removeMenuCommandHandler = undefined;
   removePreferencesHandlers?.();
   removePreferencesHandlers = undefined;
+  removeDiagramHandlers?.();
+  removeDiagramHandlers = undefined;
   removeProjectNoteActivityHandlers?.();
   removeProjectNoteActivityHandlers = undefined;
   removeProjectHandlers?.();
@@ -382,6 +461,14 @@ async function startApplication(): Promise<void> {
       ? { selectDirectory: projectDirectorySelector }
       : {}),
   });
+  const diagramImportSelector = createE2eDiagramImportSelector();
+  const diagramExportSelector = createE2eDiagramExportSelector();
+  removeDiagramHandlers = registerDiagramHandlers({
+    projectService,
+    isAllowedUrl,
+    ...(diagramImportSelector ? { selectImportFile: diagramImportSelector } : {}),
+    ...(diagramExportSelector ? { selectExportFile: diagramExportSelector } : {}),
+  });
   removeProjectNoteActivityHandlers = registerProjectNoteActivityHandlers(
     projectService,
     isAllowedUrl,
@@ -434,15 +521,17 @@ app.on('window-all-closed', () => {
   }
 });
 
-void app
-  .whenReady()
-  .then(startApplication)
-  .catch((error: unknown) => {
-    reportFatalError(
-      'errors.nativeCoreStartupTitle',
-      'errors.nativeCoreStartupMessage',
-      error,
-    );
-    cleanupApplication();
-    app.exit(1);
-  });
+if (!handledSquirrelEvent && hasSingleInstanceLock) {
+  void app
+    .whenReady()
+    .then(startApplication)
+    .catch((error: unknown) => {
+      reportFatalError(
+        'errors.nativeCoreStartupTitle',
+        'errors.nativeCoreStartupMessage',
+        error,
+      );
+      cleanupApplication();
+      app.exit(1);
+    });
+}

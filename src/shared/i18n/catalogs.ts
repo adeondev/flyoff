@@ -322,6 +322,8 @@ export interface TranslationCatalog {
     noInstances: string;
     instanceNote: string;
     instanceNoteDescription: string;
+    instanceDiagram: string;
+    instanceDiagramDescription: string;
     instanceChecklist: string;
     instanceBoard: string;
     instanceGallery: string;
@@ -476,6 +478,138 @@ export interface TranslationCatalog {
     overviewDescription: string;
     unavailable: string;
     projectUnavailable: string;
+  };
+  diagram: {
+    toolbarLabel: string;
+    viewOptions: string;
+    fileActions: string;
+    chooseType: string;
+    chooseTypeDescription: string;
+    typeClass: string;
+    typeUseCase: string;
+    typeSequence: string;
+    typeActivity: string;
+    select: string;
+    connect: string;
+    cancelConnection: string;
+    undo: string;
+    redo: string;
+    zoomIn: string;
+    zoomOut: string;
+    fitView: string;
+    toggleGrid: string;
+    toggleSnap: string;
+    inspector: string;
+    minimap: string;
+    noSelection: string;
+    name: string;
+    documentation: string;
+    stereotypes: string;
+    taggedValues: string;
+    attributes: string;
+    operations: string;
+    literals: string;
+    dimensions: string;
+    width: string;
+    height: string;
+    orientation: string;
+    addPartitionLeft: string;
+    addPartitionRight: string;
+    vertical: string;
+    horizontal: string;
+    visibility: string;
+    returnType: string;
+    abstract: string;
+    staticMember: string;
+    readOnly: string;
+    parameter: string;
+    addParameter: string;
+    direction: string;
+    defaultValue: string;
+    objectType: string;
+    wholeEnd: string;
+    source: string;
+    target: string;
+    relationLabel: string;
+    guard: string;
+    sourceMultiplicity: string;
+    targetMultiplicity: string;
+    diagnostics: string;
+    noDiagnostics: string;
+    severityError: string;
+    severityWarning: string;
+    severityInfo: string;
+    diagnosticElementIncompatible: string;
+    diagnosticActivationLifelineMissing: string;
+    diagnosticPartitionMissing: string;
+    diagnosticRelationshipEndpointMissing: string;
+    diagnosticRelationshipIncompatible: string;
+    diagnosticUseCaseEndpointInvalid: string;
+    diagnosticSequenceEndpointInvalid: string;
+    diagnosticSelfMessageInvalid: string;
+    diagnosticObjectFlowInvalid: string;
+    diagnosticWholeEndMissing: string;
+    diagnosticPresentationElementMissing: string;
+    diagnosticPresentationParentMissing: string;
+    diagnosticPresentationRelationshipMissing: string;
+    diagnosticPresentationEndpointMissing: string;
+    diagnosticSequenceOrderDuplicate: string;
+    saved: string;
+    saving: string;
+    unsaved: string;
+    conflict: string;
+    reload: string;
+    overwrite: string;
+    unavailable: string;
+    elementPackage: string;
+    elementClass: string;
+    elementInterface: string;
+    elementEnumeration: string;
+    elementActor: string;
+    elementUseCase: string;
+    elementSystemBoundary: string;
+    elementLifeline: string;
+    elementActivation: string;
+    elementPartition: string;
+    elementAction: string;
+    elementObjectNode: string;
+    elementInitialNode: string;
+    elementActivityFinal: string;
+    elementFlowFinal: string;
+    elementDecision: string;
+    elementMerge: string;
+    elementFork: string;
+    elementJoin: string;
+    relationship: string;
+    relationAssociation: string;
+    relationDirectedAssociation: string;
+    relationAggregation: string;
+    relationComposition: string;
+    relationGeneralization: string;
+    relationRealization: string;
+    relationDependency: string;
+    relationInclude: string;
+    relationExtend: string;
+    relationMessageSynchronous: string;
+    relationMessageAsynchronous: string;
+    relationMessageReturn: string;
+    relationSelfMessage: string;
+    relationControlFlow: string;
+    relationObjectFlow: string;
+    connectionSource: string;
+    importDiagram: string;
+    exportDiagram: string;
+    importTitle: string;
+    astahBridgeTitle: string;
+    astahBridgeExplanation: string;
+    astahBridgeAlternatives: string;
+    fidelity: string;
+    fidelityExact: string;
+    fidelityHigh: string;
+    fidelityPartial: string;
+    elements: string;
+    relationships: string;
+    importSelected: string;
   };
   pages: {
     bar: string;
@@ -917,6 +1051,8 @@ export const ptBR = {
     noInstances: 'Nenhuma instância encontrada.',
     instanceNote: 'Nota',
     instanceNoteDescription: 'Markdown',
+    instanceDiagram: 'Diagrama UML',
+    instanceDiagramDescription: 'Flyoff Diagram File (.flyd)',
     instanceChecklist: 'Checklist',
     instanceBoard: 'Quadro',
     instanceGallery: 'Galeria',
@@ -1082,6 +1218,140 @@ export const ptBR = {
     overviewDescription: 'Organize as pastas e notas desta toca pela barra lateral.',
     unavailable: 'Este conteúdo não está mais disponível.',
     projectUnavailable: 'A toca da sessão anterior não pôde ser aberta.',
+  },
+  diagram: {
+    toolbarLabel: 'Ferramentas do diagrama',
+    viewOptions: 'Opções de visualização',
+    fileActions: 'Importar e exportar',
+    chooseType: 'Novo diagrama UML',
+    chooseTypeDescription: 'Escolha o tipo de diagrama.',
+    typeClass: 'Classes',
+    typeUseCase: 'Casos de uso',
+    typeSequence: 'Sequência',
+    typeActivity: 'Atividades',
+    select: 'Selecionar',
+    connect: 'Conectar',
+    cancelConnection: 'Cancelar conexão',
+    undo: 'Desfazer',
+    redo: 'Refazer',
+    zoomIn: 'Aumentar zoom',
+    zoomOut: 'Reduzir zoom',
+    fitView: 'Ajustar à tela',
+    toggleGrid: 'Mostrar grade',
+    toggleSnap: 'Alinhar à grade',
+    inspector: 'Inspetor',
+    minimap: 'Minimapa',
+    noSelection: 'Selecione um elemento ou relação.',
+    name: 'Nome',
+    documentation: 'Documentação',
+    stereotypes: 'Estereótipos',
+    taggedValues: 'Valores marcados',
+    attributes: 'Atributos',
+    operations: 'Operações',
+    literals: 'Literais',
+    dimensions: 'Dimensões',
+    width: 'Largura',
+    height: 'Altura',
+    orientation: 'Orientação',
+    addPartitionLeft: 'Adicionar raia à esquerda',
+    addPartitionRight: 'Adicionar raia à direita',
+    vertical: 'Vertical',
+    horizontal: 'Horizontal',
+    visibility: 'Visibilidade',
+    returnType: 'Tipo de retorno',
+    abstract: 'Abstrato',
+    staticMember: 'Estático',
+    readOnly: 'Somente leitura',
+    parameter: 'Parâmetro',
+    addParameter: 'Adicionar parâmetro',
+    direction: 'Direção',
+    defaultValue: 'Valor padrão',
+    objectType: 'Tipo do objeto',
+    wholeEnd: 'Lado do todo',
+    source: 'Origem',
+    target: 'Destino',
+    relationLabel: 'Rótulo',
+    guard: 'Condição de guarda',
+    sourceMultiplicity: 'Multiplicidade de origem',
+    targetMultiplicity: 'Multiplicidade de destino',
+    diagnostics: 'Diagnósticos',
+    noDiagnostics: 'Nenhum problema encontrado.',
+    severityError: 'Erro',
+    severityWarning: 'Aviso',
+    severityInfo: 'Informação',
+    diagnosticElementIncompatible: 'O elemento não é compatível com este tipo de diagrama.',
+    diagnosticActivationLifelineMissing: 'A ativação deve referenciar uma linha de vida deste diagrama.',
+    diagnosticPartitionMissing: 'O nó de atividade referencia uma raia ausente.',
+    diagnosticRelationshipEndpointMissing: 'A relação possui uma extremidade ausente deste diagrama.',
+    diagnosticRelationshipIncompatible: 'A relação não é compatível com este tipo de diagrama.',
+    diagnosticUseCaseEndpointInvalid: 'Inclusão e extensão devem conectar dois casos de uso.',
+    diagnosticSequenceEndpointInvalid: 'Mensagens conectam somente atores ou linhas de vida.',
+    diagnosticSelfMessageInvalid: 'Uma mensagem para si deve iniciar e terminar no mesmo participante.',
+    diagnosticObjectFlowInvalid: 'Um fluxo de objeto deve tocar um nó de objeto.',
+    diagnosticWholeEndMissing: 'Agregação e composição exigem a identificação do lado do todo.',
+    diagnosticPresentationElementMissing: 'Uma apresentação referencia um elemento ausente.',
+    diagnosticPresentationParentMissing: 'Uma apresentação referencia um contêiner ausente.',
+    diagnosticPresentationRelationshipMissing: 'Uma aresta referencia uma relação ausente.',
+    diagnosticPresentationEndpointMissing: 'Uma aresta referencia uma apresentação de nó ausente.',
+    diagnosticSequenceOrderDuplicate: 'A ordem das mensagens de sequência deve ser única.',
+    saved: 'Salvo',
+    saving: 'Salvando…',
+    unsaved: 'Alterações pendentes',
+    conflict: 'O arquivo foi alterado fora do Flyoff.',
+    reload: 'Recarregar do disco',
+    overwrite: 'Sobrescrever',
+    unavailable: 'Não foi possível abrir este diagrama.',
+    elementPackage: 'Pacote',
+    elementClass: 'Classe',
+    elementInterface: 'Interface',
+    elementEnumeration: 'Enumeração',
+    elementActor: 'Ator',
+    elementUseCase: 'Caso de uso',
+    elementSystemBoundary: 'Limite do sistema',
+    elementLifeline: 'Linha de vida',
+    elementActivation: 'Ativação',
+    elementPartition: 'Raia',
+    elementAction: 'Ação',
+    elementObjectNode: 'Objeto',
+    elementInitialNode: 'Nó inicial',
+    elementActivityFinal: 'Final da atividade',
+    elementFlowFinal: 'Final do fluxo',
+    elementDecision: 'Decisão',
+    elementMerge: 'Mesclagem',
+    elementFork: 'Bifurcação',
+    elementJoin: 'Junção',
+    relationship: 'Relação',
+    relationAssociation: 'Associação',
+    relationDirectedAssociation: 'Associação direcionada',
+    relationAggregation: 'Agregação',
+    relationComposition: 'Composição',
+    relationGeneralization: 'Generalização',
+    relationRealization: 'Realização',
+    relationDependency: 'Dependência',
+    relationInclude: 'Inclusão',
+    relationExtend: 'Extensão',
+    relationMessageSynchronous: 'Mensagem síncrona',
+    relationMessageAsynchronous: 'Mensagem assíncrona',
+    relationMessageReturn: 'Mensagem de retorno',
+    relationSelfMessage: 'Mensagem para si',
+    relationControlFlow: 'Fluxo de controle',
+    relationObjectFlow: 'Fluxo de objeto',
+    connectionSource: 'Escolha o elemento de destino.',
+    importDiagram: 'Importar diagrama',
+    exportDiagram: 'Exportar diagrama',
+    importTitle: 'Importar diagramas',
+    astahBridgeTitle: 'Arquivo proprietário do Astah',
+    astahBridgeExplanation:
+      'O Flyoff não interpreta .asta diretamente. Exporte pelo Astah Bridge, baseado no SDK oficial, e selecione o arquivo .spinel-import.json gerado.',
+    astahBridgeAlternatives:
+      'Como alternativa de fidelidade parcial, exporte XMI ou XML pelo Astah.',
+    fidelity: 'Fidelidade',
+    fidelityExact: 'Exata',
+    fidelityHigh: 'Alta',
+    fidelityPartial: 'Parcial',
+    elements: 'Elementos',
+    relationships: 'Relações',
+    importSelected: 'Importar selecionados',
   },
   pages: {
     bar: 'Páginas',
@@ -1502,6 +1772,8 @@ export const enUS = {
     noInstances: 'No instances found.',
     instanceNote: 'Note',
     instanceNoteDescription: 'Markdown',
+    instanceDiagram: 'UML diagram',
+    instanceDiagramDescription: 'Flyoff Diagram File (.flyd)',
     instanceChecklist: 'Checklist',
     instanceBoard: 'Board',
     instanceGallery: 'Gallery',
@@ -1667,6 +1939,140 @@ export const enUS = {
     overviewDescription: 'Organize this den’s folders and notes from the sidebar.',
     unavailable: 'This content is no longer available.',
     projectUnavailable: 'The den from the previous session could not be opened.',
+  },
+  diagram: {
+    toolbarLabel: 'Diagram tools',
+    viewOptions: 'View options',
+    fileActions: 'Import and export',
+    chooseType: 'New UML diagram',
+    chooseTypeDescription: 'Choose the diagram type.',
+    typeClass: 'Class',
+    typeUseCase: 'Use case',
+    typeSequence: 'Sequence',
+    typeActivity: 'Activity',
+    select: 'Select',
+    connect: 'Connect',
+    cancelConnection: 'Cancel connection',
+    undo: 'Undo',
+    redo: 'Redo',
+    zoomIn: 'Zoom in',
+    zoomOut: 'Zoom out',
+    fitView: 'Fit to view',
+    toggleGrid: 'Show grid',
+    toggleSnap: 'Snap to grid',
+    inspector: 'Inspector',
+    minimap: 'Minimap',
+    noSelection: 'Select an element or relationship.',
+    name: 'Name',
+    documentation: 'Documentation',
+    stereotypes: 'Stereotypes',
+    taggedValues: 'Tagged values',
+    attributes: 'Attributes',
+    operations: 'Operations',
+    literals: 'Literals',
+    dimensions: 'Dimensions',
+    width: 'Width',
+    height: 'Height',
+    orientation: 'Orientation',
+    addPartitionLeft: 'Add partition to the left',
+    addPartitionRight: 'Add partition to the right',
+    vertical: 'Vertical',
+    horizontal: 'Horizontal',
+    visibility: 'Visibility',
+    returnType: 'Return type',
+    abstract: 'Abstract',
+    staticMember: 'Static',
+    readOnly: 'Read only',
+    parameter: 'Parameter',
+    addParameter: 'Add parameter',
+    direction: 'Direction',
+    defaultValue: 'Default value',
+    objectType: 'Object type',
+    wholeEnd: 'Whole end',
+    source: 'Source',
+    target: 'Target',
+    relationLabel: 'Label',
+    guard: 'Guard condition',
+    sourceMultiplicity: 'Source multiplicity',
+    targetMultiplicity: 'Target multiplicity',
+    diagnostics: 'Diagnostics',
+    noDiagnostics: 'No issues found.',
+    severityError: 'Error',
+    severityWarning: 'Warning',
+    severityInfo: 'Information',
+    diagnosticElementIncompatible: 'The element is not compatible with this diagram type.',
+    diagnosticActivationLifelineMissing: 'The activation must reference a lifeline in this diagram.',
+    diagnosticPartitionMissing: 'The activity node references a missing partition.',
+    diagnosticRelationshipEndpointMissing: 'The relationship has an endpoint missing from this diagram.',
+    diagnosticRelationshipIncompatible: 'The relationship is not compatible with this diagram type.',
+    diagnosticUseCaseEndpointInvalid: 'Include and extend must connect two use cases.',
+    diagnosticSequenceEndpointInvalid: 'Messages can connect only actors or lifelines.',
+    diagnosticSelfMessageInvalid: 'A self message must start and end at the same participant.',
+    diagnosticObjectFlowInvalid: 'An object flow must touch an object node.',
+    diagnosticWholeEndMissing: 'Aggregation and composition require the whole end to be identified.',
+    diagnosticPresentationElementMissing: 'A presentation references a missing element.',
+    diagnosticPresentationParentMissing: 'A presentation references a missing container.',
+    diagnosticPresentationRelationshipMissing: 'An edge references a missing relationship.',
+    diagnosticPresentationEndpointMissing: 'An edge references a missing node presentation.',
+    diagnosticSequenceOrderDuplicate: 'Sequence message order values must be unique.',
+    saved: 'Saved',
+    saving: 'Saving…',
+    unsaved: 'Pending changes',
+    conflict: 'The file was changed outside Flyoff.',
+    reload: 'Reload from disk',
+    overwrite: 'Overwrite',
+    unavailable: 'This diagram could not be opened.',
+    elementPackage: 'Package',
+    elementClass: 'Class',
+    elementInterface: 'Interface',
+    elementEnumeration: 'Enumeration',
+    elementActor: 'Actor',
+    elementUseCase: 'Use case',
+    elementSystemBoundary: 'System boundary',
+    elementLifeline: 'Lifeline',
+    elementActivation: 'Activation',
+    elementPartition: 'Partition',
+    elementAction: 'Action',
+    elementObjectNode: 'Object',
+    elementInitialNode: 'Initial node',
+    elementActivityFinal: 'Activity final',
+    elementFlowFinal: 'Flow final',
+    elementDecision: 'Decision',
+    elementMerge: 'Merge',
+    elementFork: 'Fork',
+    elementJoin: 'Join',
+    relationship: 'Relationship',
+    relationAssociation: 'Association',
+    relationDirectedAssociation: 'Directed association',
+    relationAggregation: 'Aggregation',
+    relationComposition: 'Composition',
+    relationGeneralization: 'Generalization',
+    relationRealization: 'Realization',
+    relationDependency: 'Dependency',
+    relationInclude: 'Include',
+    relationExtend: 'Extend',
+    relationMessageSynchronous: 'Synchronous message',
+    relationMessageAsynchronous: 'Asynchronous message',
+    relationMessageReturn: 'Return message',
+    relationSelfMessage: 'Self message',
+    relationControlFlow: 'Control flow',
+    relationObjectFlow: 'Object flow',
+    connectionSource: 'Choose the destination element.',
+    importDiagram: 'Import diagram',
+    exportDiagram: 'Export diagram',
+    importTitle: 'Import diagrams',
+    astahBridgeTitle: 'Proprietary Astah file',
+    astahBridgeExplanation:
+      'Flyoff does not interpret .asta directly. Export it with Astah Bridge, based on the official SDK, then select the generated .spinel-import.json file.',
+    astahBridgeAlternatives:
+      'For partial fidelity, you can export XMI or XML from Astah instead.',
+    fidelity: 'Fidelity',
+    fidelityExact: 'Exact',
+    fidelityHigh: 'High',
+    fidelityPartial: 'Partial',
+    elements: 'Elements',
+    relationships: 'Relationships',
+    importSelected: 'Import selected',
   },
   pages: {
     bar: 'Pages',

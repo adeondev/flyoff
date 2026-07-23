@@ -61,6 +61,17 @@ import type {
   TrashProjectNodeOutcome,
 } from './projects';
 import type {
+  CreateDiagramDocumentRequest,
+  CommitDiagramImportOutcome,
+  CommitDiagramImportRequest,
+  DiagramDocumentEnvelope,
+  ExportDiagramOutcome,
+  ExportDiagramRequest,
+  ReadDiagramDocumentRequest,
+  SaveDiagramDocumentRequest,
+  SelectDiagramImportOutcome,
+} from './diagrams';
+import type {
   ProjectNoteActivityEntry,
   ProjectNoteActivityEvent,
 } from './project-note-activity';
@@ -180,6 +191,26 @@ export interface FlyoffApi {
   saveMarkdownDocument(
     request: SaveMarkdownDocumentRequest,
   ): Promise<ProjectResult<MarkdownDocument>>;
+  createDiagramDocument(
+    request: CreateDiagramDocumentRequest,
+  ): Promise<ProjectResult<ProjectTreeNode>>;
+  readDiagramDocument(
+    request: ReadDiagramDocumentRequest,
+  ): Promise<ProjectResult<DiagramDocumentEnvelope>>;
+  saveDiagramDocument(
+    request: SaveDiagramDocumentRequest,
+  ): Promise<ProjectResult<DiagramDocumentEnvelope>>;
+  selectDiagramImport(): Promise<ProjectResult<SelectDiagramImportOutcome>>;
+  commitDiagramImport(
+    request: CommitDiagramImportRequest,
+  ): Promise<ProjectResult<CommitDiagramImportOutcome>>;
+  exportDiagram(
+    request: ExportDiagramRequest,
+  ): Promise<ProjectResult<ExportDiagramOutcome>>;
+  consumePendingDiagramOpen(): Promise<
+    ProjectResult<CommitDiagramImportOutcome | null>
+  >;
+  onPendingDiagramOpen(listener: () => void): () => void;
   getProjectGraph(): Promise<ProjectResult<ProjectGraphSnapshot>>;
   listProjectLinkTargets(): Promise<
     ProjectResult<readonly ProjectLinkTarget[]>

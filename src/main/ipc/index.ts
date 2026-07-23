@@ -1,5 +1,6 @@
 export * from './bootstrap';
 export * from './external-links';
+export * from './diagrams';
 export * from './menu-commands';
 export * from './preferences';
 export * from './project-note-activity';

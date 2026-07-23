@@ -42,7 +42,7 @@ interface InstanceOption extends AddInstanceChoice {
   icon: string;
 }
 
-const PAGE_TYPE_ORDER = ['markdown', 'checklist', 'kanban', 'gallery'];
+const PAGE_TYPE_ORDER = ['markdown', 'diagram', 'checklist', 'kanban', 'gallery'];
 
 function positionStyle(position: { x: number; y: number }): CSSProperties {
   const width = 352;

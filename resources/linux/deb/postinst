@@ -1,0 +1,14 @@
+#!/bin/sh
+set -e
+
+SOURCE=/usr/lib/flyoff/resources/mime/application-vnd.flyoff.diagram.xml
+TARGET=/usr/share/mime/packages/application-vnd.flyoff.diagram.xml
+
+if [ -f "$SOURCE" ]; then
+  install -D -m 0644 "$SOURCE" "$TARGET"
+  if command -v update-mime-database >/dev/null 2>&1; then
+    update-mime-database /usr/share/mime
+  fi
+fi
+
+exit 0

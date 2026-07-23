@@ -16,7 +16,30 @@ const config: ForgeConfig = {
     appBundleId: 'com.flyoff.app',
     asar: true,
     executableName: 'Flyoff',
-    extraResource: ['./public/images/twemoji'],
+    extendInfo: {
+      CFBundleDocumentTypes: [
+        {
+          CFBundleTypeExtensions: ['flyd'],
+          CFBundleTypeIconFile: 'flyoff.icns',
+          CFBundleTypeName: 'Flyoff Diagram File',
+          CFBundleTypeRole: 'Editor',
+          LSHandlerRank: 'Owner',
+          LSItemContentTypes: ['com.flyoff.diagram'],
+        },
+      ],
+      UTExportedTypeDeclarations: [
+        {
+          UTTypeConformsTo: ['public.json'],
+          UTTypeDescription: 'Flyoff Diagram File',
+          UTTypeIdentifier: 'com.flyoff.diagram',
+          UTTypeTagSpecification: {
+            'public.filename-extension': ['flyd'],
+            'public.mime-type': 'application/vnd.flyoff.diagram',
+          },
+        },
+      ],
+    },
+    extraResource: ['./public/images/twemoji', './resources/mime'],
     icon: './resources/icons/flyoff',
   },
   rebuildConfig: {},
@@ -68,10 +91,27 @@ const config: ForgeConfig = {
   makers: [
     new MakerSquirrel({
       authors: 'Flyoff',
+      setupIcon: './resources/icons/flyoff.ico',
     }),
     new MakerZIP({}, ['darwin', 'win32']),
-    new MakerRpm({}),
-    new MakerDeb({}),
+    new MakerRpm({
+      options: {
+        categories: ['Office', 'Utility'],
+        icon: './resources/icons/flyoff.png',
+        mimeType: ['application/vnd.flyoff.diagram'],
+      },
+    }),
+    new MakerDeb({
+      options: {
+        categories: ['Office', 'Utility'],
+        icon: './resources/icons/flyoff.png',
+        mimeType: ['application/vnd.flyoff.diagram'],
+        scripts: {
+          postinst: './resources/linux/deb/postinst',
+          postrm: './resources/linux/deb/postrm',
+        },
+      },
+    }),
   ],
   plugins: [
     new AutoUnpackNativesPlugin({}),

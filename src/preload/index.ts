@@ -53,6 +53,7 @@ import {
   type WindowControlAction,
   type WindowState,
   PROJECT_IPC_CHANNELS,
+  DIAGRAM_IPC_CHANNELS,
   PROJECT_NOTE_ACTIVITY_IPC_CHANNELS,
   isCreateProjectRequest,
   isGetProjectNodeRequest,
@@ -89,6 +90,15 @@ import {
   isProjectTreeNodeList,
   isMarkdownDocument,
   isProjectPageProperties,
+  isCreateDiagramDocumentRequest,
+  isReadDiagramDocumentRequest,
+  isSaveDiagramDocumentRequest,
+  isDiagramDocumentEnvelope,
+  isSelectDiagramImportOutcome,
+  isCommitDiagramImportRequest,
+  isCommitDiagramImportOutcome,
+  isExportDiagramRequest,
+  isExportDiagramOutcome,
   isGetProjectPagePropertiesRequest,
   isSetProjectPageReadOnlyRequest,
   isProtectProjectPageRequest,
@@ -122,6 +132,12 @@ import {
   type RemoveProjectPagePasswordRequest,
   type UnlockProjectPageRequest,
   type LockProjectPageRequest,
+  type CreateDiagramDocumentRequest,
+  type ReadDiagramDocumentRequest,
+  type SaveDiagramDocumentRequest,
+  type CommitDiagramImportRequest,
+  type CommitDiagramImportOutcome,
+  type ExportDiagramRequest,
   type ProjectNoteActivityEvent,
   type OpenExternalLinkRequest,
   type SpellcheckWordRequest,
@@ -669,6 +685,105 @@ const flyoffApi: FlyoffApi = Object.freeze({
     }
 
     return result;
+  },
+  async createDiagramDocument(request: CreateDiagramDocumentRequest) {
+    if (!isCreateDiagramDocumentRequest(request)) {
+      throw new TypeError('Invalid diagram creation request.');
+    }
+    const result: unknown = await ipcRenderer.invoke(
+      DIAGRAM_IPC_CHANNELS.create,
+      request,
+    );
+    if (!isProjectResult(result, isProjectTreeNode)) {
+      throw new Error('The main process returned an invalid diagram page.');
+    }
+    return result;
+  },
+  async readDiagramDocument(request: ReadDiagramDocumentRequest) {
+    if (!isReadDiagramDocumentRequest(request)) {
+      throw new TypeError('Invalid diagram read request.');
+    }
+    const result: unknown = await ipcRenderer.invoke(
+      DIAGRAM_IPC_CHANNELS.read,
+      request,
+    );
+    if (!isProjectResult(result, isDiagramDocumentEnvelope)) {
+      throw new Error('The main process returned an invalid diagram document.');
+    }
+    return result;
+  },
+  async saveDiagramDocument(request: SaveDiagramDocumentRequest) {
+    if (!isSaveDiagramDocumentRequest(request)) {
+      throw new TypeError('Invalid diagram save request.');
+    }
+    const result: unknown = await ipcRenderer.invoke(
+      DIAGRAM_IPC_CHANNELS.save,
+      request,
+    );
+    if (!isProjectResult(result, isDiagramDocumentEnvelope)) {
+      throw new Error('The main process returned an invalid diagram document.');
+    }
+    return result;
+  },
+  async selectDiagramImport() {
+    const result: unknown = await ipcRenderer.invoke(
+      DIAGRAM_IPC_CHANNELS.selectImport,
+    );
+    if (!isProjectResult(result, isSelectDiagramImportOutcome)) {
+      throw new Error('The main process returned an invalid diagram import selection.');
+    }
+    return result;
+  },
+  async commitDiagramImport(request: CommitDiagramImportRequest) {
+    if (!isCommitDiagramImportRequest(request)) {
+      throw new TypeError('Invalid diagram import request.');
+    }
+    const result: unknown = await ipcRenderer.invoke(
+      DIAGRAM_IPC_CHANNELS.commitImport,
+      request,
+    );
+    if (!isProjectResult(result, isCommitDiagramImportOutcome)) {
+      throw new Error('The main process returned an invalid diagram import result.');
+    }
+    return result;
+  },
+  async exportDiagram(request: ExportDiagramRequest) {
+    if (!isExportDiagramRequest(request)) {
+      throw new TypeError('Invalid diagram export request.');
+    }
+    const result: unknown = await ipcRenderer.invoke(
+      DIAGRAM_IPC_CHANNELS.export,
+      request,
+    );
+    if (!isProjectResult(result, isExportDiagramOutcome)) {
+      throw new Error('The main process returned an invalid diagram export result.');
+    }
+    return result;
+  },
+  async consumePendingDiagramOpen() {
+    const result: unknown = await ipcRenderer.invoke(
+      DIAGRAM_IPC_CHANNELS.openPending,
+    );
+    if (
+      !isProjectResult(
+        result,
+        (value): value is CommitDiagramImportOutcome | null =>
+          value === null || isCommitDiagramImportOutcome(value),
+      )
+    ) {
+      throw new Error('The main process returned an invalid pending diagram result.');
+    }
+    return result;
+  },
+  onPendingDiagramOpen(listener: () => void) {
+    const handlePending = () => listener();
+    ipcRenderer.on(DIAGRAM_IPC_CHANNELS.pendingChanged, handlePending);
+    return () => {
+      ipcRenderer.removeListener(
+        DIAGRAM_IPC_CHANNELS.pendingChanged,
+        handlePending,
+      );
+    };
   },
   async getProjectGraph() {
     const result: unknown = await ipcRenderer.invoke(

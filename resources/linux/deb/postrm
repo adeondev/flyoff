@@ -1,0 +1,13 @@
+#!/bin/sh
+set -e
+
+TARGET=/usr/share/mime/packages/application-vnd.flyoff.diagram.xml
+
+if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
+  rm -f "$TARGET"
+  if command -v update-mime-database >/dev/null 2>&1; then
+    update-mime-database /usr/share/mime
+  fi
+fi
+
+exit 0

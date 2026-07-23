@@ -1,5 +1,6 @@
 export * from './bootstrap';
 export * from './close';
+export * from './diagrams';
 export * from './external-links';
 export * from './locales';
 export * from './menu';

@@ -399,6 +399,21 @@ test.describe('Flyoff desktop shell', () => {
           typeof window.flyoff.readMarkdownDocument,
         saveMarkdownDocumentType:
           typeof window.flyoff.saveMarkdownDocument,
+        createDiagramDocumentType:
+          typeof window.flyoff.createDiagramDocument,
+        readDiagramDocumentType:
+          typeof window.flyoff.readDiagramDocument,
+        saveDiagramDocumentType:
+          typeof window.flyoff.saveDiagramDocument,
+        selectDiagramImportType:
+          typeof window.flyoff.selectDiagramImport,
+        commitDiagramImportType:
+          typeof window.flyoff.commitDiagramImport,
+        exportDiagramType: typeof window.flyoff.exportDiagram,
+        consumePendingDiagramOpenType:
+          typeof window.flyoff.consumePendingDiagramOpen,
+        onPendingDiagramOpenType:
+          typeof window.flyoff.onPendingDiagramOpen,
         listProjectLinkTargetsType:
           typeof window.flyoff.listProjectLinkTargets,
         getProjectGraphType: typeof window.flyoff.getProjectGraph,
@@ -469,6 +484,14 @@ test.describe('Flyoff desktop shell', () => {
         'lockProjectPage',
         'readMarkdownDocument',
         'saveMarkdownDocument',
+        'createDiagramDocument',
+        'readDiagramDocument',
+        'saveDiagramDocument',
+        'selectDiagramImport',
+        'commitDiagramImport',
+        'exportDiagram',
+        'consumePendingDiagramOpen',
+        'onPendingDiagramOpen',
         'listProjectLinkTargets',
         'getProjectGraph',
         'getProjectNoteActivity',
@@ -522,6 +545,14 @@ test.describe('Flyoff desktop shell', () => {
       lockProjectPageType: 'function',
       readMarkdownDocumentType: 'function',
       saveMarkdownDocumentType: 'function',
+      createDiagramDocumentType: 'function',
+      readDiagramDocumentType: 'function',
+      saveDiagramDocumentType: 'function',
+      selectDiagramImportType: 'function',
+      commitDiagramImportType: 'function',
+      exportDiagramType: 'function',
+      consumePendingDiagramOpenType: 'function',
+      onPendingDiagramOpenType: 'function',
       listProjectLinkTargetsType: 'function',
       getProjectGraphType: 'function',
       getProjectNoteActivityType: 'function',

@@ -43,6 +43,10 @@ import {
   type FlyoffPlatform,
   type InternalPageId,
   type MarkdownDocument,
+  type DiagramDocumentEnvelope,
+  type CommitDiagramImportOutcome,
+  type ExportDiagramOutcome,
+  type SelectDiagramImportOutcome,
   type ProjectBacklinksOutcome,
   type ProjectInternalLinkRequest,
   type ProjectInternalLinkResolution,
@@ -149,6 +153,7 @@ import {
   createEditorModeState,
   type EditorMode,
 } from './projects/editor-mode';
+import { DiagramController } from './projects/diagram/diagram-controller';
 
 function translateCatalog(
   catalog: TranslationCatalog,
@@ -318,6 +323,34 @@ function createMarkdownController(
   });
 }
 
+function createDiagramController(
+  onSaveError?: (error: ProjectFailureDetails, nodeId: string) => void,
+): DiagramController {
+  return new DiagramController({
+    reload: (request) => {
+      const operation = getApi().readDiagramDocument;
+      return operation
+        ? operation(request)
+        : Promise.resolve(
+            unavailableProjectResult<DiagramDocumentEnvelope>(
+              'The project bridge is unavailable.',
+            ),
+          );
+    },
+    save: (request) => {
+      const operation = getApi().saveDiagramDocument;
+      return operation
+        ? operation(request)
+        : Promise.resolve(
+            unavailableProjectResult<DiagramDocumentEnvelope>(
+              'The project bridge is unavailable.',
+            ),
+          );
+    },
+    onSaveError,
+  });
+}
+
 type AppWorkspaceAction =
   | WorkspaceAction
   | { type: 'replace-workspace-state'; state: WorkspaceState };
@@ -463,6 +496,9 @@ export function App() {
   const [documentController, setDocumentController] = useState(() =>
     createMarkdownController(),
   );
+  const [diagramController, setDiagramController] = useState(() =>
+    createDiagramController(),
+  );
   const [createProjectOpen, setCreateProjectOpen] = useState(false);
   const [linkNavigation, setLinkNavigation] =
     useState<MarkdownLinkNavigation>();
@@ -489,6 +525,7 @@ export function App() {
     new Map(),
   );
   const documentControllerRef = useRef(documentController);
+  const diagramControllerRef = useRef(diagramController);
   const projectSidebarRef = useRef<ProjectSidebarHandle>(null);
   const workspacePaneHostRef = useRef<WorkspacePaneHostHandle>(null);
   const pendingWorkspaceExitRef = useRef(
@@ -547,6 +584,11 @@ export function App() {
   }, [documentController, handleMarkdownSaveError]);
 
   useEffect(() => {
+    diagramController.setOnSaveError(handleMarkdownSaveError);
+    return () => diagramController.setOnSaveError(undefined);
+  }, [diagramController, handleMarkdownSaveError]);
+
+  useEffect(() => {
     documentController.setOnSaveSuccess(() =>
       setGraphDocumentRevision((current) => current + 1),
     );
@@ -575,8 +617,12 @@ export function App() {
     documentController.setDebounceMs(
       preferencesController.preferences.general.autosaveDelayMs,
     );
+    diagramController.setDebounceMs(
+      preferencesController.preferences.general.autosaveDelayMs,
+    );
   }, [
     documentController,
+    diagramController,
     preferencesController.preferences.general.autosaveDelayMs,
   ]);
 
@@ -586,6 +632,7 @@ export function App() {
     }
     const handleWindowBlur = (): void => {
       void documentControllerRef.current.flushAll();
+      void diagramControllerRef.current.flushAll();
     };
     window.addEventListener('blur', handleWindowBlur);
     return () => window.removeEventListener('blur', handleWindowBlur);
@@ -697,9 +744,13 @@ export function App() {
 
   const replaceDocumentController = useCallback((): void => {
     documentControllerRef.current.dispose();
+    diagramControllerRef.current.dispose();
     const next = createMarkdownController(handleMarkdownSaveError);
+    const nextDiagram = createDiagramController(handleMarkdownSaveError);
     documentControllerRef.current = next;
+    diagramControllerRef.current = nextDiagram;
     setDocumentController(next);
+    setDiagramController(nextDiagram);
   }, [handleMarkdownSaveError]);
 
   const setActiveProject = useCallback(
@@ -910,7 +961,11 @@ export function App() {
 
   const flushProjectDocuments = useCallback(async (): Promise<boolean> => {
     try {
-      return await documentControllerRef.current.flushAll();
+      const results = await Promise.all([
+        documentControllerRef.current.flushAll(),
+        diagramControllerRef.current.flushAll(),
+      ]);
+      return results.every(Boolean);
     } catch {
       return false;
     }
@@ -919,7 +974,11 @@ export function App() {
   const flushProjectDocumentsForTreeMutation = useCallback(
     async (): Promise<boolean> => {
       try {
-        return await documentControllerRef.current.flushForTreeMutation();
+        const results = await Promise.all([
+          documentControllerRef.current.flushForTreeMutation(),
+          diagramControllerRef.current.flushAll(),
+        ]);
+        return results.every(Boolean);
       } catch {
         return false;
       }
@@ -1220,6 +1279,56 @@ export function App() {
     [],
   );
 
+  const readDiagramDocument = useCallback((nodeId: string) => {
+    const operation = getApi().readDiagramDocument;
+    return operation
+      ? operation({ nodeId })
+      : Promise.resolve(
+          unavailableProjectResult<DiagramDocumentEnvelope>(
+            'The project bridge is unavailable.',
+          ),
+        );
+  }, []);
+
+  const selectDiagramImport = useCallback(() => {
+    const operation = getApi().selectDiagramImport;
+    return operation
+      ? operation()
+      : Promise.resolve(
+          unavailableProjectResult<SelectDiagramImportOutcome>(
+            'The project bridge is unavailable.',
+          ),
+        );
+  }, []);
+
+  const commitDiagramImport = useCallback(
+    (request: Parameters<FlyoffApi['commitDiagramImport']>[0]) => {
+      const operation = getApi().commitDiagramImport;
+      return operation
+        ? operation(request)
+        : Promise.resolve(
+            unavailableProjectResult<CommitDiagramImportOutcome>(
+              'The project bridge is unavailable.',
+            ),
+          );
+    },
+    [],
+  );
+
+  const exportDiagram = useCallback(
+    (request: Parameters<FlyoffApi['exportDiagram']>[0]) => {
+      const operation = getApi().exportDiagram;
+      return operation
+        ? operation(request)
+        : Promise.resolve(
+            unavailableProjectResult<ExportDiagramOutcome>(
+              'The project bridge is unavailable.',
+            ),
+          );
+    },
+    [],
+  );
+
   const completeConsumedRestore = useCallback(
     (resolved: WorkspaceSessionSnapshot): void => {
       restorePendingRef.current = false;
@@ -1364,6 +1473,37 @@ export function App() {
     ],
   );
 
+  const createDiagramDocument = useCallback(
+    (request: Parameters<FlyoffApi['createDiagramDocument']>[0]) =>
+      enqueueWorkspaceTransition(async () => {
+        if (!isPortableProjectName(request.name)) {
+          return projectFailure('invalid-name', translate('projects.invalidName'));
+        }
+        if (!(await flushProjectDocumentsForTreeMutation())) {
+          return unavailableProjectResult<ProjectTreeNode>(
+            translate('projects.saveFailed'),
+          );
+        }
+        const operation = getApi().createDiagramDocument;
+        if (!operation) {
+          return unavailableProjectResult<ProjectTreeNode>(
+            translate('projects.operationFailed'),
+          );
+        }
+        const result = await operation(request);
+        if (result.ok) {
+          cacheProjectNodes([result.value]);
+        }
+        return result;
+      }),
+    [
+      cacheProjectNodes,
+      enqueueWorkspaceTransition,
+      flushProjectDocumentsForTreeMutation,
+      translate,
+    ],
+  );
+
   const renameProjectNode = useCallback(
     (request: Parameters<FlyoffApi['renameProjectNode']>[0]) =>
       enqueueWorkspaceTransition(async () => {
@@ -1447,6 +1587,9 @@ export function App() {
     async (nodeIds: readonly string[]): Promise<void> => {
       const removedIds = new Set(nodeIds);
       discardRemovedPageData(nodeIds);
+      for (const nodeId of nodeIds) {
+        diagramControllerRef.current.discardClean(nodeId);
+      }
 
       const remainingNodes = new Map(projectNodesRef.current);
       for (const nodeId of removedIds) {
@@ -1907,6 +2050,16 @@ export function App() {
     [renameProjectNode, translate],
   );
 
+  const handleImportedDiagramNodes = useCallback(
+    (nodes: readonly ProjectPageNode[]): void => {
+      cacheProjectNodes(nodes);
+      void projectSidebarRef.current?.refresh();
+      setRailViewId(RAIL_VIEW_IDS.project);
+      openProjectNodes(nodes);
+    },
+    [cacheProjectNodes, openProjectNodes, setRailViewId],
+  );
+
   const projectPageRuntime = useMemo(
     () => ({
       markdown: {
@@ -1925,10 +2078,21 @@ export function App() {
         readDocument: readMarkdownDocument,
         unlockDocument,
       },
+      diagram: {
+        controller: diagramController,
+        readDocument: readDiagramDocument,
+        selectImport: selectDiagramImport,
+        commitImport: commitDiagramImport,
+        exportDocument: exportDiagram,
+        onImported: handleImportedDiagramNodes,
+      },
       onError: notifyProjectError,
     }),
     [
       documentController,
+      diagramController,
+      commitDiagramImport,
+      exportDiagram,
       linkNavigation,
       listProjectBacklinks,
       listProjectLinkTargets,
@@ -1937,11 +2101,69 @@ export function App() {
       notifyProjectError,
       openProjectLinkTarget,
       readMarkdownDocument,
+      readDiagramDocument,
+      selectDiagramImport,
       renameProjectLinkTarget,
       resolveProjectInternalLink,
       unlockDocument,
+      handleImportedDiagramNodes,
     ],
   );
+
+  useEffect(() => {
+    if (!project) {
+      return;
+    }
+    let active = true;
+    let draining = false;
+    let drainRequested = false;
+    const drainPending = async () => {
+      for (let count = 0; count < 32 && active; count += 1) {
+        const operation = getApi().consumePendingDiagramOpen;
+        if (!operation) {
+          return;
+        }
+        const result = await operation();
+        if (!active) {
+          return;
+        }
+        if (!result.ok) {
+          notifyProjectError(result.error.message);
+          return;
+        }
+        if (!result.value) {
+          return;
+        }
+        handleImportedDiagramNodes(result.value.nodes);
+      }
+    };
+    const runDrain = () => {
+      if (draining) {
+        drainRequested = true;
+        return;
+      }
+      draining = true;
+      drainRequested = false;
+      void drainPending()
+        .catch((error: unknown) => {
+          if (active) {
+            notifyProjectError(String(error));
+          }
+        })
+        .finally(() => {
+          draining = false;
+          if (active && drainRequested) {
+            runDrain();
+          }
+        });
+    };
+    const unsubscribe = getApi().onPendingDiagramOpen?.(runDrain);
+    runDrain();
+    return () => {
+      active = false;
+      unsubscribe?.();
+    };
+  }, [handleImportedDiagramNodes, notifyProjectError, project]);
 
   const closeActiveTab = useCallback((): void => {
     const activeTabId = selectActiveTabs(workspaceStateRef.current).activeTabId;
@@ -2451,7 +2673,7 @@ export function App() {
           target?.type === 'project-content'
             ? projectNodesRef.current.get(target.nodeId)
             : undefined;
-        if (node?.kind === 'page' && node.pageType === 'markdown') {
+        if (node?.kind === 'page') {
           event.preventDefault();
           openPageProperties(node);
         }
@@ -2537,6 +2759,7 @@ export function App() {
   useEffect(
     () => () => {
       documentControllerRef.current.dispose();
+      diagramControllerRef.current.dispose();
     },
     [],
   );
@@ -2873,6 +3096,7 @@ export function App() {
             onCopyPath={copyProjectPath}
             onCopyPaths={copyProjectPaths}
             onCreateNode={createProjectNode}
+            onCreateDiagram={createDiagramDocument}
             onError={notifyProjectError}
             onMoveNode={moveProjectNode}
             onMoveNodes={moveProjectNodes}

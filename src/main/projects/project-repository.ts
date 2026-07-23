@@ -25,6 +25,18 @@ import {
   type ProjectSummary,
   type ProjectTreeNode,
 } from '../../shared/contracts/projects';
+import type {
+  DiagramDocumentEnvelope,
+  SaveDiagramDocumentRequest,
+} from '../../shared/contracts/diagrams';
+import {
+  serializeDiagramDocument,
+  type DiagramDocument,
+} from '../../shared/diagram';
+import {
+  readDiagramDocumentFile,
+  saveDiagramDocumentFile,
+} from './diagram-document-repository';
 import { ProjectOperationError, normalizeProjectError } from './errors';
 import {
   changeEncryptedNotePassword,
@@ -735,8 +747,28 @@ export class ProjectRepository {
     name: string,
     pageType: string,
   ): Promise<ProjectTreeNode> {
+    if (pageType === 'diagram') {
+      throw new ProjectOperationError(
+        'invalid-operation',
+        'Diagram pages must be created through the diagram document contract.',
+      );
+    }
     requireProjectPageStorageAdapter(pageType);
     return this.createNode(parentId, name, 'page', pageType);
+  }
+
+  async createDiagramPage(
+    parentId: string | null,
+    name: string,
+    document: DiagramDocument,
+  ): Promise<ProjectTreeNode> {
+    return this.createNode(
+      parentId,
+      name,
+      'page',
+      'diagram',
+      serializeDiagramDocument(document),
+    );
   }
 
   async renameNode(nodeId: string, name: string): Promise<ProjectTreeNode> {
@@ -1136,13 +1168,50 @@ export class ProjectRepository {
     nodeId: string,
     key?: EncryptedNoteKey,
   ): Promise<ProjectPageProperties> {
-    const entry = this.requireMarkdownEntry(nodeId);
-    const absolutePath = await this.fileSystem.resolveExistingEntry(entry);
+    const entry = this.requireEntry(nodeId);
+    if (entry.kind !== 'page') {
+      throw new ProjectOperationError(
+        'invalid-operation',
+        'The selected content is not a project page.',
+      );
+    }
+    if (entry.pageType === 'diagram') {
+      const absolutePath = await this.fileSystem.resolveExistingEntry(entry);
+      const envelope = await readDiagramDocumentFile(
+        nodeId,
+        absolutePath,
+        this.rootPath,
+      );
+      const stats = await lstat(absolutePath);
+      if (stats.isSymbolicLink() || !stats.isFile()) {
+        throw new ProjectOperationError(
+          'unsafe-path',
+          'The diagram document changed while its properties were read.',
+        );
+      }
+      return {
+        nodeId,
+        pageType: 'diagram',
+        contentSizeBytes: stats.size,
+        diskSizeBytes: stats.size,
+        createdAt: null,
+        modifiedAt: stats.mtime.toISOString(),
+        revision: envelope.revision,
+        readOnly: false,
+        passwordProtected: false,
+        locked: false,
+        diagramType: envelope.document.diagramType,
+        elementCount: envelope.document.elements.length,
+        relationshipCount: envelope.document.relationships.length,
+      };
+    }
+    const markdownEntry = this.requireMarkdownEntry(nodeId);
+    const absolutePath = await this.fileSystem.resolveExistingEntry(markdownEntry);
 
     try {
       const bytes = await readMarkdownFile(absolutePath, this.rootPath);
       try {
-        return await this.pageProperties(entry, absolutePath, bytes, key);
+        return await this.pageProperties(markdownEntry, absolutePath, bytes, key);
       } finally {
         bytes.fill(0);
       }
@@ -1437,6 +1506,30 @@ export class ProjectRepository {
         ? normalizeEncryptedNoteError(error)
         : normalizeProjectError(error, 'The Markdown document could not be read.');
     }
+  }
+
+  async readDiagram(nodeId: string): Promise<DiagramDocumentEnvelope> {
+    const entry = this.requireDiagramEntry(nodeId);
+    const absolutePath = await this.fileSystem.resolveExistingEntry(entry);
+    return readDiagramDocumentFile(nodeId, absolutePath, this.rootPath);
+  }
+
+  async saveDiagram(
+    request: SaveDiagramDocumentRequest,
+  ): Promise<DiagramDocumentEnvelope> {
+    const entry = this.requireDiagramEntry(request.nodeId);
+    const absolutePath = await this.fileSystem.resolveExistingEntry(entry);
+    await this.ensureCurrentFormat();
+    return saveDiagramDocumentFile({
+      nodeId: request.nodeId,
+      document: request.document,
+      expectedRevision: request.expectedRevision,
+      force: request.force === true,
+      absolutePath,
+      containmentRoot: this.rootPath,
+      createId: this.createId,
+      resolveCurrentPath: () => this.fileSystem.resolveExistingEntry(entry),
+    });
   }
 
   async saveMarkdown(
@@ -1751,6 +1844,7 @@ export class ProjectRepository {
     name: string,
     kind: 'folder' | 'page',
     pageType?: string,
+    initialContent?: string,
   ): Promise<ProjectTreeNode> {
     assertPortableProjectName(name);
     const destination = this.requireContainer(parentId);
@@ -1796,7 +1890,7 @@ export class ProjectRepository {
       if (kind === 'folder') {
         await mkdir(absolutePath);
       } else {
-        await writeFile(absolutePath, adapter!.initialContent, {
+        await writeFile(absolutePath, initialContent ?? adapter!.initialContent, {
           encoding: 'utf8',
           flag: 'wx',
         });
@@ -1926,6 +2020,19 @@ export class ProjectRepository {
       throw new ProjectOperationError(
         'invalid-operation',
         'The selected content is not a Markdown document.',
+      );
+    }
+
+    return entry;
+  }
+
+  private requireDiagramEntry(nodeId: string): ContentIndexPageEntry {
+    const entry = this.requireEntry(nodeId);
+
+    if (entry.kind !== 'page' || entry.pageType !== 'diagram') {
+      throw new ProjectOperationError(
+        'invalid-operation',
+        'The selected content is not a diagram document.',
       );
     }
 

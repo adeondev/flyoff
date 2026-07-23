@@ -120,3 +120,10 @@ registerProjectPageStorageAdapter({
   initialContent: '',
   operations: ['create', 'rename', 'move', 'trash', 'read', 'write'],
 });
+
+registerProjectPageStorageAdapter({
+  pageType: 'diagram',
+  extensions: ['.flyd'],
+  initialContent: '',
+  operations: ['create', 'rename', 'move', 'trash', 'read', 'write'],
+});

@@ -26,7 +26,7 @@ interface ReadOnlyEdit {
 }
 
 export interface ProjectPagePropertiesDialogProps {
-  node: ProjectPageNode & { pageType: 'markdown' };
+  node: ProjectPageNode;
   logicalPath: string;
   properties?: ProjectPageProperties;
   loading: boolean;
@@ -174,6 +174,12 @@ export function ProjectPagePropertiesDialog({
   }
 
   async function applyReadOnly(closeAfter: boolean): Promise<void> {
+    if (node.pageType !== 'markdown') {
+      if (closeAfter) {
+        onClose();
+      }
+      return;
+    }
     if (!displayedProperties) {
       return;
     }
@@ -299,6 +305,7 @@ export function ProjectPagePropertiesDialog({
         <>
           <button
             disabled={
+              node.pageType !== 'markdown' ||
               pending || loading || Boolean(protectionMode) || !changedReadOnly
             }
             onClick={() => void applyReadOnly(false)}
@@ -342,7 +349,11 @@ export function ProjectPagePropertiesDialog({
             </div>
             <div>
               <dt>{translate('projects.propertiesType')}</dt>
-              <dd>{translate('projects.propertiesMarkdownNote')}</dd>
+              <dd>
+                {node.pageType === 'diagram'
+                  ? translate('projects.instanceDiagram')
+                  : translate('projects.propertiesMarkdownNote')}
+              </dd>
             </div>
             <div>
               <dt>{translate('projects.location')}</dt>
@@ -382,6 +393,21 @@ export function ProjectPagePropertiesDialog({
                   : EMPTY_VALUE}
               </dd>
             </div>
+            {displayedProperties?.pageType === 'diagram' ? (
+              <>
+                <div>
+                  <dt>{translate('projects.propertiesType')}</dt>
+                  <dd>{displayedProperties.diagramType}</dd>
+                </div>
+                <div>
+                  <dt>{translate('diagram.inspector')}</dt>
+                  <dd>
+                    {displayedProperties.elementCount} /{' '}
+                    {displayedProperties.relationshipCount}
+                  </dd>
+                </div>
+              </>
+            ) : null}
           </dl>
           <div className="project-page-properties__load-status">
             {loadError ? (
@@ -397,6 +423,8 @@ export function ProjectPagePropertiesDialog({
           </div>
         </section>
 
+        {node.pageType === 'markdown' ? (
+        <>
         <section className="project-page-properties__attributes">
           <h3>{translate('projects.propertiesAttributes')}</h3>
           <label className="project-page-properties__checkbox">
@@ -563,6 +591,8 @@ export function ProjectPagePropertiesDialog({
             ) : null}
           </div>
         </section>
+        </>
+        ) : null}
       </div>
     </Dialog>
   );

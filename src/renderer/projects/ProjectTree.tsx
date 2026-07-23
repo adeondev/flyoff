@@ -19,6 +19,7 @@ import type {
   ProjectSearchPreview,
   ProjectTreeNode,
 } from '../../shared/contracts';
+import type { DiagramType } from '../../shared/diagram';
 import {
   normalizeProjectSearchText,
   parseProjectSearchQuery,
@@ -57,6 +58,7 @@ export type ProjectTreeInlineEdit =
       parentId: string | null;
       kind: ProjectTreeNode['kind'];
       pageType?: string;
+      diagramType?: DiagramType;
     }
   | { mode: 'rename'; node: ProjectTreeNode };
 
