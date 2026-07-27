@@ -12,7 +12,7 @@ import listIcon from '../../../public/images/icons/editor/list-bullet.svg';
 import quoteIcon from '../../../public/images/icons/editor/quote.svg';
 import strikeIcon from '../../../public/images/icons/editor/strikethrough.svg';
 import taskIcon from '../../../public/images/icons/instances/checklist.svg';
-import paletteIcon from '../../../newicons/paleta.svg';
+import paletteIcon from '../../../newicons/propriedades.svg';
 import { EMOJI_RECENT_LIMIT, type EmojiSkinTone } from '../../shared/contracts';
 import { MaskedIcon } from '../components/MaskedIcon';
 import { getTooltipTargetProps } from '../components/tooltip';
