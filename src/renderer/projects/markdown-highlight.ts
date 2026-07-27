@@ -470,6 +470,8 @@ export interface HighlightedSourceLine {
   heading: boolean;
   html: string;
   key: string;
+  /** Carries an image, whose height a skipped row would guess wrong. */
+  media: boolean;
   source: string;
 }
 
@@ -490,6 +492,9 @@ export function sourceLineClassName(line: HighlightedSourceLine): string {
   }
   if (line.heading) {
     classes.push('md-line--heading');
+  }
+  if (line.media) {
+    classes.push('md-line--media');
   }
 
   return classes.join(' ');
@@ -537,6 +542,7 @@ export function highlightSourceLine(
     heading: state === 'n' && HEADING_LINE.test(source),
     html,
     key,
+    media: html.includes('md-source-image'),
     source,
   };
 }

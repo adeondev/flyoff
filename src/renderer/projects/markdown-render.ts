@@ -497,6 +497,27 @@ function nodeSignature(node: ChildNode): string {
     : `#${node.nodeType}:${node.textContent ?? ''}`;
 }
 
+const FLOATING_MEDIA_SELECTOR =
+  '.markdown-image--wrap, .markdown-media--wrap-left, .markdown-media--wrap-right';
+
+// Marks blocks whose height a skipped element could not guess, so they stay
+// laid out. Runs before signatures are taken, otherwise the class would make
+// every block differ from its cached signature on the next render.
+function markMediaBlocks(nodes: readonly ChildNode[]): void {
+  for (const node of nodes) {
+    if (node instanceof Element && node.querySelector('img, video, audio')) {
+      node.classList.add('markdown-block--media');
+    }
+  }
+}
+
+function markFloatingMedia(container: HTMLElement): void {
+  container.toggleAttribute(
+    'data-floating-media',
+    container.querySelector(FLOATING_MEDIA_SELECTOR) !== null,
+  );
+}
+
 export function renderMarkdownInto(
   container: HTMLElement,
   source: string,
@@ -510,6 +531,7 @@ export function renderMarkdownInto(
   });
 
   const next = [...staged.childNodes];
+  markMediaBlocks(next);
   const signatures = next.map(nodeSignature);
   const previous = renderedSignatures.get(container);
 
@@ -518,6 +540,7 @@ export function renderMarkdownInto(
   if (!previous || previous.length !== container.childNodes.length) {
     container.replaceChildren(...next);
     renderedSignatures.set(container, signatures);
+    markFloatingMedia(container);
     return;
   }
 
@@ -559,4 +582,5 @@ export function renderMarkdownInto(
   container.insertBefore(fragment, anchor);
 
   renderedSignatures.set(container, signatures);
+  markFloatingMedia(container);
 }

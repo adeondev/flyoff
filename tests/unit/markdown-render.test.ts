@@ -304,6 +304,41 @@ describe('markdown DOM renderer', () => {
       ).toEqual(['one', 'two']);
     });
 
+    it('leaves a text-only document containable', () => {
+      const container = render('one\n\ntwo');
+
+      expect(container.hasAttribute('data-floating-media')).toBe(false);
+      expect(container.querySelector('.markdown-block--media')).toBeNull();
+    });
+
+    it('marks blocks holding media so their height is never guessed', () => {
+      const directive = serializeImageDirective({
+        align: 'left',
+        alt: 'Lua',
+        assetId: '123e4567-e89b-42d3-a456-426614174000',
+        caption: '',
+        height: 90,
+        instanceId: '223e4567-e89b-42d3-a456-426614174001',
+        margin: 8,
+        maxWidth: 1200,
+        minWidth: 96,
+        mode: 'block',
+        path: 'Media/Lua.png',
+        positionLock: false,
+        ratioLock: true,
+        version: 2,
+        width: 160,
+      });
+      const container = render(`one\n\n${directive}\n\nthree`);
+
+      expect(container.querySelectorAll('.markdown-block--media')).toHaveLength(
+        1,
+      );
+      expect(
+        container.querySelector('img')?.closest('.markdown-block--media'),
+      ).not.toBeNull();
+    });
+
     it('replaces every block when the document changes wholesale', () => {
       const container = render('one\n\ntwo');
       const before = [...container.children];

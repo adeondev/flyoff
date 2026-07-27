@@ -1319,6 +1319,22 @@
   position: relative;
 }
 
+/*
+ * A long note otherwise costs a full-document layout on every frame, which is
+ * what drags the frame rate down while nothing is even being typed. Skipping
+ * offscreen rows leaves them in the DOM, so selection, caret, find-in-page and
+ * copy keep working on the whole document.
+ *
+ * Rows carrying an image are excluded because their height cannot be guessed
+ * from the line box, and the whole document opts out once a wrapped image is
+ * present, since containing that float would break the text flowing around it.
+ */
+.markdown-source__editor:not([data-floating-media])
+  .md-line:not(.md-line--media) {
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto calc(1em * var(--md-body-line-height));
+}
+
 .md-line--heading {
   clear: both;
 }
@@ -2179,6 +2195,17 @@
   outline: 0;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
+}
+
+/*
+ * Same reasoning as the source editor rows: a long note costs a whole-document
+ * layout every frame. Blocks holding media keep their layout so their height is
+ * never guessed, and one wrapped image opts the document out entirely.
+ */
+.markdown-view:not([data-floating-media])
+  > :not(.markdown-block--media) {
+  content-visibility: auto;
+  contain-intrinsic-block-size: auto calc(1em * var(--md-body-line-height));
 }
 
 .markdown-view > :first-child {

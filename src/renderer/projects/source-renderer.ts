@@ -17,6 +17,18 @@ interface SourceRenderState {
 
 const renderStates = new WeakMap<HTMLElement, SourceRenderState>();
 
+// A wrapped image floats out of its own row and the rows after it flow around
+// it, which only works while they share one formatting context. Skipping a row
+// would contain that float, so the whole document opts out of containment as
+// soon as one is present. Blink answers this from its class index, so it costs
+// far less than the layout it buys back.
+function markFloatingMedia(root: HTMLElement): void {
+  root.toggleAttribute(
+    'data-floating-media',
+    root.querySelector('.md-source-image--wrap') !== null,
+  );
+}
+
 function markActiveLine(root: HTMLElement, lineIndex: number): void {
   for (const active of root.querySelectorAll(':scope > .md-line--active')) {
     active.classList.remove('md-line--active');
@@ -180,6 +192,7 @@ export function reconcileSource(root: HTMLElement, source: string): void {
     });
     markActiveLine(root, currentState?.activeLine ?? -1);
     applyCodeBlockWidths(root, model, model.change);
+    markFloatingMedia(root);
     return;
   }
 
@@ -245,6 +258,7 @@ export function reconcileSource(root: HTMLElement, source: string): void {
   const activeLine = currentState.activeLine;
   renderStates.set(root, { activeLine, model });
   markActiveLine(root, activeLine);
+  markFloatingMedia(root);
 }
 
 export function updateActiveSourceLine(
