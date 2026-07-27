@@ -886,6 +886,10 @@ export const MediaGalleryPanel = forwardRef<
       hoverFolderTimerRef.current = undefined;
       navigateToFolder(folder.folderId);
       setDropTargetId(null);
+      // The dragged source <article> unmounts on navigation, so its
+      // onDragEnd never fires — reset the ghost overlay here or it is
+      // left floating on screen for the rest of the session.
+      finishImageDrag();
     }, 600);
   }
 
@@ -2178,6 +2182,7 @@ export const MediaGalleryPanel = forwardRef<
                   if (
                     moveTransferredEntries(event, entry.folder.folderId)
                   ) {
+                    event.stopPropagation();
                     finishImageDrag();
                   } else if (event.dataTransfer.files.length > 0) {
                     event.preventDefault();

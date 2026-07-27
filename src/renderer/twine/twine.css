@@ -206,6 +206,7 @@
 }
 
 .twine-message--user {
+  width: fit-content;
   align-self: flex-end;
 }
 

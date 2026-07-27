@@ -69,6 +69,7 @@ export function AddInstancePopover({
   const [activeId, setActiveId] = useState('markdown');
   const options = useMemo<readonly InstanceOption[]>(() => {
     const pages = [...listProjectPageTypeDefinitions()]
+      .filter((definition) => !definition.pageType.startsWith('media:'))
       .sort(
         (left, right) => {
           const leftIndex = PAGE_TYPE_ORDER.indexOf(left.pageType);
