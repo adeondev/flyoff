@@ -246,4 +246,75 @@ describe('markdown DOM renderer', () => {
     expect(container.querySelectorAll('td')[1]?.style.textAlign).toBe('right');
     expect(container.querySelector('strong')?.textContent).toBe('Twine');
   });
+
+  describe('incremental reconciliation', () => {
+    it('preserves untouched blocks around an edited one', () => {
+      const container = render('one\n\ntwo\n\nthree');
+      const [first, middle, last] = [...container.children];
+
+      renderMarkdownInto(container, 'one\n\nchanged\n\nthree');
+
+      expect(container.children[0]).toBe(first);
+      expect(container.children[1]).not.toBe(middle);
+      expect(container.children[2]).toBe(last);
+      expect(
+        [...container.querySelectorAll('p')].map((node) => node.textContent),
+      ).toEqual(['one', 'changed', 'three']);
+    });
+
+    it('keeps every node when the source is unchanged', () => {
+      const container = render('one\n\ntwo');
+      const before = [...container.children];
+
+      renderMarkdownInto(container, 'one\n\ntwo');
+
+      expect([...container.children]).toEqual(before);
+    });
+
+    it('reuses shared blocks when appending, as streaming does', () => {
+      const container = render('one\n\ntwo');
+      const [first, second] = [...container.children];
+
+      renderMarkdownInto(container, 'one\n\ntwo\n\nthree');
+
+      expect(container.children[0]).toBe(first);
+      expect(container.children[1]).toBe(second);
+      expect(container.children).toHaveLength(3);
+      expect(container.children[2]?.textContent).toBe('three');
+    });
+
+    it('drops removed trailing blocks', () => {
+      const container = render('one\n\ntwo\n\nthree');
+      const [first] = [...container.children];
+
+      renderMarkdownInto(container, 'one');
+
+      expect(container.children[0]).toBe(first);
+      expect(container.children).toHaveLength(1);
+    });
+
+    it('rebuilds when the live DOM no longer matches the last render', () => {
+      const container = render('one\n\ntwo');
+      container.replaceChildren();
+
+      renderMarkdownInto(container, 'one\n\ntwo');
+
+      expect(
+        [...container.querySelectorAll('p')].map((node) => node.textContent),
+      ).toEqual(['one', 'two']);
+    });
+
+    it('replaces every block when the document changes wholesale', () => {
+      const container = render('one\n\ntwo');
+      const before = [...container.children];
+
+      renderMarkdownInto(container, '# alpha\n\n- beta');
+
+      for (const node of before) {
+        expect(container.contains(node)).toBe(false);
+      }
+      expect(container.querySelector('h1')?.textContent).toBe('alpha');
+      expect(container.querySelector('li')?.textContent).toBe('beta');
+    });
+  });
 });

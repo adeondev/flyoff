@@ -127,17 +127,25 @@ function createLine(
   return element;
 }
 
+// Runs on every keystroke, so it walks the live collection instead of
+// materialising an array of every row.
 function hasCanonicalLines(root: HTMLElement, expectedLength: number): boolean {
-  return (
-    root.childElementCount === expectedLength &&
-    Array.from(root.children).every(
-      (line) =>
-        line.classList.contains('md-line') &&
-        line.children.length === 2 &&
-        line.firstElementChild?.classList.contains('md-line__gutter') &&
-        line.lastElementChild?.classList.contains('md-line__content'),
-    )
-  );
+  if (root.childElementCount !== expectedLength) {
+    return false;
+  }
+  const rows = root.children;
+  for (let index = 0; index < rows.length; index += 1) {
+    const line = rows[index]!;
+    if (
+      !line.classList.contains('md-line') ||
+      line.children.length !== 2 ||
+      !line.firstElementChild?.classList.contains('md-line__gutter') ||
+      !line.lastElementChild?.classList.contains('md-line__content')
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function replaceAll(
@@ -212,16 +220,24 @@ export function reconcileSource(root: HTMLElement, source: string): void {
   }
   root.insertBefore(fragment, anchor);
 
-  for (let index = prefix; index < root.children.length; index += 1) {
-    const line = root.children[index] as HTMLElement;
-    line.dataset.line = String(index + 1);
-    const gutter = line.querySelector<HTMLElement>(':scope > .md-line__gutter');
-    if (gutter) {
-      gutter.textContent = String(index + 1);
+  // Rows before newEnd were just built carrying their final numbers, and the
+  // preserved suffix only shifts when the line count changes, so editing
+  // within a single line renumbers nothing.
+  if (current.length !== next.length) {
+    for (let index = newEnd; index < root.children.length; index += 1) {
+      const line = root.children[index] as HTMLElement;
+      line.dataset.line = String(index + 1);
+      const gutter = line.firstElementChild;
+      if (gutter) {
+        gutter.textContent = String(index + 1);
+      }
     }
   }
 
-  if (!hasCanonicalLines(root, next.length)) {
+  // Preserved rows were structurally validated before splicing and inserted
+  // rows come from createLine, so only the splice arithmetic can still be
+  // wrong — checking the count catches that without rescanning every row.
+  if (root.childElementCount !== next.length) {
     replaceAll(root, next);
   }
 

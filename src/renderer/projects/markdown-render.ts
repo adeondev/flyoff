@@ -486,15 +486,77 @@ function renderBlocks(
   }
 }
 
+// Signatures of the top-level nodes produced by the previous render, kept so
+// an edit can be diffed against what we emitted rather than against the live
+// DOM, which callers legitimately mutate (expanding an image caption, say).
+const renderedSignatures = new WeakMap<HTMLElement, readonly string[]>();
+
+function nodeSignature(node: ChildNode): string {
+  return node instanceof Element
+    ? node.outerHTML
+    : `#${node.nodeType}:${node.textContent ?? ''}`;
+}
+
 export function renderMarkdownInto(
   container: HTMLElement,
   source: string,
   options: { projectId?: string } = {},
 ): void {
-  container.replaceChildren();
-  renderBlocks(parseMarkdown(source).children, container, {
+  const staged = document.createElement('div');
+  renderBlocks(parseMarkdown(source).children, staged, {
     headingIds: new Map(),
     headingPath: [],
     projectId: options.projectId,
   });
+
+  const next = [...staged.childNodes];
+  const signatures = next.map(nodeSignature);
+  const previous = renderedSignatures.get(container);
+
+  // Without a signature list matching the live children there is nothing
+  // trustworthy to diff against, so rebuild the whole subtree.
+  if (!previous || previous.length !== container.childNodes.length) {
+    container.replaceChildren(...next);
+    renderedSignatures.set(container, signatures);
+    return;
+  }
+
+  let prefix = 0;
+  while (
+    prefix < previous.length &&
+    prefix < signatures.length &&
+    previous[prefix] === signatures[prefix]
+  ) {
+    prefix += 1;
+  }
+
+  if (previous.length === signatures.length && prefix === signatures.length) {
+    return;
+  }
+
+  let suffix = 0;
+  while (
+    suffix < previous.length - prefix &&
+    suffix < signatures.length - prefix &&
+    previous[previous.length - suffix - 1] ===
+      signatures[signatures.length - suffix - 1]
+  ) {
+    suffix += 1;
+  }
+
+  const oldEnd = previous.length - suffix;
+  const newEnd = signatures.length - suffix;
+  const anchor = container.childNodes[oldEnd] ?? null;
+
+  for (let index = oldEnd - 1; index >= prefix; index -= 1) {
+    container.childNodes[index]?.remove();
+  }
+
+  const fragment = document.createDocumentFragment();
+  for (let index = prefix; index < newEnd; index += 1) {
+    fragment.appendChild(next[index]!);
+  }
+  container.insertBefore(fragment, anchor);
+
+  renderedSignatures.set(container, signatures);
 }
