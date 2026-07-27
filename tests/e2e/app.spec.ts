@@ -382,6 +382,28 @@ test.describe('Flyoff desktop shell', () => {
 
     await expect(page.locator('.twine-empty-state__brand')).toContainText('Twine');
     await expect(page.locator('.twine-conversation-sidebar')).toHaveCount(0);
+    const systemMessage = page.locator('[data-test-system-message="true"]');
+    await page.locator('.twine-page__body').evaluate((container) => {
+      const content = document.createElement('div');
+      content.className = 'twine-messages__content';
+      content.dataset.testSystemMessageContainer = 'true';
+      const message = document.createElement('article');
+      message.className = 'twine-message twine-message--system';
+      message.dataset.testSystemMessage = 'true';
+      const body = document.createElement('div');
+      body.className = 'twine-message__body';
+      body.textContent = 'Não foi possível gerar a resposta do Twine.';
+      message.append(body);
+      content.append(message);
+      container.prepend(content);
+    });
+    const systemMessageBounds = await systemMessage.boundingBox();
+    expect(systemMessageBounds).not.toBeNull();
+    expect(systemMessageBounds!.width).toBeGreaterThan(120);
+    expect(systemMessageBounds!.height).toBeLessThan(80);
+    await page
+      .locator('[data-test-system-message-container="true"]')
+      .evaluate((element) => element.remove());
     const workspaceWidth = await page.locator('.twine-page__workspace').evaluate(
       (element) => element.getBoundingClientRect().width,
     );

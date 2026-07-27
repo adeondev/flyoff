@@ -4,6 +4,7 @@ import type {
   TwineGenerationUsage,
   TwineSource,
 } from '../../shared/contracts';
+import { TWINE_TOKEN_COUNT_RESERVE_TOKENS } from './twine-generation-limits';
 import { TwineStreamParser } from './twine-stream-parser';
 
 export interface TwineGenerateContentConfig {
@@ -58,10 +59,7 @@ export interface TwineGenerateContentChunk {
 export interface TwineGenAIClient {
   models: {
     countTokens(params: {
-      config: Pick<
-        TwineGenerateContentConfig,
-        'abortSignal' | 'systemInstruction' | 'tools'
-      >;
+      config?: { abortSignal?: AbortSignal };
       contents: TwineGenerationContent[];
       model: string;
     }): Promise<{ totalTokens?: number }>;
@@ -188,17 +186,32 @@ export async function countTwineGenerationInputTokens(
   protectRuntimeRequirements = false,
   signal?: AbortSignal,
 ): Promise<number> {
+  const contents = createTwineGenerationContents(
+    request,
+    runtimeInstruction,
+    protectRuntimeRequirements,
+  );
+  const countingContext = `<system_instruction>
+${config.systemInstruction}
+</system_instruction>
+<tools>${JSON.stringify(config.tools)}</tools>`;
+  const countingContents: TwineGenerationContent[] =
+    contents.length > 0
+      ? [
+          {
+            parts: [
+              {
+                text: `${countingContext}\n\n${contents[0]!.parts[0]!.text}`,
+              },
+            ],
+            role: contents[0]!.role,
+          },
+          ...contents.slice(1),
+        ]
+      : [{ parts: [{ text: countingContext }], role: 'user' }];
   const result = await ai.models.countTokens({
-    config: {
-      ...(signal ? { abortSignal: signal } : {}),
-      systemInstruction: config.systemInstruction,
-      tools: config.tools,
-    },
-    contents: createTwineGenerationContents(
-      request,
-      runtimeInstruction,
-      protectRuntimeRequirements,
-    ),
+    ...(signal ? { config: { abortSignal: signal } } : {}),
+    contents: countingContents,
     model,
   });
   if (
@@ -208,7 +221,7 @@ export async function countTwineGenerationInputTokens(
   ) {
     throw new Error('Gemini did not return a valid input token count.');
   }
-  return result.totalTokens;
+  return result.totalTokens + TWINE_TOKEN_COUNT_RESERVE_TOKENS;
 }
 
 function usageFromChunk(

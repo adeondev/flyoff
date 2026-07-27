@@ -230,6 +230,17 @@ describe('Twine research enforcement', () => {
     await target.terminal;
 
     expect(googleGenAiMocks.generateContentStream).toHaveBeenCalledTimes(1);
+    expect(googleGenAiMocks.countTokens).toHaveBeenCalledTimes(1);
+    const tokenCountRequest = googleGenAiMocks.countTokens.mock.calls[0]![0];
+    expect(tokenCountRequest.config).toEqual({
+      abortSignal: expect.any(AbortSignal),
+    });
+    expect(tokenCountRequest.config).not.toHaveProperty('systemInstruction');
+    expect(tokenCountRequest.config).not.toHaveProperty('tools');
+    expect(JSON.stringify(tokenCountRequest.contents)).toContain(
+      '<system_instruction>',
+    );
+    expect(JSON.stringify(tokenCountRequest.contents)).toContain('<tools>');
     expect(target.events[0]).toEqual({
       activity: 'thinking',
       requestId: baseRequest.requestId,
