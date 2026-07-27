@@ -45,6 +45,16 @@ describe('Twine IPC contracts', () => {
         thinkingLevel: 'high',
       }),
     ).toBe(false);
+    expect(
+      isTwineGenerationRequest({
+        approvalMode: 'request',
+        messages: [{ role: 'user', text: '😀'.repeat(4_001) }],
+        modelId: 'google/gemma-4-31B-it',
+        requestId: 'twine-request-1',
+        researchEnabled: false,
+        thinkingLevel: 'low',
+      }),
+    ).toBe(false);
   });
 
   it('validates bounded copy, export, and result payloads', () => {
@@ -76,6 +86,18 @@ describe('Twine IPC contracts', () => {
   });
 
   it('validates stream events', () => {
+    expect(
+      isTwineGenerationEvent({
+        memory: {
+          summary: 'Compacted memory',
+          throughMessageId: 'message-2',
+          tokenCount: 25_000,
+          version: 1,
+        },
+        requestId: 'twine-request-1',
+        type: 'memory',
+      }),
+    ).toBe(true);
     expect(
       isTwineGenerationEvent({
         activity: 'thinking',

@@ -7,13 +7,19 @@ import type {
   TwineIpcModelId,
 } from '../../shared/contracts';
 import { shouldRequireTwineCodeExecution } from './twine-code-policy';
+import { compactTwineContext } from './twine-context-compactor';
 import {
+  countTwineGenerationInputTokens,
   mergeTwineGenerationUsage,
   runTwineGenerationAttempt,
   type TwineGenAIClient,
   type TwineGenerateContentConfig,
 } from './twine-generation-attempt';
 import { classifyTwineGenerationError } from './twine-generation-error';
+import {
+  TWINE_CONTEXT_COMPACTION_THRESHOLD_TOKENS,
+  TwineInputRateLimiter,
+} from './twine-generation-limits';
 import { shouldRequireTwineResearch } from './twine-research-policy';
 import {
   createTwineRuntimeToolInstruction,
@@ -76,6 +82,10 @@ export function createTwineGenerateContentConfig(
 export class TwineGenerationService {
   private readonly active = new Map<string, AbortController>();
 
+  constructor(
+    private readonly inputRateLimiter = new TwineInputRateLimiter(),
+  ) {}
+
   cancel(requestId: string): void {
     this.active.get(requestId)?.abort();
     this.active.delete(requestId);
@@ -116,6 +126,12 @@ export class TwineGenerationService {
     }
   }
 
+  private reserveInputTokens(apiKey: string, tokens: number): void {
+    if (!this.inputRateLimiter.consume(apiKey, tokens)) {
+      throw new Error('Twine input token rate limit exceeded.');
+    }
+  }
+
   private async run(
     request: TwineGenerationRequest,
     apiKey: string,
@@ -137,14 +153,76 @@ export class TwineGenerationService {
     try {
       const { GoogleGenAI } = await import('@google/genai');
       const ai = new GoogleGenAI({ apiKey }) as TwineGenAIClient;
+      const model = TWINE_API_MODELS[request.modelId];
+      const firstConfig = createTwineGenerateContentConfig(request, {
+        codeRequired,
+        currentDate,
+        researchRequired,
+      });
+      const firstRuntimeInstruction =
+        codeRequired || researchRequired
+          ? createTwineRuntimeToolInstruction({
+              codeRequired,
+              researchRequired,
+              retry: false,
+            })
+          : undefined;
+      let effectiveRequest = request;
+      let firstInputTokens = await countTwineGenerationInputTokens(
+        ai,
+        firstConfig,
+        model,
+        effectiveRequest,
+        firstRuntimeInstruction,
+        false,
+        controller.signal,
+      );
+      if (controller.signal.aborted) {
+        return;
+      }
+      if (
+        firstInputTokens >= TWINE_CONTEXT_COMPACTION_THRESHOLD_TOKENS
+      ) {
+        const compaction = await compactTwineContext(
+          ai,
+          model,
+          effectiveRequest,
+          controller.signal,
+          (tokens) => this.reserveInputTokens(apiKey, tokens),
+        );
+        if (controller.signal.aborted) {
+          return;
+        }
+        if (compaction) {
+          effectiveRequest = compaction.request;
+          this.emit(webContents, channel, {
+            memory: compaction.memory,
+            requestId: request.requestId,
+            type: 'memory',
+          });
+          firstInputTokens = await countTwineGenerationInputTokens(
+            ai,
+            firstConfig,
+            model,
+            effectiveRequest,
+            firstRuntimeInstruction,
+            false,
+            controller.signal,
+          );
+          if (controller.signal.aborted) {
+            return;
+          }
+        }
+      }
+      this.reserveInputTokens(apiKey, firstInputTokens);
 
       if (!codeRequired && !researchRequired) {
         const result = await runTwineGenerationAttempt({
           ai,
-          config: createTwineGenerateContentConfig(request, { currentDate }),
+          config: firstConfig,
           emit: (event) => this.emit(webContents, channel, event),
-          model: TWINE_API_MODELS[request.modelId],
-          request,
+          model,
+          request: effectiveRequest,
           signal: controller.signal,
         });
         if (!controller.signal.aborted) {
@@ -160,24 +238,44 @@ export class TwineGenerationService {
       let totalUsage: TwineGenerationUsage | undefined;
       for (let attemptIndex = 0; attemptIndex < 2; attemptIndex += 1) {
         const events: TwineGenerationEvent[] = [];
+        const retry = attemptIndex > 0;
+        const config = retry
+          ? createTwineGenerateContentConfig(effectiveRequest, {
+              codeRequired,
+              codeRetry: codeRequired,
+              currentDate,
+              researchRequired,
+              researchRetry: researchRequired,
+            })
+          : firstConfig;
+        const runtimeInstruction = createTwineRuntimeToolInstruction({
+          codeRequired,
+          researchRequired,
+          retry,
+        });
+        if (retry) {
+          const inputTokens = await countTwineGenerationInputTokens(
+            ai,
+            config,
+            model,
+            effectiveRequest,
+            runtimeInstruction,
+            true,
+            controller.signal,
+          );
+          if (controller.signal.aborted) {
+            return;
+          }
+          this.reserveInputTokens(apiKey, inputTokens);
+        }
         const result = await runTwineGenerationAttempt({
           ai,
-          config: createTwineGenerateContentConfig(request, {
-            codeRequired,
-            codeRetry: codeRequired && attemptIndex > 0,
-            currentDate,
-            researchRequired,
-            researchRetry: researchRequired && attemptIndex > 0,
-          }),
+          config,
           emit: (event) => events.push(event),
-          model: TWINE_API_MODELS[request.modelId],
-          protectRuntimeRequirements: attemptIndex > 0,
-          request,
-          runtimeInstruction: createTwineRuntimeToolInstruction({
-            codeRequired,
-            researchRequired,
-            retry: attemptIndex > 0,
-          }),
+          model,
+          protectRuntimeRequirements: retry,
+          request: effectiveRequest,
+          runtimeInstruction,
           signal: controller.signal,
         });
         if (controller.signal.aborted) {

@@ -2,12 +2,16 @@ import type { WebContents } from 'electron';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const googleGenAiMocks = vi.hoisted(() => ({
+  countTokens: vi.fn(),
+  generateContent: vi.fn(),
   generateContentStream: vi.fn(),
 }));
 
 vi.mock('@google/genai', () => ({
   GoogleGenAI: class {
     readonly models = {
+      countTokens: googleGenAiMocks.countTokens,
+      generateContent: googleGenAiMocks.generateContent,
       generateContentStream: googleGenAiMocks.generateContentStream,
     };
   },
@@ -35,6 +39,13 @@ const baseRequest = {
 } as const;
 
 const currentDate = new Date('2026-07-23T00:00:00.000Z');
+
+beforeEach(() => {
+  googleGenAiMocks.countTokens.mockReset();
+  googleGenAiMocks.countTokens.mockResolvedValue({ totalTokens: 100 });
+  googleGenAiMocks.generateContent.mockReset();
+  googleGenAiMocks.generateContentStream.mockReset();
+});
 
 function chunkStream(...chunks: unknown[]): AsyncGenerator<unknown> {
   return (async function* generateChunks() {
@@ -73,16 +84,20 @@ describe('Twine generation config', () => {
       currentDate,
     });
 
-    expect(config.systemInstruction).toContain('Você é Twine');
-    expect(config.systemInstruction).toContain('A data atual é 2026-07-23');
     expect(config.systemInstruction).toContain(
-      'Google Search e execução de código estão disponíveis em todas as conversas',
+      'You are Twine, the built-in AI assistant of Flyoff',
     );
     expect(config.systemInstruction).toContain(
-      'contagens longas, cálculos sujeitos a erro',
+      'The current date is 2026-07-23',
     );
     expect(config.systemInstruction).toContain(
-      'Imprimir a data do sistema, fabricar dados ou calcular algo sem consultar fontes não é pesquisa',
+      'Google Search and code execution may be available',
+    );
+    expect(config.systemInstruction).toContain(
+      'Use code execution when it materially improves correctness',
+    );
+    expect(config.systemInstruction).toContain(
+      'Do not use code execution as a substitute for web research',
     );
     expect(config.systemInstruction).not.toContain(TWINE_RESEARCH_INSTRUCTION);
     expect(config.systemInstruction).not.toContain(
@@ -125,7 +140,7 @@ describe('Twine generation config', () => {
     expect(config.systemInstruction).toContain(TWINE_REQUIRED_CODE_INSTRUCTION);
     expect(config.systemInstruction).toContain(TWINE_CODE_RETRY_INSTRUCTION);
     expect(config.systemInstruction).toContain(
-      'Não apresente resultados de testes, cálculos ou validações sem receber um resultado real da ferramenta',
+      'Do not claim success unless execution succeeds',
     );
   });
 
@@ -193,10 +208,6 @@ describe('Twine generation errors', () => {
 });
 
 describe('Twine research enforcement', () => {
-  beforeEach(() => {
-    googleGenAiMocks.generateContentStream.mockReset();
-  });
-
   it('keeps normal responses streaming without requiring a source', async () => {
     googleGenAiMocks.generateContentStream.mockReturnValueOnce(
       chunkStream({
@@ -662,6 +673,88 @@ describe('Twine research enforcement', () => {
     });
     expect(target.events[1]).toEqual({
       code: 'tool-requirements',
+      requestId: baseRequest.requestId,
+      type: 'error',
+    });
+  });
+
+  it('compacts large context and publishes the new memory before responding', async () => {
+    googleGenAiMocks.countTokens
+      .mockResolvedValueOnce({ totalTokens: 180_000 })
+      .mockResolvedValueOnce({ totalTokens: 170_000 })
+      .mockResolvedValueOnce({ totalTokens: 30_000 });
+    googleGenAiMocks.generateContent.mockResolvedValueOnce({
+      text: '## Memória\n\nDecisões e fatos preservados.',
+      usageMetadata: { candidatesTokenCount: 20_000 },
+    });
+    googleGenAiMocks.generateContentStream.mockReturnValueOnce(
+      chunkStream({
+        candidates: [
+          { content: { parts: [{ text: 'Resposta com contexto.' }] } },
+        ],
+      }),
+    );
+    const target = createEventTarget();
+
+    new TwineGenerationService().start(
+      {
+        ...baseRequest,
+        messages: [
+          { id: 'message-1', role: 'user', text: 'Contexto antigo' },
+          { id: 'message-2', role: 'assistant', text: 'Resposta antiga' },
+          { id: 'message-3', role: 'user', text: 'Continue' },
+        ],
+      },
+      'test-key',
+      target.webContents,
+      'twine:generation',
+    );
+    await target.terminal;
+
+    expect(googleGenAiMocks.generateContent).toHaveBeenCalledOnce();
+    expect(target.events).toContainEqual({
+      memory: {
+        summary: '## Memória\n\nDecisões e fatos preservados.',
+        throughMessageId: 'message-2',
+        tokenCount: 20_000,
+        version: 1,
+      },
+      requestId: baseRequest.requestId,
+      type: 'memory',
+    });
+    const generationContents =
+      googleGenAiMocks.generateContentStream.mock.calls[0]?.[0]?.contents;
+    expect(generationContents).toHaveLength(1);
+    expect(generationContents[0]?.parts[0]?.text).toContain(
+      '<conversation_memory>',
+    );
+    expect(generationContents[0]?.parts[0]?.text).toContain('Continue');
+    expect(generationContents[0]?.parts[0]?.text).not.toContain(
+      'Contexto antigo',
+    );
+    expect(target.events.at(-1)).toEqual({
+      requestId: baseRequest.requestId,
+      type: 'done',
+    });
+  });
+
+  it('blocks a generation that exceeds the local input token budget', async () => {
+    googleGenAiMocks.countTokens.mockResolvedValueOnce({
+      totalTokens: 240_001,
+    });
+    const target = createEventTarget();
+
+    new TwineGenerationService().start(
+      baseRequest,
+      'test-key',
+      target.webContents,
+      'twine:generation',
+    );
+    await target.terminal;
+
+    expect(googleGenAiMocks.generateContentStream).not.toHaveBeenCalled();
+    expect(target.events.at(-1)).toEqual({
+      code: 'rate-limited',
       requestId: baseRequest.requestId,
       type: 'error',
     });

@@ -108,4 +108,38 @@ describe('Twine conversation variants', () => {
     expect(activeTwineBranch(deleted).messages).toEqual([]);
     expect(twineConversationVariants(deleted)).toEqual([]);
   });
+
+  it('keeps memory only while its boundary remains in the branch', () => {
+    let state = createTwineConversationState();
+    state = {
+      ...state,
+      branches: {
+        'twine-root': {
+          id: 'twine-root',
+          memory: {
+            summary: 'Earlier context',
+            throughMessageId: 'message-2',
+            tokenCount: 25_000,
+            version: 1,
+          },
+          messages: [
+            message('message-1', 'First'),
+            assistant('message-2', 'Answer'),
+            message('message-3', 'Follow up'),
+          ],
+        },
+      },
+    };
+
+    expect(
+      activeTwineBranch(
+        truncateActiveTwineConversation(state, 'message-3', true),
+      ).memory,
+    ).toBeDefined();
+    expect(
+      activeTwineBranch(
+        truncateActiveTwineConversation(state, 'message-1', true),
+      ).memory,
+    ).toBeUndefined();
+  });
 });

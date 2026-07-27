@@ -9,9 +9,11 @@ import {
 
 import type {
   FlyoffApi,
+  TwineConversationMemory,
   TwineCredentialStatus,
   TwineGenerateMessage,
 } from '../../shared/contracts';
+import { limitTwineUserMessage } from '../../shared/contracts';
 import chevronIcon from '../../../public/images/icons/actions/chevron-right.svg';
 import conversationIcon from '../../../public/images/icons/twine/conversation.svg';
 import fullAccessIcon from '../../../public/images/icons/twine/thinking.svg';
@@ -72,9 +74,19 @@ function generationMessages(
   return messages.flatMap<TwineGenerateMessage>((message) =>
     (message.kind === 'assistant' || message.kind === 'user') &&
     message.text.trim().length > 0
-      ? [{ role: message.kind, text: message.text }]
+      ? [{ id: message.id, role: message.kind, text: message.text }]
       : [],
   );
+}
+
+function memoryForMessages(
+  memory: TwineConversationMemory | undefined,
+  messages: readonly TwineMessage[],
+): TwineConversationMemory | undefined {
+  return memory &&
+    messages.some(({ id }) => id === memory.throughMessageId)
+    ? memory
+    : undefined;
 }
 
 export function TwineChat({
@@ -362,11 +374,13 @@ export function TwineChat({
   async function startGeneration(
     requestId: string,
     requestMessages: readonly TwineGenerateMessage[],
+    memory?: TwineConversationMemory,
   ): Promise<void> {
     runtime.beginGeneration(requestId);
     try {
       await getFlyoffApi().startTwineGeneration?.({
         approvalMode: pageState.data.approvalMode,
+        ...(memory ? { memory } : {}),
         messages: requestMessages,
         modelId: pageState.data.modelId,
         requestId,
@@ -482,7 +496,11 @@ export function TwineChat({
         ? translate('twine.attachmentsNotSent')
         : undefined,
     );
-    await startGeneration(requestId, generationMessages(nextMessages));
+    await startGeneration(
+      requestId,
+      generationMessages(nextMessages),
+      branch.memory,
+    );
   }
 
   function beginEditingMessage(messageId: string): void {
@@ -524,18 +542,32 @@ export function TwineChat({
       userMessage,
       assistantMessage,
     ];
+    const memoryBoundaryIndex = branch.memory
+      ? branch.messages.findIndex(
+          ({ id }) => id === branch.memory?.throughMessageId,
+        )
+      : -1;
+    const nextMemory =
+      branch.memory && memoryBoundaryIndex >= 0 && index > memoryBoundaryIndex
+        ? branch.memory
+        : undefined;
     const branchId = nextId('branch');
     runtime.setConversation((current) =>
       forkTwineConversation(current, {
         branchId,
         forkMessageId: editSession.messageId,
+        memory: nextMemory,
         messages: nextMessages,
       }),
     );
     runtime.markActivity();
     runtime.clearEditSession();
     setNotice(undefined);
-    await startGeneration(requestId, generationMessages(nextMessages));
+    await startGeneration(
+      requestId,
+      generationMessages(nextMessages),
+      nextMemory,
+    );
   }
 
   function regenerateMessage(messageId: string): void {
@@ -554,10 +586,15 @@ export function TwineChat({
       forkTwineConversation(current, {
         branchId,
         forkMessageId: messageId,
+        memory: memoryForMessages(branch.memory, nextMessages),
         messages: nextMessages,
       }),
     );
-    void startGeneration(requestId, generationMessages(nextMessages));
+    void startGeneration(
+      requestId,
+      generationMessages(nextMessages),
+      memoryForMessages(branch.memory, nextMessages),
+    );
   }
 
   function rewindToMessage(messageId: string): void {
@@ -719,10 +756,14 @@ export function TwineChat({
             onApprovalChange={requestApprovalMode}
             onCancelEdit={() => runtime.clearEditSession()}
             onDraftChange={(value) => {
+              const limitedValue = limitTwineUserMessage(value);
+              if (limitedValue !== value) {
+                setNotice(translate('twine.messageCharacterLimit'));
+              }
               if (editSession) {
-                runtime.setEditText(value);
+                runtime.setEditText(limitedValue);
               } else {
-                runtime.setDraft(value);
+                runtime.setDraft(limitedValue);
               }
             }}
             onRemoveAttachment={removeAttachment}

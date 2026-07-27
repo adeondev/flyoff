@@ -8,6 +8,7 @@ import type {
   TwineGenerationErrorCode,
   TwineGenerationEvent,
 } from '../../shared/contracts';
+import { limitTwineUserMessage } from '../../shared/contracts';
 import {
   clearRememberedTwineConversationSnapshot,
   createTwineConversationSnapshot,
@@ -20,6 +21,7 @@ import {
   activeTwineBranch,
   createTwineConversationState,
   updateTwineBranchMessages,
+  updateTwineBranchMemory,
   updateTwineMessageByRequest,
 } from './twine-conversation-state';
 import type {
@@ -243,10 +245,11 @@ class TwineRuntime {
   }
 
   setDraft(draft: string): void {
-    if (draft === this.state.draft) {
+    const limitedDraft = limitTwineUserMessage(draft);
+    if (limitedDraft === this.state.draft) {
       return;
     }
-    this.publish({ ...this.state, draft });
+    this.publish({ ...this.state, draft: limitedDraft });
     this.scheduleSave();
   }
 
@@ -271,12 +274,13 @@ class TwineRuntime {
 
   setEditText(text: string): void {
     const editSession = this.state.editSession;
-    if (!editSession || editSession.text === text) {
+    const limitedText = limitTwineUserMessage(text);
+    if (!editSession || editSession.text === limitedText) {
       return;
     }
     this.publish({
       ...this.state,
-      editSession: { ...editSession, text },
+      editSession: { ...editSession, text: limitedText },
     });
   }
 
@@ -629,7 +633,7 @@ class TwineRuntime {
             ),
       conversationTitle: snapshot.title,
       conversationTitleMode: snapshot.titleMode,
-      draft: snapshot.draft ?? '',
+      draft: limitTwineUserMessage(snapshot.draft ?? ''),
       editSession: undefined,
       isGenerating: false,
     });
@@ -690,6 +694,20 @@ class TwineRuntime {
           }),
         );
         return;
+      case 'memory': {
+        const branch = Object.values(this.state.conversation.branches).find(
+          ({ messages }) =>
+            messages.some(
+              ({ streamRequestId }) => streamRequestId === event.requestId,
+            ),
+        );
+        if (branch) {
+          this.setConversation((current) =>
+            updateTwineBranchMemory(current, branch.id, event.memory),
+          );
+        }
+        return;
+      }
       case 'done':
         this.flushPendingDeltas();
         this.setConversation((current) =>

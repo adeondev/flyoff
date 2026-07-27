@@ -1,4 +1,5 @@
 import type {
+  TwineConversationMemory,
   TwineGenerationActivity,
   TwineGenerationUsage,
   TwineSource,
@@ -46,6 +47,7 @@ export interface TwineToolActivity {
 export interface TwineConversationBranch {
   forkMessageId?: string;
   id: string;
+  memory?: TwineConversationMemory;
   messages: readonly TwineMessage[];
   parentId?: string;
 }

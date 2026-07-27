@@ -42,6 +42,7 @@ export const TWINE_APPROVAL_MODES = [
 export const TWINE_TOOL_TYPES = ['code', 'search'] as const;
 export const TWINE_TOOL_PHASES = ['start', 'result'] as const;
 export const TWINE_GENERATION_ACTIVITIES = ['thinking', 'searching'] as const;
+export const TWINE_USER_MESSAGE_MAX_CHARACTERS = 4_000;
 export const TWINE_GENERATION_ERROR_CODES = [
   'authentication',
   'network',
@@ -99,12 +100,21 @@ export interface TwineCredentialStatus {
 }
 
 export interface TwineGenerateMessage {
+  id?: string;
   role: 'assistant' | 'user';
   text: string;
 }
 
+export interface TwineConversationMemory {
+  summary: string;
+  throughMessageId: string;
+  tokenCount: number;
+  version: 1;
+}
+
 export interface TwineGenerationRequest {
   approvalMode: TwineIpcApprovalMode;
+  memory?: TwineConversationMemory;
   messages: readonly TwineGenerateMessage[];
   modelId: TwineIpcModelId;
   requestId: string;
@@ -153,6 +163,7 @@ export interface TwineConversationMessageSnapshot {
 export interface TwineConversationBranchSnapshot {
   forkMessageId?: string;
   id: string;
+  memory?: TwineConversationMemory;
   messages: readonly TwineConversationMessageSnapshot[];
   parentId?: string;
 }
@@ -240,6 +251,11 @@ export type TwineGenerationEvent =
       requestId: string;
       sources: readonly TwineSource[];
       type: 'sources';
+    }
+  | {
+      memory: TwineConversationMemory;
+      requestId: string;
+      type: 'memory';
     }
   | {
       requestId: string;
@@ -339,11 +355,42 @@ export function isTwineCredentialStatus(
 export function isTwineGenerateMessage(
   value: unknown,
 ): value is TwineGenerateMessage {
+  if (!isRecord(value)) {
+    return false;
+  }
+  const validText =
+    value.role === 'user'
+      ? typeof value.text === 'string' &&
+        Array.from(value.text).length <= TWINE_USER_MESSAGE_MAX_CHARACTERS
+      : isBoundedString(value.text, 200_000, true);
+  return (
+    Object.keys(value).every((key) => ['id', 'role', 'text'].includes(key)) &&
+    (value.id === undefined || isBoundedString(value.id, 128)) &&
+    (value.role === 'assistant' || value.role === 'user') &&
+    validText
+  );
+}
+
+export function limitTwineUserMessage(value: string): string {
+  const characters = Array.from(value);
+  return characters.length <= TWINE_USER_MESSAGE_MAX_CHARACTERS
+    ? value
+    : characters.slice(0, TWINE_USER_MESSAGE_MAX_CHARACTERS).join('');
+}
+
+export function isTwineConversationMemory(
+  value: unknown,
+): value is TwineConversationMemory {
   return (
     isRecord(value) &&
-    Object.keys(value).length === 2 &&
-    (value.role === 'assistant' || value.role === 'user') &&
-    isBoundedString(value.text, 200_000, true)
+    Object.keys(value).length === 4 &&
+    value.version === 1 &&
+    isBoundedString(value.summary, 200_000) &&
+    isBoundedString(value.throughMessageId, 128) &&
+    typeof value.tokenCount === 'number' &&
+    Number.isInteger(value.tokenCount) &&
+    value.tokenCount >= 0 &&
+    value.tokenCount <= 256_000
   );
 }
 
@@ -352,11 +399,22 @@ export function isTwineGenerationRequest(
 ): value is TwineGenerationRequest {
   return (
     isRecord(value) &&
-    Object.keys(value).length === 6 &&
+    Object.keys(value).every((key) =>
+      [
+        'approvalMode',
+        'memory',
+        'messages',
+        'modelId',
+        'requestId',
+        'researchEnabled',
+        'thinkingLevel',
+      ].includes(key),
+    ) &&
     includes(TWINE_APPROVAL_MODES, value.approvalMode) &&
+    (value.memory === undefined || isTwineConversationMemory(value.memory)) &&
     Array.isArray(value.messages) &&
     value.messages.length > 0 &&
-    value.messages.length <= 128 &&
+    value.messages.length <= 2_048 &&
     value.messages.every(isTwineGenerateMessage) &&
     includes(TWINE_IPC_MODEL_IDS, value.modelId) &&
     isTwineRequestId(value.requestId) &&
@@ -478,14 +536,15 @@ function isTwineConversationBranchSnapshot(
   }
   return (
     Object.keys(value).every((key) =>
-      ['forkMessageId', 'id', 'messages', 'parentId'].includes(key),
+      ['forkMessageId', 'id', 'memory', 'messages', 'parentId'].includes(key),
     ) &&
     isBoundedString(value.id, 128) &&
     (value.forkMessageId === undefined ||
       isBoundedString(value.forkMessageId, 128)) &&
     (value.parentId === undefined || isBoundedString(value.parentId, 128)) &&
+    (value.memory === undefined || isTwineConversationMemory(value.memory)) &&
     Array.isArray(value.messages) &&
-    value.messages.length <= 256 &&
+    value.messages.length <= 2_048 &&
     value.messages.every(isTwineConversationMessageSnapshot)
   );
 }
@@ -688,6 +747,11 @@ export function isTwineGenerationEvent(
         Array.isArray(value.sources) &&
         value.sources.length <= 64 &&
         value.sources.every(isTwineSource)
+      );
+    case 'memory':
+      return (
+        Object.keys(value).length === 3 &&
+        isTwineConversationMemory(value.memory)
       );
     case 'done':
       return (

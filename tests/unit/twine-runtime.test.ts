@@ -204,6 +204,68 @@ describe('Twine runtime', () => {
     ).toBe('Partial response');
   });
 
+  it('stores compacted memory without replacing visible messages', async () => {
+    let generationListener:
+      | Parameters<NonNullable<FlyoffApi['onTwineGenerationEvent']>>[0]
+      | undefined;
+    const runtime = getTwineRuntime();
+    runtime.connect({
+      createTwineConversation: vi.fn().mockResolvedValue(conversation()),
+      listTwineConversations: vi.fn().mockResolvedValue(summary()),
+      loadTwineConversation: vi.fn().mockResolvedValue(conversation()),
+      onTwineGenerationEvent: (listener) => {
+        generationListener = listener;
+        return vi.fn();
+      },
+    });
+    await runtime.loadHistory('twine-conversation-1', 'New conversation');
+    runtime.setConversation((current) => ({
+      ...current,
+      branches: {
+        ...current.branches,
+        [current.activeBranchId]: {
+          ...current.branches[current.activeBranchId]!,
+          messages: [
+            ...current.branches[current.activeBranchId]!.messages,
+            {
+              attachments: [],
+              id: 'message-2',
+              kind: 'assistant',
+              status: 'streaming',
+              streamRequestId: 'request-1',
+              text: '',
+            },
+          ],
+        },
+      },
+    }));
+    runtime.beginGeneration('request-1');
+
+    generationListener?.({
+      memory: {
+        summary: 'Compacted memory',
+        throughMessageId: 'message-1',
+        tokenCount: 25_000,
+        version: 1,
+      },
+      requestId: 'request-1',
+      type: 'memory',
+    });
+
+    expect(
+      runtime.getSnapshot().conversation.branches['twine-root'],
+    ).toMatchObject({
+      memory: {
+        summary: 'Compacted memory',
+        throughMessageId: 'message-1',
+      },
+      messages: [
+        { id: 'message-1', text: 'Conversation' },
+        { id: 'message-2', text: '' },
+      ],
+    });
+  });
+
   it('does not resurrect a deleted conversation through a pending autosave', async () => {
     const saveTwineConversation = vi.fn().mockResolvedValue(summary());
     const runtime = getTwineRuntime();

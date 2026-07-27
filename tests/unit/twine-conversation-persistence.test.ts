@@ -45,4 +45,62 @@ describe('Twine conversation persistence', () => {
       text: '',
     });
   });
+
+  it('persists compacted memory without removing visible messages', () => {
+    const snapshot = createTwineConversationSnapshot({
+      activityAt: 2,
+      archivedAt: null,
+      createdAt: 1,
+      draft: '',
+      fallbackTitle: 'New conversation',
+      id: 'twine-conversation-1',
+      nextId: 3,
+      pinnedAt: null,
+      state: {
+        activeBranchId: 'twine-root',
+        branches: {
+          'twine-root': {
+            id: 'twine-root',
+            memory: {
+              summary: 'Compacted memory',
+              throughMessageId: 'message-2',
+              tokenCount: 25_000,
+              version: 1,
+            },
+            messages: [
+              {
+                attachments: [],
+                id: 'message-1',
+                kind: 'user',
+                status: 'complete',
+                text: 'Original question',
+              },
+              {
+                attachments: [],
+                id: 'message-2',
+                kind: 'assistant',
+                status: 'complete',
+                text: 'Original answer',
+              },
+            ],
+          },
+        },
+      },
+      title: 'New conversation',
+      titleMode: 'automatic',
+    });
+
+    expect(snapshot.state.branches['twine-root']).toMatchObject({
+      memory: {
+        summary: 'Compacted memory',
+        throughMessageId: 'message-2',
+        tokenCount: 25_000,
+        version: 1,
+      },
+      messages: [
+        { id: 'message-1', text: 'Original question' },
+        { id: 'message-2', text: 'Original answer' },
+      ],
+    });
+  });
 });

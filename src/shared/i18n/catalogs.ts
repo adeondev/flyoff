@@ -170,6 +170,7 @@ export interface TranslationCatalog {
     generationFailed: string;
     hideApiKey: string;
     messageInput: string;
+    messageCharacterLimit: string;
     messagePlaceholder: string;
     modelUnavailable: string;
     models: string;
@@ -1058,6 +1059,8 @@ export const ptBR = {
     generationFailed: 'N\u00e3o foi poss\u00edvel gerar a resposta do Twine.',
     hideApiKey: 'Ocultar',
     messageInput: 'Mensagem para o Twine',
+    messageCharacterLimit:
+      'Cada mensagem pode ter no m\u00e1ximo 4.000 caracteres.',
     messagePlaceholder: 'Pergunte ao Twine',
     modelUnavailable: 'O modelo ainda n\u00e3o est\u00e1 conectado.',
     models: 'Modelos',
@@ -2010,6 +2013,8 @@ export const enUS = {
     generationFailed: 'Could not generate the Twine response.',
     hideApiKey: 'Hide',
     messageInput: 'Message Twine',
+    messageCharacterLimit:
+      'Each message can contain no more than 4,000 characters.',
     messagePlaceholder: 'Ask Twine',
     modelUnavailable: 'The model is not connected yet.',
     models: 'Models',

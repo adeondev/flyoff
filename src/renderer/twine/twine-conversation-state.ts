@@ -1,3 +1,4 @@
+import type { TwineConversationMemory } from '../../shared/contracts';
 import type {
   TwineConversationBranch,
   TwineConversationState,
@@ -42,6 +43,24 @@ export function updateTwineBranchMessages(
   };
 }
 
+export function updateTwineBranchMemory(
+  state: TwineConversationState,
+  branchId: string,
+  memory: TwineConversationMemory | undefined,
+): TwineConversationState {
+  const branch = state.branches[branchId];
+  if (!branch || branch.memory === memory) {
+    return state;
+  }
+  return {
+    ...state,
+    branches: {
+      ...state.branches,
+      [branchId]: { ...branch, memory },
+    },
+  };
+}
+
 export function updateTwineMessageByRequest(
   state: TwineConversationState,
   requestId: string,
@@ -65,6 +84,7 @@ export function forkTwineConversation(
   options: {
     branchId: string;
     forkMessageId: string;
+    memory?: TwineConversationMemory;
     messages: readonly TwineMessage[];
   },
 ): TwineConversationState {
@@ -76,6 +96,7 @@ export function forkTwineConversation(
   const branch: TwineConversationBranch = {
     forkMessageId: options.forkMessageId,
     id: options.branchId,
+    ...(options.memory ? { memory: options.memory } : {}),
     messages: options.messages,
     parentId: familyParent,
   };
@@ -129,11 +150,17 @@ export function truncateActiveTwineConversation(
     return state;
   }
   const messages = branch.messages.slice(0, index + (includeMessage ? 1 : 0));
+  const memory = branch.memory
+    ? messages.some(({ id }) => id === branch.memory?.throughMessageId)
+      ? branch.memory
+      : undefined
+    : undefined;
   return {
     activeBranchId: branch.id,
     branches: {
       [branch.id]: {
         id: branch.id,
+        ...(memory ? { memory } : {}),
         messages,
       },
     },

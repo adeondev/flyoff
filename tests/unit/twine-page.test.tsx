@@ -444,7 +444,9 @@ describe('Twine chat page', () => {
     const request = startTwineGeneration.mock.calls[0]?.[0];
     expect(request).toEqual(
       expect.objectContaining({
-        messages: [{ role: 'user', text: 'Oi Twine' }],
+        messages: [
+          { id: expect.any(String), role: 'user', text: 'Oi Twine' },
+        ],
         modelId: 'google/gemma-4-26B-A4B-it',
         researchEnabled: false,
         thinkingLevel: 'low',
@@ -545,6 +547,31 @@ describe('Twine chat page', () => {
         .querySelector('.twine-message__sources')
         ?.hasAttribute('data-animate'),
     ).toBe(false);
+  });
+
+  it('caps user messages at 4,000 Unicode characters', async () => {
+    mockFlyoffApi({
+      getTwineCredentialStatus: vi.fn().mockResolvedValue({
+        encryptionAvailable: true,
+        hasApiKey: true,
+      }),
+    });
+    renderTwine();
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Connect Gemini' })).toBeNull(),
+    );
+
+    const textbox = screen.getByRole<HTMLTextAreaElement>('textbox', {
+      name: 'Message Twine',
+    });
+    fireEvent.change(textbox, { target: { value: '😀'.repeat(4_001) } });
+
+    expect(Array.from(textbox.value)).toHaveLength(4_000);
+    expect(
+      screen.getByText(
+        'Each message can contain no more than 4,000 characters.',
+      ),
+    ).toBeTruthy();
   });
 
   it('shows a localized message instead of a raw provider error', async () => {
