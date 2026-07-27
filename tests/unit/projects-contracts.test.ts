@@ -211,6 +211,7 @@ describe('project contracts', () => {
     const targetNodeId = randomUUID();
     const node = {
       canContainChildren: true,
+      extension: '.md',
       hasChildren: false,
       kind: 'page' as const,
       name: 'Nota',

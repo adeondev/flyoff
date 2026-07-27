@@ -43,7 +43,8 @@ const nodeId = '11111111-1111-4111-8111-111111111111';
 const revision = 'a'.repeat(64);
 const document = createDiagramDocument('class', () => nodeId);
 const node: ProjectPageNode = {
-  canContainChildren: true,
+      canContainChildren: true,
+      extension: '.flyd',
   hasChildren: false,
   kind: 'page',
   name: 'Domain',

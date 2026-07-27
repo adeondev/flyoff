@@ -97,6 +97,7 @@ export interface ProjectFolderNode extends ProjectTreeNodeBase {
 }
 
 export interface ProjectPageNode extends ProjectTreeNodeBase {
+  extension: string;
   kind: 'page';
   pageType: string;
 }
@@ -133,9 +134,16 @@ export interface DiagramProjectPageProperties extends ProjectPagePropertiesBase 
   relationshipCount: number;
 }
 
+export interface MediaProjectPageProperties extends ProjectPagePropertiesBase {
+  pageType: 'media:image' | 'media:video' | 'media:audio';
+  extension: string;
+  mimeType: string;
+}
+
 export type ProjectPageProperties =
   | MarkdownProjectPageProperties
-  | DiagramProjectPageProperties;
+  | DiagramProjectPageProperties
+  | MediaProjectPageProperties;
 
 export interface ProjectLocationSelection {
   token: string;
@@ -370,6 +378,8 @@ const projectErrorCodes = new Set<string>([
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const revisionPattern = /^[0-9a-f]{64}$/;
+const projectMediaExtensionPattern =
+  /^\.(?:png|jpe?g|webp|gif|avif|mp4|m4v|webm|ogv|mp3|m4a|aac|wav|ogg|oga|opus|flac)$/i;
 const invalidPortableCharacters = /[<>:"/\\|?*]/;
 const reservedDosName = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i;
 
@@ -447,6 +457,9 @@ const builtInProjectInstanceTypes = new Set([
   'checklist',
   'kanban',
   'gallery',
+  'media:image',
+  'media:video',
+  'media:audio',
 ]);
 const customProjectInstanceTypePattern =
   /^[a-z][a-z0-9._-]{0,62}:[a-z][a-z0-9._-]{0,62}$/;
@@ -550,7 +563,10 @@ export function isProjectTreeNode(value: unknown): value is ProjectTreeNode {
 
   return (
     value.kind === 'folder' ||
-    (value.kind === 'page' && isProjectInstanceTypeId(value.pageType))
+    (value.kind === 'page' &&
+      isProjectInstanceTypeId(value.pageType) &&
+      typeof value.extension === 'string' &&
+      /^\.[a-z0-9][a-z0-9._-]{0,15}$/i.test(value.extension))
   );
 }
 
@@ -596,6 +612,9 @@ export function isProjectPageProperties(
   const keys =
     value.pageType === 'diagram'
       ? [...commonKeys, 'diagramType', 'elementCount', 'relationshipCount']
+      : typeof value.pageType === 'string' &&
+          value.pageType.startsWith('media:')
+        ? [...commonKeys, 'extension', 'mimeType']
       : commonKeys;
   if (!hasExactKeys(value, keys)) {
     return false;
@@ -609,6 +628,9 @@ export function isProjectPageProperties(
     value.contentSizeBytes <=
       (value.pageType === 'diagram'
         ? 16 * 1024 * 1024
+        : typeof value.pageType === 'string' &&
+            value.pageType.startsWith('media:')
+          ? Number.MAX_SAFE_INTEGER
         : MARKDOWN_DOCUMENT_MAX_BYTES) &&
     typeof value.diskSizeBytes === 'number' &&
     Number.isSafeInteger(value.diskSizeBytes) &&
@@ -624,6 +646,16 @@ export function isProjectPageProperties(
     return false;
   }
   return value.pageType === 'markdown' ||
+    ((value.pageType === 'media:image' ||
+      value.pageType === 'media:video' ||
+      value.pageType === 'media:audio') &&
+      typeof value.extension === 'string' &&
+      Boolean(projectMediaExtensionPattern.exec(value.extension)) &&
+      typeof value.mimeType === 'string' &&
+      value.mimeType.startsWith(`${value.pageType.slice(6)}/`) &&
+      value.readOnly === true &&
+      value.passwordProtected === false &&
+      value.locked === false) ||
     (value.pageType === 'diagram' &&
       (value.diagramType === 'class' ||
         value.diagramType === 'use-case' ||

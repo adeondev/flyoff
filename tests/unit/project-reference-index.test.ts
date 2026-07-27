@@ -11,6 +11,7 @@ import type { ProjectRepository } from '../../src/main/projects/project-reposito
 const nodes: readonly ProjectTreeNode[] = [
   {
     canContainChildren: true,
+    extension: '.md',
     hasChildren: false,
     kind: 'page',
     name: 'Source',
@@ -20,6 +21,7 @@ const nodes: readonly ProjectTreeNode[] = [
   },
   {
     canContainChildren: true,
+    extension: '.md',
     hasChildren: false,
     kind: 'page',
     name: 'Target',
@@ -29,6 +31,7 @@ const nodes: readonly ProjectTreeNode[] = [
   },
   {
     canContainChildren: true,
+    extension: '.md',
     hasChildren: false,
     kind: 'page',
     name: 'Common',
@@ -38,6 +41,7 @@ const nodes: readonly ProjectTreeNode[] = [
   },
   {
     canContainChildren: true,
+    extension: '.md',
     hasChildren: false,
     kind: 'page',
     name: 'Common',

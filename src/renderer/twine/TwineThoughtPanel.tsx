@@ -127,6 +127,32 @@ export function TwineThoughtPanel({
   }
 
   const thinking = message.status === 'streaming' && !answerVisible;
+  const content = (
+    <div
+      aria-label={thinking ? translate('twine.thinkingNow') : undefined}
+      className="twine-thought__content"
+      onPointerDown={markManualIntent}
+      onScroll={handleScroll}
+      onTouchStart={markManualIntent}
+      onWheel={(event) => {
+        markManualIntent();
+        if (event.deltaY < 0) {
+          followRef.current = false;
+        }
+      }}
+      ref={scrollerRef}
+    >
+      <TwineMarkdown
+        cacheKey={cacheKey}
+        source={message.thought ?? ''}
+        streaming={message.status === 'streaming'}
+      />
+    </div>
+  );
+
+  if (thinking) {
+    return <div className="twine-thought twine-thought--active">{content}</div>;
+  }
 
   return (
     <details
@@ -142,32 +168,10 @@ export function TwineThoughtPanel({
       open={open}
     >
       <summary>
-        <span>
-          {thinking
-            ? translate('twine.thinkingNow')
-            : `${translate('twine.thoughtFor')} ${elapsedThinking(message)}`}
-        </span>
+        <span>{`${translate('twine.thoughtFor')} ${elapsedThinking(message)}`}</span>
         <MaskedIcon icon={chevronIcon} />
       </summary>
-      <div
-        className="twine-thought__content"
-        onPointerDown={markManualIntent}
-        onScroll={handleScroll}
-        onTouchStart={markManualIntent}
-        onWheel={(event) => {
-          markManualIntent();
-          if (event.deltaY < 0) {
-            followRef.current = false;
-          }
-        }}
-        ref={scrollerRef}
-      >
-        <TwineMarkdown
-          cacheKey={cacheKey}
-          source={message.thought ?? ''}
-          streaming={message.status === 'streaming'}
-        />
-      </div>
+      <div className="twine-thought__reveal">{content}</div>
     </details>
   );
 }

@@ -12,6 +12,7 @@ import listIcon from '../../../public/images/icons/editor/list-bullet.svg';
 import quoteIcon from '../../../public/images/icons/editor/quote.svg';
 import strikeIcon from '../../../public/images/icons/editor/strikethrough.svg';
 import taskIcon from '../../../public/images/icons/instances/checklist.svg';
+import paletteIcon from '../../../newicons/paleta.svg';
 import { EMOJI_RECENT_LIMIT, type EmojiSkinTone } from '../../shared/contracts';
 import { MaskedIcon } from '../components/MaskedIcon';
 import { getTooltipTargetProps } from '../components/tooltip';
@@ -19,6 +20,8 @@ import type { Translate } from '../pages/page-types';
 import { useFlyoffPreferences } from '../preferences';
 import { EmojiPicker } from './EmojiPicker';
 import { MARKDOWN_ACTIONS, type MarkdownAction } from './markdown-actions';
+import type { MarkdownInlineColorKind } from './markdown-actions';
+import { MarkdownColorPopover } from './MarkdownColorPopover';
 
 export const MARKDOWN_ACTION_LABEL_KEYS: Record<
   MarkdownAction,
@@ -55,6 +58,7 @@ export interface MarkdownToolbarProps {
   disabled?: boolean;
   translate: Translate;
   onAction: (action: MarkdownAction) => void;
+  onColor: (kind: MarkdownInlineColorKind, color: string) => void;
   onEmoji: (emoji: string) => void;
   onEmojiPickerClose: () => void;
 }
@@ -62,13 +66,19 @@ export interface MarkdownToolbarProps {
 export function MarkdownToolbar({
   disabled = false,
   onAction,
+  onColor,
   onEmoji,
   onEmojiPickerClose,
   translate,
 }: MarkdownToolbarProps) {
   const { preferences, update } = useFlyoffPreferences();
   const emojiButtonRef = useRef<HTMLButtonElement>(null);
+  const colorButtonRef = useRef<HTMLButtonElement>(null);
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
+  const [colorPickerPosition, setColorPickerPosition] = useState<{
+    x: number;
+    y: number;
+  } | null>(null);
 
   function updateSkinTone(emojiSkinTone: EmojiSkinTone): void {
     update((current) => ({
@@ -130,6 +140,41 @@ export function MarkdownToolbar({
           </button>
         );
       })}
+      <button
+        aria-expanded={Boolean(colorPickerPosition)}
+        aria-haspopup="dialog"
+        aria-label={translate('toolbar.color')}
+        className="markdown-toolbar__button"
+        disabled={disabled}
+        onClick={(event) => {
+          if (colorPickerPosition) {
+            setColorPickerPosition(null);
+            return;
+          }
+          const bounds = event.currentTarget.getBoundingClientRect();
+          setColorPickerPosition({
+            x: bounds.left,
+            y: bounds.bottom + 5,
+          });
+        }}
+        ref={colorButtonRef}
+        type="button"
+        {...getTooltipTargetProps(translate('toolbar.color'), 'bottom')}
+      >
+        <MaskedIcon className="markdown-toolbar__icon" icon={paletteIcon} />
+      </button>
+      {colorPickerPosition ? (
+        <MarkdownColorPopover
+          anchorRef={colorButtonRef}
+          onApply={onColor}
+          onClose={() => {
+            setColorPickerPosition(null);
+            onEmojiPickerClose();
+          }}
+          position={colorPickerPosition}
+          translate={translate}
+        />
+      ) : null}
       <button
         aria-expanded={emojiPickerOpen}
         aria-haspopup="dialog"

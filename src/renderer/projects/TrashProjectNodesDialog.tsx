@@ -17,6 +17,7 @@ interface TrashProjectNodesDialogProps {
   ) => Promise<ProjectResult<TrashProjectNodeOutcome>>;
   onTrashed: (nodes: readonly ProjectTreeNode[]) => void;
   translate: Translate;
+  warning?: string;
 }
 
 export function TrashProjectNodesDialog({
@@ -25,6 +26,7 @@ export function TrashProjectNodesDialog({
   onTrash,
   onTrashed,
   translate,
+  warning,
 }: TrashProjectNodesDialogProps) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
@@ -76,6 +78,7 @@ export function TrashProjectNodesDialog({
       onCancel={onCancel}
       title={translate('projects.trashSelected')}
     >
+      {warning ? <p role="note">{warning}</p> : null}
       {error ? (
         <p className="flyoff-dialog__error" role="alert">
           {error}

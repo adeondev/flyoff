@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { applyMarkdownAction } from '../../src/renderer/projects/markdown-actions';
+import {
+  applyMarkdownAction,
+  applyMarkdownInlineColor,
+} from '../../src/renderer/projects/markdown-actions';
 
 describe('markdown toolbar actions', () => {
   it('wraps the selection and keeps it selected', () => {
@@ -49,5 +52,28 @@ describe('markdown toolbar actions', () => {
     expect(applyMarkdownAction('quote', 'said it', 0, 0).value).toBe(
       '> said it',
     );
+  });
+
+  it('creates exact text and highlight color syntax as one edit', () => {
+    const text = applyMarkdownInlineColor(
+      'text',
+      'John Kennedy',
+      0,
+      12,
+      '#3B82F6',
+    );
+    expect(text.value).toBe('[John Kennedy]{color=#3B82F6}');
+    expect(text.value.slice(text.selectionStart, text.selectionEnd)).toBe(
+      'John Kennedy',
+    );
+
+    const highlight = applyMarkdownInlineColor(
+      'highlight',
+      'important',
+      0,
+      9,
+      '#3B82F6',
+    );
+    expect(highlight.value).toBe('==important=={color=#3B82F6}');
   });
 });

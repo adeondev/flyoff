@@ -48,6 +48,31 @@ import type {
   ProjectNoteActivityEvent,
 } from '../../shared/contracts/project-note-activity';
 import type {
+  ProjectAppearanceSnapshot,
+  SetProjectAppearanceRequest,
+  SetProjectNoteAppearanceRequest,
+} from '../../shared/contracts/appearance';
+import type {
+  CreateMediaFolderRequest,
+  CreateMediaFolderWithEntriesRequest,
+  ImportProjectMediaOutcome,
+  ImportProjectMediaPathsRequest,
+  MediaAsset,
+  MediaGallerySnapshot,
+  MoveMediaEntriesRequest,
+  ProjectMediaAsset,
+  ProjectMediaUsage,
+  RenameMediaEntryRequest,
+  TrashMediaEntriesRequest,
+} from '../../shared/contracts/media';
+import type { MediaImportProgress } from './media-store';
+import {
+  imageDirectivesInSource,
+  parseMediaDirective,
+  serializeImageDirective,
+  serializeMediaDirective,
+} from '../../shared/markdown';
+import type {
   CommitDiagramImportOutcome,
   CreateDiagramDocumentRequest,
   DiagramDocumentEnvelope,
@@ -59,7 +84,11 @@ import {
   type DiagramDiagnostic,
   type DiagramDocument,
 } from '../../shared/diagram';
-import { ProjectOperationError, normalizeProjectError, projectErrorResult } from './errors';
+import {
+  ProjectOperationError,
+  normalizeProjectError,
+  projectErrorResult,
+} from './errors';
 import type { ProjectCatalogStore } from './project-catalog-store';
 import {
   EncryptedNoteKeySession,
@@ -122,7 +151,10 @@ export class ProjectService {
   private readonly locationTokens = new Map<string, PendingLocation>();
   private readonly projectQueues = new Map<string, Promise<void>>();
   private readonly senderEpochs = new Map<ProjectSenderKey, number>();
-  private readonly senderTransitions = new Map<ProjectSenderKey, Promise<void>>();
+  private readonly senderTransitions = new Map<
+    ProjectSenderKey,
+    Promise<void>
+  >();
   private readonly transitioningSenders = new Set<ProjectSenderKey>();
   private readonly noteKeys = new EncryptedNoteKeySession();
   private disposed = false;
@@ -191,7 +223,9 @@ export class ProjectService {
     }
 
     try {
-      const canonicalParent = await this.validateSelectedDirectory(selection.path);
+      const canonicalParent = await this.validateSelectedDirectory(
+        selection.path,
+      );
 
       if (canonicalParent !== selection.path) {
         throw new ProjectOperationError(
@@ -263,11 +297,14 @@ export class ProjectService {
     }
   }
 
-  async closeProject(senderKey: ProjectSenderKey): Promise<ProjectResult<null>> {
+  async closeProject(
+    senderKey: ProjectSenderKey,
+  ): Promise<ProjectResult<null>> {
     this.invalidateSenderActivation(senderKey);
     await this.transitionSender(senderKey, async () => {
       await this.waitForActiveProject(senderKey);
-      const previousProjectId = this.activeProjects.get(senderKey)?.summary.projectId;
+      const previousProjectId =
+        this.activeProjects.get(senderKey)?.summary.projectId;
       if (previousProjectId) {
         this.noteKeys.removeProject(senderKey, previousProjectId);
       }
@@ -368,7 +405,8 @@ export class ProjectService {
       for (const diagram of diagrams) {
         let node: ProjectTreeNode | undefined;
         for (let suffix = 1; suffix <= 1_000 && !node; suffix += 1) {
-          const name = suffix === 1 ? diagram.name : `${diagram.name} (${suffix})`;
+          const name =
+            suffix === 1 ? diagram.name : `${diagram.name} (${suffix})`;
           try {
             node = await repository.createDiagramPage(
               parentId,
@@ -401,6 +439,14 @@ export class ProjectService {
   ): Promise<ProjectResult<ProjectNodeMutationOutcome>> {
     return this.withActiveProject(senderKey, async (repository) => {
       const current = await repository.getNode(request.nodeId);
+      const mediaNodeIds = repository
+        .descendantNodeIds([request.nodeId])
+        .filter((nodeId) => {
+          const node = repository
+            .listIndexedNodes()
+            .find((candidate) => candidate.nodeId === nodeId);
+          return node?.kind === 'page' && node.pageType.startsWith('media:');
+        });
       if (current.name === request.name) {
         return {
           node: await repository.renameNode(request.nodeId, request.name),
@@ -433,10 +479,31 @@ export class ProjectService {
         throw error;
       }
       this.invalidateProjectReferenceIndexes(repository.summary.projectId);
+      const mediaRewrite =
+        mediaNodeIds.length > 0
+          ? await this.updateMediaFallbackPaths(
+              senderKey,
+              repository,
+              mediaNodeIds,
+            )
+          : {
+              skippedLockedNodeIds: [] as readonly string[],
+              updatedDocumentNodeIds: [] as readonly string[],
+            };
       return {
         node,
-        skippedLockedNodeIds: rewrite.skippedLockedNodeIds,
-        updatedDocumentNodeIds: rewrite.updatedDocumentNodeIds,
+        skippedLockedNodeIds: [
+          ...new Set([
+            ...rewrite.skippedLockedNodeIds,
+            ...mediaRewrite.skippedLockedNodeIds,
+          ]),
+        ],
+        updatedDocumentNodeIds: [
+          ...new Set([
+            ...rewrite.updatedDocumentNodeIds,
+            ...mediaRewrite.updatedDocumentNodeIds,
+          ]),
+        ],
       };
     });
   }
@@ -484,10 +551,29 @@ export class ProjectService {
         throw error;
       }
       this.invalidateProjectReferenceIndexes(repository.summary.projectId);
+      const mediaRewrite =
+        node.kind === 'page' && node.pageType.startsWith('media:')
+          ? await this.updateMediaFallbackPaths(senderKey, repository, [
+              node.nodeId,
+            ])
+          : {
+              skippedLockedNodeIds: [] as readonly string[],
+              updatedDocumentNodeIds: [] as readonly string[],
+            };
       return {
         node,
-        skippedLockedNodeIds: rewrite.skippedLockedNodeIds,
-        updatedDocumentNodeIds: rewrite.updatedDocumentNodeIds,
+        skippedLockedNodeIds: [
+          ...new Set([
+            ...rewrite.skippedLockedNodeIds,
+            ...mediaRewrite.skippedLockedNodeIds,
+          ]),
+        ],
+        updatedDocumentNodeIds: [
+          ...new Set([
+            ...rewrite.updatedDocumentNodeIds,
+            ...mediaRewrite.updatedDocumentNodeIds,
+          ]),
+        ],
       };
     });
   }
@@ -498,6 +584,14 @@ export class ProjectService {
   ): Promise<ProjectResult<ProjectNodesMutationOutcome>> {
     return this.withActiveProject(senderKey, async (repository) => {
       const rootNodeIds = repository.normalizeNodeRoots(request.nodeIds);
+      const mediaNodeIds = repository
+        .descendantNodeIds(rootNodeIds)
+        .filter((nodeId) => {
+          const node = repository
+            .listIndexedNodes()
+            .find((candidate) => candidate.nodeId === nodeId);
+          return node?.kind === 'page' && node.pageType.startsWith('media:');
+        });
       const projected = new Map(this.markdownPaths(repository));
       let pathsChanged = false;
       for (const nodeId of rootNodeIds) {
@@ -520,10 +614,7 @@ export class ProjectService {
         }
         const prefix = `${currentRoot}/`;
         for (const [markdownNodeId, currentPath] of projected) {
-          if (
-            currentPath !== currentRoot &&
-            !currentPath.startsWith(prefix)
-          ) {
+          if (currentPath !== currentRoot && !currentPath.startsWith(prefix)) {
             continue;
           }
           projected.set(
@@ -560,10 +651,25 @@ export class ProjectService {
           request.beforeNodeId,
         );
         this.invalidateProjectReferenceIndexes(repository.summary.projectId);
+        const mediaRewrite = await this.updateMediaFallbackPaths(
+          senderKey,
+          repository,
+          mediaNodeIds,
+        );
         return {
           nodes,
-          skippedLockedNodeIds: rewrite.skippedLockedNodeIds,
-          updatedDocumentNodeIds: rewrite.updatedDocumentNodeIds,
+          skippedLockedNodeIds: [
+            ...new Set([
+              ...rewrite.skippedLockedNodeIds,
+              ...mediaRewrite.skippedLockedNodeIds,
+            ]),
+          ],
+          updatedDocumentNodeIds: [
+            ...new Set([
+              ...rewrite.updatedDocumentNodeIds,
+              ...mediaRewrite.updatedDocumentNodeIds,
+            ]),
+          ],
         };
       } catch (error) {
         await rewrite.rollback();
@@ -579,9 +685,7 @@ export class ProjectService {
     return this.withActiveProject(senderKey, async (repository) => {
       const nodeIds = await repository.trashNode(request.nodeId);
       await Promise.all(
-        nodeIds.map((nodeId) =>
-          repository.linkMaintenance.complete(nodeId),
-        ),
+        nodeIds.map((nodeId) => repository.linkMaintenance.complete(nodeId)),
       ).catch(() => undefined);
       const removed = new Set(nodeIds);
       try {
@@ -594,9 +698,7 @@ export class ProjectService {
           continue;
         }
         for (const nodeId of removed) {
-          this.noteKeys.remove(
-            this.keyScope(clientId, repository, nodeId),
-          );
+          this.noteKeys.remove(this.keyScope(clientId, repository, nodeId));
           active.referenceIndex.clearNode(nodeId);
         }
         active.referenceIndex.invalidate();
@@ -612,9 +714,7 @@ export class ProjectService {
     return this.withActiveProject(senderKey, async (repository) => {
       const nodeIds = await repository.trashNodes(request.nodeIds);
       await Promise.all(
-        nodeIds.map((nodeId) =>
-          repository.linkMaintenance.complete(nodeId),
-        ),
+        nodeIds.map((nodeId) => repository.linkMaintenance.complete(nodeId)),
       ).catch(() => undefined);
       const removed = new Set(nodeIds);
       try {
@@ -627,9 +727,7 @@ export class ProjectService {
           continue;
         }
         for (const nodeId of removed) {
-          this.noteKeys.remove(
-            this.keyScope(clientId, repository, nodeId),
-          );
+          this.noteKeys.remove(this.keyScope(clientId, repository, nodeId));
           active.referenceIndex.clearNode(nodeId);
         }
         active.referenceIndex.invalidate();
@@ -651,16 +749,16 @@ export class ProjectService {
     senderKey: ProjectSenderKey,
     request: ReadMarkdownDocumentRequest,
   ): Promise<ProjectResult<MarkdownDocument>> {
-    const result = await this.withActiveProject(senderKey, async (repository) => {
-      const key = this.noteKeys.peek(
-        this.keyScope(senderKey, repository, request.nodeId),
-      );
-      const document = await repository.readMarkdown(
-        request.nodeId,
-        key,
-      );
-      return this.repairPendingLinks(repository, document, key);
-    });
+    const result = await this.withActiveProject(
+      senderKey,
+      async (repository) => {
+        const key = this.noteKeys.peek(
+          this.keyScope(senderKey, repository, request.nodeId),
+        );
+        const document = await repository.readMarkdown(request.nodeId, key);
+        return this.repairPendingLinks(repository, document, key);
+      },
+    );
     if (!result.ok && result.error.code === 'password-required') {
       this.removeNoteKey(senderKey, request.nodeId);
       const projectId = this.activeProjects.get(senderKey)?.summary.projectId;
@@ -677,27 +775,30 @@ export class ProjectService {
     senderKey: ProjectSenderKey,
     request: SaveMarkdownDocumentRequest,
   ): Promise<ProjectResult<MarkdownDocument>> {
-    const result = await this.withActiveProject(senderKey, async (repository) => {
-      const repair = await repository.linkMaintenance.rewrite(
-        request.nodeId,
-        request.content,
-        this.markdownPaths(repository),
-      );
-      const document = await repository.saveMarkdown(
-        request.nodeId,
-        repair.content,
-        request.expectedRevision,
-        request.force,
-        this.noteKeys.peek(this.keyScope(senderKey, repository, request.nodeId)),
-      );
-      if (repair.pending) {
-        await repository.linkMaintenance.complete(request.nodeId);
-        this.invalidateProjectReferenceIndexes(
-          repository.summary.projectId,
+    const result = await this.withActiveProject(
+      senderKey,
+      async (repository) => {
+        const repair = await repository.linkMaintenance.rewrite(
+          request.nodeId,
+          request.content,
+          this.markdownPaths(repository),
         );
-      }
-      return document;
-    });
+        const document = await repository.saveMarkdown(
+          request.nodeId,
+          repair.content,
+          request.expectedRevision,
+          request.force,
+          this.noteKeys.peek(
+            this.keyScope(senderKey, repository, request.nodeId),
+          ),
+        );
+        if (repair.pending) {
+          await repository.linkMaintenance.complete(request.nodeId);
+          this.invalidateProjectReferenceIndexes(repository.summary.projectId);
+        }
+        return document;
+      },
+    );
     if (!result.ok && result.error.code === 'password-required') {
       this.removeNoteKey(senderKey, request.nodeId);
       const projectId = this.activeProjects.get(senderKey)?.summary.projectId;
@@ -708,6 +809,242 @@ export class ProjectService {
       this.activeProjects.get(senderKey)?.referenceIndex.update(result.value);
     }
     return result;
+  }
+
+  importMedia(
+    senderKey: ProjectSenderKey,
+    request: ImportProjectMediaPathsRequest,
+  ): Promise<ProjectResult<ImportProjectMediaOutcome>> {
+    return this.importMediaWithProgress(senderKey, request);
+  }
+
+  importMediaWithProgress(
+    senderKey: ProjectSenderKey,
+    request: ImportProjectMediaPathsRequest,
+    onProgress?: (progress: MediaImportProgress) => void,
+    signal?: AbortSignal,
+  ): Promise<ProjectResult<ImportProjectMediaOutcome>> {
+    return this.withActiveProject(senderKey, async (repository) => {
+      const imported = await repository.media.importPaths(
+        request.paths,
+        request.folderId ?? null,
+        onProgress,
+        signal,
+      );
+      return this.mediaImportOutcome(imported);
+    });
+  }
+
+  private mediaImportOutcome(
+    imported: readonly MediaAsset[],
+  ): ImportProjectMediaOutcome {
+    return {
+      assets: imported.map((asset) => ({
+        nodeId: asset.assetId,
+        parentId: asset.folderId,
+        name: asset.name,
+        extension: asset.extension,
+        kind: asset.kind,
+        mimeType: asset.mimeType,
+        sizeBytes: asset.sizeBytes,
+        relativePath: asset.relativePath,
+        pixelWidth: asset.pixelWidth,
+        pixelHeight: asset.pixelHeight,
+        revision: asset.revision,
+      })),
+      nodes: imported.map((asset) => ({
+        canContainChildren: false,
+        extension: asset.extension,
+        hasChildren: false,
+        kind: 'page' as const,
+        name: asset.name,
+        nodeId: asset.assetId,
+        pageType: `media:${asset.kind}`,
+        parentId: null,
+      })),
+    };
+  }
+
+  getMediaGallery(
+    senderKey: ProjectSenderKey,
+  ): Promise<ProjectResult<MediaGallerySnapshot>> {
+    return this.withActiveProject(senderKey, async (repository) =>
+      repository.media.snapshot(),
+    );
+  }
+
+  createMediaFolder(
+    senderKey: ProjectSenderKey,
+    request: CreateMediaFolderRequest,
+  ): Promise<ProjectResult<MediaGallerySnapshot>> {
+    return this.withActiveProject(senderKey, async (repository) => {
+      await repository.media.createFolder(
+        request.parentId,
+        request.name,
+        request.expectedRevision,
+      );
+      return repository.media.snapshot();
+    });
+  }
+
+  createMediaFolderWithEntries(
+    senderKey: ProjectSenderKey,
+    request: CreateMediaFolderWithEntriesRequest,
+  ): Promise<ProjectResult<MediaGallerySnapshot>> {
+    return this.withActiveProject(senderKey, async (repository) => {
+      await repository.media.createFolderWithEntries(
+        request.parentId,
+        request.name,
+        request.entries,
+        request.expectedRevision,
+      );
+      await this.updateMediaFallbackPaths(
+        senderKey,
+        repository,
+        repository.media.snapshot().assets.map(({ assetId }) => assetId),
+      );
+      return repository.media.snapshot();
+    });
+  }
+
+  renameMediaEntry(
+    senderKey: ProjectSenderKey,
+    request: RenameMediaEntryRequest,
+  ): Promise<ProjectResult<MediaGallerySnapshot>> {
+    return this.withActiveProject(senderKey, async (repository) => {
+      await repository.media.renameEntry(
+        request.kind,
+        request.entryId,
+        request.name,
+        request.expectedRevision,
+      );
+      await this.updateMediaFallbackPaths(
+        senderKey,
+        repository,
+        repository.media.snapshot().assets.map(({ assetId }) => assetId),
+      );
+      return repository.media.snapshot();
+    });
+  }
+
+  moveMediaEntries(
+    senderKey: ProjectSenderKey,
+    request: MoveMediaEntriesRequest,
+  ): Promise<ProjectResult<MediaGallerySnapshot>> {
+    return this.withActiveProject(senderKey, async (repository) => {
+      await repository.media.moveEntries(
+        request.entries,
+        request.parentId,
+        request.expectedRevision,
+      );
+      await this.updateMediaFallbackPaths(
+        senderKey,
+        repository,
+        repository.media.snapshot().assets.map(({ assetId }) => assetId),
+      );
+      return repository.media.snapshot();
+    });
+  }
+
+  trashMediaEntries(
+    senderKey: ProjectSenderKey,
+    request: TrashMediaEntriesRequest,
+  ): Promise<ProjectResult<MediaGallerySnapshot>> {
+    return this.withActiveProject(senderKey, async (repository) => {
+      const snapshot = repository.media.snapshot();
+      const directAssetIds = new Set(
+        request.entries.flatMap((entry) =>
+          entry.kind === 'asset' ? [entry.entryId] : [],
+        ),
+      );
+      const folderIds = request.entries.flatMap((entry) =>
+        entry.kind === 'folder' ? [entry.entryId] : [],
+      );
+      const targetAssets = snapshot.assets.filter(
+        (asset) =>
+          directAssetIds.has(asset.assetId) ||
+          folderIds.some((rootId) => {
+                let parentId = asset.folderId;
+                while (parentId) {
+                  if (parentId === rootId) {
+                    return true;
+                  }
+                  parentId =
+                    snapshot.folders.find(
+                      ({ folderId }) => folderId === parentId,
+                    )?.parentId ?? null;
+                }
+                return false;
+              }),
+      );
+      const referenceIndex = this.requireActiveReferenceIndex(senderKey);
+      await referenceIndex.ensureAvailable();
+      if (!request.confirmed) {
+        for (const asset of targetAssets) {
+          if (
+            (
+              await this.collectMediaUsages(
+                senderKey,
+                repository,
+                asset.assetId,
+              )
+            ).length > 0
+          ) {
+            throw new ProjectOperationError(
+              'invalid-operation',
+              'This media is used by one or more notes and requires confirmation.',
+            );
+          }
+        }
+      }
+      await repository.media.trashEntries(
+        request.entries,
+        request.expectedRevision,
+      );
+      return repository.media.snapshot();
+    });
+  }
+
+  getMediaAsset(
+    senderKey: ProjectSenderKey,
+    nodeId: string,
+  ): Promise<ProjectResult<ProjectMediaAsset>> {
+    return this.withActiveProject(senderKey, (repository) =>
+      repository.getMediaAsset(nodeId),
+    );
+  }
+
+  listMediaUsages(
+    senderKey: ProjectSenderKey,
+    nodeId: string,
+  ): Promise<ProjectResult<readonly ProjectMediaUsage[]>> {
+    return this.withActiveProject(senderKey, async (repository) => {
+      await repository.getMediaAsset(nodeId);
+      return this.collectMediaUsages(senderKey, repository, nodeId);
+    });
+  }
+
+  async resolveMediaProtocolAsset(
+    projectId: string,
+    assetId: string,
+  ): Promise<{ absolutePath: string; asset: ProjectMediaAsset } | null> {
+    const repository = this.repositories.get(projectId);
+    if (
+      !repository ||
+      ![...this.activeProjects.values()].some(
+        (active) => active.repository === repository,
+      )
+    ) {
+      return null;
+    }
+    try {
+      return {
+        absolutePath: await repository.media.resolveReadableAssetPath(assetId),
+        asset: await repository.getMediaAsset(assetId),
+      };
+    } catch {
+      return null;
+    }
   }
 
   listLinkTargets(
@@ -759,7 +1096,8 @@ export class ProjectService {
     senderKey: ProjectSenderKey,
   ): Promise<ProjectResult<readonly ProjectNoteActivityEntry[]>> {
     return this.withActiveProject(senderKey, async (repository) => {
-      const entries = this.activityStore?.get(repository.summary.projectId) ?? [];
+      const entries =
+        this.activityStore?.get(repository.summary.projectId) ?? [];
       if (entries.length === 0) {
         return [];
       }
@@ -843,13 +1181,12 @@ export class ProjectService {
     const result = await this.withActiveProject(senderKey, (repository) =>
       repository.getPageProperties(
         request.nodeId,
-        this.noteKeys.peek(this.keyScope(senderKey, repository, request.nodeId)),
+        this.noteKeys.peek(
+          this.keyScope(senderKey, repository, request.nodeId),
+        ),
       ),
     );
-    if (
-      result.ok &&
-      (!result.value.passwordProtected || result.value.locked)
-    ) {
+    if (result.ok && (!result.value.passwordProtected || result.value.locked)) {
       this.removeNoteKey(senderKey, request.nodeId);
     }
     return result;
@@ -864,13 +1201,12 @@ export class ProjectService {
         request.nodeId,
         request.readOnly,
         request.expectedRevision,
-        this.noteKeys.peek(this.keyScope(senderKey, repository, request.nodeId)),
+        this.noteKeys.peek(
+          this.keyScope(senderKey, repository, request.nodeId),
+        ),
       ),
     );
-    if (
-      result.ok &&
-      (!result.value.passwordProtected || result.value.locked)
-    ) {
+    if (result.ok && (!result.value.passwordProtected || result.value.locked)) {
       this.removeNoteKey(senderKey, request.nodeId);
     }
     if (result.ok) {
@@ -882,27 +1218,45 @@ export class ProjectService {
     return result;
   }
 
+  getAppearance(
+    senderKey: ProjectSenderKey,
+  ): Promise<ProjectResult<ProjectAppearanceSnapshot>> {
+    return this.withActiveProject(senderKey, (repository) =>
+      repository.getAppearance(),
+    );
+  }
+
+  setNoteAppearance(
+    senderKey: ProjectSenderKey,
+    request: SetProjectNoteAppearanceRequest,
+  ): Promise<ProjectResult<ProjectAppearanceSnapshot>> {
+    return this.withActiveProject(senderKey, (repository) =>
+      repository.setNoteAppearance(request.nodeId, request.seed),
+    );
+  }
+
+  setProjectAppearance(
+    senderKey: ProjectSenderKey,
+    request: SetProjectAppearanceRequest,
+  ): Promise<ProjectResult<ProjectAppearanceSnapshot>> {
+    return this.withActiveProject(senderKey, (repository) =>
+      repository.setProjectAppearance(request.seed),
+    );
+  }
+
   protectPage(
     senderKey: ProjectSenderKey,
     request: ProtectProjectPageRequest,
   ): Promise<ProjectResult<ProjectPageProperties>> {
     return this.withActiveProject(senderKey, async (repository) => {
-      this.activityStore?.remove(
-        repository.summary.projectId,
-        request.nodeId,
-      );
+      this.activityStore?.remove(repository.summary.projectId, request.nodeId);
       const outcome = await repository.protectPage(
         request.nodeId,
         request.password,
         request.expectedRevision,
       );
       this.noteKeys.removeNode(repository.summary.projectId, request.nodeId);
-      this.adoptNoteKey(
-        senderKey,
-        repository,
-        request.nodeId,
-        outcome.key,
-      );
+      this.adoptNoteKey(senderKey, repository, request.nodeId, outcome.key);
       this.clearProjectReferenceNode(
         repository.summary.projectId,
         request.nodeId,
@@ -931,20 +1285,9 @@ export class ProjectService {
         const properties =
           repaired.revision === outcome.properties.revision
             ? outcome.properties
-            : await repository.getPageProperties(
-                request.nodeId,
-                outcome.key,
-              );
-        this.noteKeys.removeNode(
-          repository.summary.projectId,
-          request.nodeId,
-        );
-        this.adoptNoteKey(
-          senderKey,
-          repository,
-          request.nodeId,
-          outcome.key,
-        );
+            : await repository.getPageProperties(request.nodeId, outcome.key);
+        this.noteKeys.removeNode(repository.summary.projectId, request.nodeId);
+        this.adoptNoteKey(senderKey, repository, request.nodeId, outcome.key);
         this.clearProjectReferenceNode(
           repository.summary.projectId,
           request.nodeId,
@@ -988,15 +1331,8 @@ export class ProjectService {
           outcome.document,
           outcome.key,
         );
-        this.adoptNoteKey(
-          senderKey,
-          repository,
-          request.nodeId,
-          outcome.key,
-        );
-        this.activeProjects
-          .get(senderKey)
-          ?.referenceIndex.update(document);
+        this.adoptNoteKey(senderKey, repository, request.nodeId, outcome.key);
+        this.activeProjects.get(senderKey)?.referenceIndex.update(document);
         return document;
       } catch (error) {
         outcome.key.destroy();
@@ -1017,7 +1353,9 @@ export class ProjectService {
           'Only Markdown notes can be locked.',
         );
       }
-      this.noteKeys.remove(this.keyScope(senderKey, repository, request.nodeId));
+      this.noteKeys.remove(
+        this.keyScope(senderKey, repository, request.nodeId),
+      );
       this.activeProjects
         .get(senderKey)
         ?.referenceIndex.clearNode(request.nodeId);
@@ -1072,7 +1410,8 @@ export class ProjectService {
       this.assertSenderActivationCurrent(senderKey, senderEpoch);
       await this.waitForActiveProject(senderKey);
       this.assertSenderActivationCurrent(senderKey, senderEpoch);
-      const previousProjectId = this.activeProjects.get(senderKey)?.summary.projectId;
+      const previousProjectId =
+        this.activeProjects.get(senderKey)?.summary.projectId;
       this.activeProjects.get(senderKey)?.referenceIndex.clear();
       const existing = this.repositories.get(repository.summary.projectId);
 
@@ -1103,7 +1442,25 @@ export class ProjectService {
         summary: sharedRepository.summary,
       });
 
-      if (previousProjectId && previousProjectId !== repository.summary.projectId) {
+      try {
+        const assetIds = sharedRepository.media
+          .snapshot()
+          .assets.map(({ assetId }) => assetId);
+        if (assetIds.length > 0) {
+          await this.updateMediaFallbackPaths(
+            senderKey,
+            sharedRepository,
+            assetIds,
+          );
+        }
+      } catch {
+        // Gallery failures stay isolated from note activation.
+      }
+
+      if (
+        previousProjectId &&
+        previousProjectId !== repository.summary.projectId
+      ) {
         this.releaseRepositoryIfUnused(previousProjectId);
       }
 
@@ -1192,9 +1549,7 @@ export class ProjectService {
     return new Map(
       repository
         .listIndexedNodes()
-        .filter(
-          (node) => node.kind === 'page' && node.pageType === 'markdown',
-        )
+        .filter((node) => node.kind === 'page' && node.pageType === 'markdown')
         .map((node) => [
           node.nodeId,
           repository.projectRelativePath(node.nodeId),
@@ -1253,6 +1608,128 @@ export class ProjectService {
     return paths;
   }
 
+  private async collectMediaUsages(
+    senderKey: ProjectSenderKey,
+    repository: ProjectRepository,
+    assetId: string,
+  ): Promise<ProjectMediaUsage[]> {
+    const usages: ProjectMediaUsage[] = [];
+    for (const node of repository.listIndexedNodes()) {
+      if (node.kind !== 'page' || node.pageType !== 'markdown') {
+        continue;
+      }
+      try {
+        const document = await repository.readMarkdown(
+          node.nodeId,
+          this.noteKeys.peek(this.keyScope(senderKey, repository, node.nodeId)),
+        );
+        const count =
+          imageDirectivesInSource(document.content).filter(
+            ({ directive }) => directive.assetId === assetId,
+          ).length +
+          document.content.split(/\r?\n/).filter(
+            (line) => parseMediaDirective(line)?.id === assetId,
+          ).length;
+        if (count > 0) {
+          usages.push({
+            noteNodeId: node.nodeId,
+            noteName: node.name,
+            notePath: repository.projectRelativePath(node.nodeId),
+            count,
+          });
+        }
+      } catch (error) {
+        if (normalizeProjectError(error).code !== 'password-required') {
+          throw error;
+        }
+      }
+    }
+    return usages;
+  }
+
+  private async updateMediaFallbackPaths(
+    senderKey: ProjectSenderKey,
+    repository: ProjectRepository,
+    mediaNodeIds: readonly string[],
+  ): Promise<{
+    skippedLockedNodeIds: readonly string[];
+    updatedDocumentNodeIds: readonly string[];
+  }> {
+    if (mediaNodeIds.length === 0) {
+      return { skippedLockedNodeIds: [], updatedDocumentNodeIds: [] };
+    }
+    const paths = new Map(
+      mediaNodeIds.map((nodeId) => {
+        try {
+          return [
+            nodeId,
+            repository.media.getAsset(nodeId).relativePath,
+          ] as const;
+        } catch {
+          return [nodeId, repository.projectRelativePath(nodeId)] as const;
+        }
+      }),
+    );
+    const index = this.requireActiveReferenceIndex(senderKey);
+    await index.ensureAvailable();
+    const skipped = new Set(index.lockedNodes());
+    const updated: string[] = [];
+    for (const { document, nodeId } of index.indexedDocuments()) {
+      let changed = false;
+      let content = document.content
+        .split('\n')
+        .map((line) => {
+          const directive = parseMediaDirective(line);
+          const nextPath = directive ? paths.get(directive.id) : undefined;
+          if (!directive || !nextPath || directive.path === nextPath) {
+            return line;
+          }
+          changed = true;
+          return serializeMediaDirective({ ...directive, path: nextPath });
+        })
+        .join('\n');
+      const inlineImages = imageDirectivesInSource(content);
+      for (let imageIndex = inlineImages.length - 1; imageIndex >= 0; imageIndex -= 1) {
+        const image = inlineImages[imageIndex]!;
+        const imagePath = paths.get(image.directive.assetId);
+        if (!imagePath || image.directive.path === imagePath) {
+          continue;
+        }
+        changed = true;
+        content =
+          content.slice(0, image.start) +
+          serializeImageDirective({ ...image.directive, path: imagePath }) +
+          content.slice(image.end);
+      }
+      if (!changed) {
+        continue;
+      }
+      if (document.readOnly) {
+        skipped.add(nodeId);
+        continue;
+      }
+      try {
+        await repository.saveMarkdown(
+          nodeId,
+          content,
+          document.revision,
+          false,
+          this.noteKeys.peek(this.keyScope(senderKey, repository, nodeId)),
+        );
+        updated.push(nodeId);
+      } catch {
+        skipped.add(nodeId);
+      }
+    }
+    if (updated.length > 0) {
+      index.invalidate();
+    }
+    return {
+      skippedLockedNodeIds: [...skipped],
+      updatedDocumentNodeIds: updated,
+    };
+  }
+
   private async applyProjectedLinkRewrites(
     senderKey: ProjectSenderKey,
     repository: ProjectRepository,
@@ -1287,8 +1764,7 @@ export class ProjectService {
           continue;
         }
         const currentTargetPath = repository.projectRelativePath(targetNodeId);
-        const nextTargetPath =
-          nextPaths.get(targetNodeId) ?? currentTargetPath;
+        const nextTargetPath = nextPaths.get(targetNodeId) ?? currentTargetPath;
         if (
           currentSourcePath === nextSourcePath &&
           currentTargetPath === nextTargetPath
@@ -1320,11 +1796,11 @@ export class ProjectService {
         );
       }
       let content = document.content;
-      for (const edit of edits.sort((left, right) => right.start - left.start)) {
+      for (const edit of edits.sort(
+        (left, right) => right.start - left.start,
+      )) {
         content =
-          content.slice(0, edit.start) +
-          edit.value +
-          content.slice(edit.end);
+          content.slice(0, edit.start) + edit.value + content.slice(edit.end);
       }
       replacements.set(nodeId, { content, original: document });
     }
@@ -1433,7 +1909,10 @@ export class ProjectService {
     }
   }
 
-  private enqueue<T>(projectId: string, operation: () => Promise<T>): Promise<T> {
+  private enqueue<T>(
+    projectId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
     const previous = this.projectQueues.get(projectId) ?? Promise.resolve();
     const pending = previous.then(operation, operation);
     const settled = pending.then(
@@ -1451,7 +1930,9 @@ export class ProjectService {
     return pending;
   }
 
-  private async validateSelectedDirectory(directoryPath: string): Promise<string> {
+  private async validateSelectedDirectory(
+    directoryPath: string,
+  ): Promise<string> {
     if (!path.isAbsolute(directoryPath)) {
       throw new ProjectOperationError(
         'unsafe-path',
@@ -1482,7 +1963,9 @@ export class ProjectService {
     }
   }
 
-  private async waitForActiveProject(senderKey: ProjectSenderKey): Promise<void> {
+  private async waitForActiveProject(
+    senderKey: ProjectSenderKey,
+  ): Promise<void> {
     const projectId = this.activeProjects.get(senderKey)?.summary.projectId;
 
     if (projectId) {
@@ -1528,7 +2011,10 @@ export class ProjectService {
   }
 
   private invalidateSenderActivation(senderKey: ProjectSenderKey): void {
-    this.senderEpochs.set(senderKey, (this.senderEpochs.get(senderKey) ?? 0) + 1);
+    this.senderEpochs.set(
+      senderKey,
+      (this.senderEpochs.get(senderKey) ?? 0) + 1,
+    );
   }
 
   private assertSenderActivationCurrent(

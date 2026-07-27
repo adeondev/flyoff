@@ -387,6 +387,7 @@ describe('Flyoff tooltip', () => {
     render(
       <MarkdownToolbar
         onAction={vi.fn()}
+        onColor={vi.fn()}
         onEmoji={vi.fn()}
         onEmojiPickerClose={vi.fn()}
         translate={(key) => key}
@@ -394,7 +395,7 @@ describe('Flyoff tooltip', () => {
     );
 
     const buttons = screen.getAllByRole('button');
-    expect(buttons).toHaveLength(12);
+    expect(buttons).toHaveLength(13);
     for (const button of buttons) {
       expect(button.textContent).toBe('');
       expect(button.getAttribute('aria-label')).toBeTruthy();

@@ -108,17 +108,53 @@ describe('Twine streaming Markdown', () => {
   });
 
   it('drains the queue after done without revealing the remainder at once', () => {
+    const onRevealComplete = vi.fn();
     const { container, rerender } = render(
-      <TwineMarkdown source="abcdefghijklmnop" streaming />,
+      <TwineMarkdown
+        onRevealComplete={onRevealComplete}
+        source="abcdefghijklmnop"
+        streaming
+      />,
     );
     const markdown = container.querySelector('.twine-markdown')!;
     runFrame();
     const partial = markdown.textContent ?? '';
 
-    rerender(<TwineMarkdown source="abcdefghijklmnop" streaming={false} />);
+    rerender(
+      <TwineMarkdown
+        onRevealComplete={onRevealComplete}
+        source="abcdefghijklmnop"
+        streaming={false}
+      />,
+    );
     expect(markdown.textContent).toBe(partial);
     expect(partial).not.toBe('abcdefghijklmnop');
+    expect(onRevealComplete).not.toHaveBeenCalled();
     drainText(markdown, 'abcdefghijklmnop');
+    expect(onRevealComplete).toHaveBeenCalledOnce();
+  });
+
+  it('reports completion only after done when the visible text is caught up', () => {
+    const onRevealComplete = vi.fn();
+    const view = render(
+      <TwineMarkdown
+        onRevealComplete={onRevealComplete}
+        source="ready"
+        streaming
+      />,
+    );
+    const markdown = view.container.querySelector('.twine-markdown')!;
+
+    drainText(markdown, 'ready');
+    expect(onRevealComplete).not.toHaveBeenCalled();
+    view.rerender(
+      <TwineMarkdown
+        onRevealComplete={onRevealComplete}
+        source="ready"
+        streaming={false}
+      />,
+    );
+    expect(onRevealComplete).toHaveBeenCalledOnce();
   });
 
   it('formats the visible prefix as Markdown while it is revealed', () => {
@@ -168,11 +204,25 @@ describe('Twine streaming Markdown', () => {
 
   it('shows complete content immediately with reduced motion', () => {
     vi.stubGlobal('matchMedia', () => ({ matches: true }));
-    const { container } = render(
-      <TwineMarkdown source="**ready**" streaming />,
+    const onRevealComplete = vi.fn();
+    const view = render(
+      <TwineMarkdown
+        onRevealComplete={onRevealComplete}
+        source="**ready**"
+        streaming
+      />,
     );
 
-    expect(container.querySelector('strong')?.textContent).toBe('ready');
+    expect(view.container.querySelector('strong')?.textContent).toBe('ready');
     expect(frames).toHaveLength(0);
+    expect(onRevealComplete).not.toHaveBeenCalled();
+    view.rerender(
+      <TwineMarkdown
+        onRevealComplete={onRevealComplete}
+        source="**ready**"
+        streaming={false}
+      />,
+    );
+    expect(onRevealComplete).toHaveBeenCalledOnce();
   });
 });

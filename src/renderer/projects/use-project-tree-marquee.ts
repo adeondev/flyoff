@@ -8,11 +8,11 @@ import {
 } from 'react';
 
 import {
-  emptyProjectTreeSelection,
-  selectProjectTreeMarquee,
-  type ProjectTreeMarqueeMode,
-  type ProjectTreeSelection,
-} from './project-tree-selection';
+  emptyCollectionSelection,
+  selectCollectionMarquee,
+  type CollectionMarqueeMode,
+  type CollectionSelection,
+} from './collection-selection';
 
 const MARQUEE_START_DISTANCE = 4;
 const AUTO_SCROLL_EDGE = 36;
@@ -32,7 +32,7 @@ interface MarqueeBox {
 
 interface MarqueeSession {
   active: boolean;
-  baseSelection: ProjectTreeSelection;
+  baseSelection: CollectionSelection;
   currentClient: Point;
   frameId?: number;
   itemBounds: ReadonlyMap<
@@ -40,7 +40,7 @@ interface MarqueeSession {
     { bottom: number; left: number; right: number; top: number }
   >;
   limitReported: boolean;
-  mode: ProjectTreeMarqueeMode;
+  mode: CollectionMarqueeMode;
   originClient: Point;
   originContent: Point;
   pointerId: number;
@@ -51,16 +51,25 @@ interface MarqueeSession {
 
 interface UseProjectTreeMarqueeOptions {
   disabled?: boolean;
-  itemRefs: React.RefObject<Map<string, HTMLDivElement>>;
-  onSelectionChange: (selection: ProjectTreeSelection) => void;
+  getItemBounds?: (
+    visibleItemIds: readonly string[],
+    scrollElement: HTMLElement,
+  ) => ReadonlyMap<
+    string,
+    { bottom: number; left: number; right: number; top: number }
+  >;
+  itemRefs: React.RefObject<Map<string, HTMLElement>>;
+  itemSelector?: string;
+  onSelectionChange: (selection: CollectionSelection) => void;
   onSelectionLimitReached?: () => void;
-  selection: ProjectTreeSelection;
+  scrollContainerSelector?: string;
+  selection: CollectionSelection;
   visibleNodeIds: readonly string[];
 }
 
 function sameSelection(
-  first: ProjectTreeSelection,
-  second: ProjectTreeSelection,
+  first: CollectionSelection,
+  second: CollectionSelection,
 ): boolean {
   if (
     first.anchorId !== second.anchorId ||
@@ -98,9 +107,12 @@ function autoScrollSpeed(clientY: number, bounds: DOMRect): number {
 
 export function useProjectTreeMarquee({
   disabled = false,
+  getItemBounds,
   itemRefs,
+  itemSelector = '.project-tree__item',
   onSelectionChange,
   onSelectionLimitReached,
+  scrollContainerSelector = '.project-sidebar__tree-scroll',
   selection,
   visibleNodeIds,
 }: UseProjectTreeMarqueeOptions) {
@@ -219,7 +231,7 @@ export function useProjectTreeMarquee({
       }
     }
 
-    const nextSelection = selectProjectTreeMarquee(
+    const nextSelection = selectCollectionMarquee(
       session.baseSelection,
       session.visibleNodeIds,
       intersectedNodeIds,
@@ -291,12 +303,12 @@ export function useProjectTreeMarquee({
       event.pointerType === 'touch' ||
       !(target instanceof Element) ||
       !event.currentTarget.contains(target) ||
-      target.closest('.project-tree__item')
+      target.closest(itemSelector)
     ) {
       return;
     }
     const scrollElement = event.currentTarget.closest<HTMLElement>(
-      '.project-sidebar__tree-scroll',
+      scrollContainerSelector,
     );
     if (!scrollElement) {
       return;
@@ -306,23 +318,26 @@ export function useProjectTreeMarquee({
     const itemBounds = new Map<
       string,
       { bottom: number; left: number; right: number; top: number }
-    >();
-    for (const nodeId of visibleIds) {
-      const item = itemRefs.current?.get(nodeId);
-      if (!item) {
-        continue;
+    >(getItemBounds?.(visibleIds, scrollElement));
+    if (itemBounds.size === 0) {
+      for (const nodeId of visibleIds) {
+        const item = itemRefs.current?.get(nodeId);
+        if (!item) {
+          continue;
+        }
+        const itemRect = item.getBoundingClientRect();
+        const left =
+          itemRect.left - bounds.left + scrollElement.scrollLeft;
+        const top = itemRect.top - bounds.top + scrollElement.scrollTop;
+        itemBounds.set(nodeId, {
+          bottom: top + itemRect.height,
+          left,
+          right: left + itemRect.width,
+          top,
+        });
       }
-      const itemRect = item.getBoundingClientRect();
-      const left = itemRect.left - bounds.left + scrollElement.scrollLeft;
-      const top = itemRect.top - bounds.top + scrollElement.scrollTop;
-      itemBounds.set(nodeId, {
-        bottom: top + itemRect.height,
-        left,
-        right: left + itemRect.width,
-        top,
-      });
     }
-    const mode: ProjectTreeMarqueeMode =
+    const mode: CollectionMarqueeMode =
       event.ctrlKey || event.metaKey
         ? 'toggle'
         : event.shiftKey
@@ -350,7 +365,7 @@ export function useProjectTreeMarquee({
     event.currentTarget.setPointerCapture(event.pointerId);
     event.preventDefault();
     if (mode === 'replace' && baseSelection.selectedIds.size > 0) {
-      const empty = emptyProjectTreeSelection();
+      const empty = emptyCollectionSelection();
       selectionRef.current = empty;
       onSelectionChangeRef.current(empty);
     }
@@ -404,13 +419,13 @@ export function useProjectTreeMarquee({
       }
       event.preventDefault();
       stopSession();
-      const empty = emptyProjectTreeSelection();
+      const empty = emptyCollectionSelection();
       selectionRef.current = empty;
       onSelectionChangeRef.current(empty);
     };
     const handleBlur = (): void => {
       stopSession();
-      const empty = emptyProjectTreeSelection();
+      const empty = emptyCollectionSelection();
       selectionRef.current = empty;
       onSelectionChangeRef.current(empty);
     };

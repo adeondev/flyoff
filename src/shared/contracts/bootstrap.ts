@@ -88,6 +88,28 @@ import type {
   ProjectNoteActivityEntry,
   ProjectNoteActivityEvent,
 } from './project-note-activity';
+import type {
+  ProjectAppearanceSnapshot,
+  SetProjectAppearanceRequest,
+  SetProjectNoteAppearanceRequest,
+} from './appearance';
+import type {
+  CreateMediaFolderRequest,
+  CreateMediaFolderWithEntriesRequest,
+  CancelProjectMediaImportRequest,
+  GetProjectMediaAssetRequest,
+  ImportProjectMediaOutcome,
+  ImportProjectMediaRequest,
+  ListProjectMediaUsagesRequest,
+  MediaGallerySnapshot,
+  ProjectMediaImportProgress,
+  MoveMediaEntriesRequest,
+  ProjectMediaAsset,
+  ProjectMediaUsage,
+  RenameMediaEntryRequest,
+  TrashMediaEntriesRequest,
+  StartProjectMediaImportOutcome,
+} from './media';
 import {
   isNativeCoreHealth,
   type NativeCoreHealth,
@@ -192,6 +214,52 @@ export interface FlyoffApi {
   recordProjectNoteActivity(
     event: ProjectNoteActivityEvent,
   ): Promise<ProjectResult<ProjectNoteActivityEntry>>;
+  getProjectAppearance(): Promise<ProjectResult<ProjectAppearanceSnapshot>>;
+  setProjectNoteAppearance(
+    request: SetProjectNoteAppearanceRequest,
+  ): Promise<ProjectResult<ProjectAppearanceSnapshot>>;
+  setProjectAppearance(
+    request: SetProjectAppearanceRequest,
+  ): Promise<ProjectResult<ProjectAppearanceSnapshot>>;
+  selectProjectMedia(
+    request: ImportProjectMediaRequest,
+  ): Promise<ProjectResult<ImportProjectMediaOutcome>>;
+  importDroppedProjectMedia(
+    files: readonly File[],
+    request: ImportProjectMediaRequest,
+  ): Promise<ProjectResult<ImportProjectMediaOutcome>>;
+  startDroppedProjectMediaImport(
+    files: readonly File[],
+    request: ImportProjectMediaRequest,
+  ): Promise<ProjectResult<StartProjectMediaImportOutcome>>;
+  cancelProjectMediaImport(
+    request: CancelProjectMediaImportRequest,
+  ): Promise<ProjectResult<null>>;
+  onProjectMediaImportProgress(
+    listener: (progress: ProjectMediaImportProgress) => void,
+  ): () => void;
+  getProjectMediaAsset(
+    request: GetProjectMediaAssetRequest,
+  ): Promise<ProjectResult<ProjectMediaAsset>>;
+  listProjectMediaUsages(
+    request: ListProjectMediaUsagesRequest,
+  ): Promise<ProjectResult<readonly ProjectMediaUsage[]>>;
+  getMediaGallery(): Promise<ProjectResult<MediaGallerySnapshot>>;
+  createMediaFolder(
+    request: CreateMediaFolderRequest,
+  ): Promise<ProjectResult<MediaGallerySnapshot>>;
+  createMediaFolderWithEntries(
+    request: CreateMediaFolderWithEntriesRequest,
+  ): Promise<ProjectResult<MediaGallerySnapshot>>;
+  renameMediaEntry(
+    request: RenameMediaEntryRequest,
+  ): Promise<ProjectResult<MediaGallerySnapshot>>;
+  moveMediaEntries(
+    request: MoveMediaEntriesRequest,
+  ): Promise<ProjectResult<MediaGallerySnapshot>>;
+  trashMediaEntries(
+    request: TrashMediaEntriesRequest,
+  ): Promise<ProjectResult<MediaGallerySnapshot>>;
   listProjectChildren(
     request: ListProjectChildrenRequest,
   ): Promise<ProjectResult<readonly ProjectTreeNode[]>>;

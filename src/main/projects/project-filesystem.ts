@@ -17,7 +17,10 @@ import { ProjectOperationError, normalizeProjectError } from './errors';
 import { isPortableProjectName } from './portable-name';
 import type { ContentIndexEntry } from './project-format';
 import { projectPageStorageMatch } from './project-storage-adapters';
-import { PROJECT_METADATA_DIRECTORY } from './project-paths';
+import {
+  PROJECT_MEDIA_DIRECTORY,
+  PROJECT_METADATA_DIRECTORY,
+} from './project-paths';
 
 export interface DiscoveredProjectNode {
   name: string;
@@ -207,7 +210,10 @@ export class ProjectFileSystem {
     for (const directoryEntry of directoryEntries) {
       if (
         directoryEntry.isSymbolicLink() ||
-        directoryEntry.name.toLowerCase() === PROJECT_METADATA_DIRECTORY
+        directoryEntry.name.toLowerCase() === PROJECT_METADATA_DIRECTORY ||
+        (!parent &&
+          directoryEntry.name.toLocaleLowerCase() ===
+            PROJECT_MEDIA_DIRECTORY.toLocaleLowerCase())
       ) {
         continue;
       }

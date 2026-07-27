@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type CSSProperties,
 } from 'react';
 
 import arrowLeftIcon from '../../../public/images/icons/actions/arrow-left.svg';
@@ -31,9 +32,11 @@ import type {
   ProjectSearchPreview,
   ProjectSearchRequest,
   ProjectSummary,
+  ProjectAppearanceSnapshot,
   ProjectTreeNode,
   ProjectPathRequest,
   ProjectPageNode,
+  ProjectMediaUsage,
   ProjectNodesMutationOutcome,
   RenameProjectNodeRequest,
   TrashProjectNodeRequest,
@@ -51,6 +54,7 @@ import {
   type AddInstanceChoice,
 } from './AddInstancePopover';
 import { MoveProjectNodeDialog } from './MoveProjectNodeDialog';
+import { NodeColorPopover } from './NodeColorPopover';
 import { MoveProjectNodesDialog } from './MoveProjectNodesDialog';
 import { projectNodeInputName } from './project-node-name';
 import { ProjectSearchInput } from './ProjectSearchInput';
@@ -91,10 +95,18 @@ function fileManagerLabel(
   return translate('projects.revealInFileManager');
 }
 
+export interface ProjectSidebarAppearance {
+  snapshot: ProjectAppearanceSnapshot;
+  setNoteSeed: (nodeId: string, seed: string | null) => Promise<void>;
+  setProjectSeed: (seed: string | null) => Promise<void>;
+}
+
 export interface ProjectSidebarProps {
   project: ProjectSummary;
   platform?: FlyoffPlatform;
   hidden?: boolean;
+  mediaMode?: boolean;
+  appearance?: ProjectSidebarAppearance;
   translate: Translate;
   activeNodeId?: string;
   activeNodePath?: readonly string[];
@@ -153,6 +165,14 @@ export interface ProjectSidebarProps {
   onNodeTrashed?: (node: ProjectTreeNode) => void;
   onError?: (message: string) => void;
   onNotice?: (message: string) => void;
+  onListMediaUsages?: (
+    nodeId: string,
+  ) => Promise<ProjectResult<readonly ProjectMediaUsage[]>>;
+  onImportMedia?: (
+    parentId: string | null,
+    files?: readonly File[],
+  ) => Promise<void>;
+  onInsertMedia?: (node: ProjectPageNode) => void;
 }
 
 export interface ProjectSidebarCreateRequest {
@@ -175,6 +195,7 @@ export const ProjectSidebar = forwardRef<
   activeNodePath = EMPTY_NODE_PATH,
   createRequest,
   hidden = false,
+  mediaMode = false,
   loadChildren,
   onBeforeNodeChange,
   onBeforeNodesChange,
@@ -201,23 +222,67 @@ export const ProjectSidebar = forwardRef<
   onTrashNode,
   onTrashNodes,
   onNotice,
+  onListMediaUsages,
+  onImportMedia,
+  onInsertMedia,
   overviewActive = false,
   platform,
   project,
   settingsActive = false,
+  appearance,
   translate,
 }: ProjectSidebarProps, forwardedRef) {
+  const effectiveLoadChildren = useCallback(
+    async (request: ListProjectChildrenRequest) => {
+      const result = await loadChildren(request);
+      return !mediaMode || !result.ok
+        ? result
+        : {
+            ok: true as const,
+            value: result.value.filter(
+              (node) =>
+                node.kind === 'folder' ||
+                node.pageType === 'markdown' ||
+                node.pageType.startsWith('media:'),
+            ),
+          };
+    },
+    [loadChildren, mediaMode],
+  );
   const controller = useMemo(
-    () => createTreeController(project.projectId, loadChildren, onError),
-    [loadChildren, onError, project.projectId],
+    () => createTreeController(project.projectId, effectiveLoadChildren, onError),
+    [effectiveLoadChildren, onError, project.projectId],
   );
   const [edit, setEdit] = useState<ProjectTreeInlineEdit>();
   const [movingNode, setMovingNode] = useState<ProjectTreeNode>();
   const [movingNodes, setMovingNodes] =
     useState<readonly ProjectTreeNode[]>();
   const [trashingNode, setTrashingNode] = useState<ProjectTreeNode>();
+  const [trashWarning, setTrashWarning] = useState<string>();
   const [trashingNodes, setTrashingNodes] =
     useState<readonly ProjectTreeNode[]>();
+
+  async function requestTrash(node: ProjectTreeNode): Promise<void> {
+    setTrashWarning(undefined);
+    if (
+      node.kind === 'page' &&
+      node.pageType.startsWith('media:') &&
+      onListMediaUsages
+    ) {
+      const result = await onListMediaUsages(node.nodeId);
+      if (!result.ok) {
+        reportError(result.error.message);
+        return;
+      }
+      const count = result.value.reduce((total, usage) => total + usage.count, 0);
+      if (count > 0) {
+        setTrashWarning(
+          `Esta mídia é usada ${count} ${count === 1 ? 'vez' : 'vezes'} em ${result.value.length} ${result.value.length === 1 ? 'nota' : 'notas'}. As notas manterão um marcador de mídia ausente.`,
+        );
+      }
+    }
+    setTrashingNode(node);
+  }
   const [selection, setSelection] = useState<ProjectTreeSelection>(
     emptyProjectTreeSelection,
   );
@@ -242,6 +307,15 @@ export const ProjectSidebar = forwardRef<
     parentId: string | null;
     position: { x: number; y: number };
     restoreFocus?: HTMLElement | null;
+  }>();
+  const [colorPicker, setColorPicker] = useState<{
+    nodeId: string;
+    position: { x: number; y: number };
+    restoreFocus?: HTMLElement | null;
+  }>();
+  const [projectColorPicker, setProjectColorPicker] = useState<{
+    position: { x: number; y: number };
+    restoreFocus: HTMLElement;
   }>();
 
   async function refreshRelationships(
@@ -628,6 +702,9 @@ export const ProjectSidebar = forwardRef<
     target: NonNullable<typeof branchMenu>,
   ): void {
     switch (action) {
+      case 'import-media':
+        void onImportMedia?.(target.parentId);
+        return;
       case 'new-instance':
         openInstancePicker(
           target.parentId,
@@ -661,13 +738,30 @@ export const ProjectSidebar = forwardRef<
 
   function branchMenuItems(parentId: string | null): readonly MenuItem[] {
     return [
-      {
-        id: 'new-instance',
-        kind: 'action',
-        label: translate('projects.newInstance'),
-        icon: noteIcon,
-        disabled: pending,
-      },
+      ...(mediaMode
+        ? [{
+            id: 'import-media',
+            kind: 'action' as const,
+            label: translate('projects.importMedia'),
+            icon: noteIcon,
+            disabled: pending || !onImportMedia,
+          }]
+        : [{
+            id: 'new-instance',
+            kind: 'action' as const,
+            label: translate('projects.newInstance'),
+            icon: noteIcon,
+            disabled: pending,
+          }]),
+      ...(!mediaMode && onImportMedia
+        ? [{
+            id: 'import-media',
+            kind: 'action' as const,
+            label: translate('projects.importMedia'),
+            icon: noteIcon,
+            disabled: pending,
+          }]
+        : []),
       {
         id: 'new-folder',
         kind: 'action',
@@ -784,12 +878,20 @@ export const ProjectSidebar = forwardRef<
             />
           </button>
           <button
-            aria-expanded={Boolean(instancePicker)}
-            aria-haspopup="dialog"
-            aria-label={translate('projects.addInstance')}
+            aria-expanded={mediaMode ? undefined : Boolean(instancePicker)}
+            aria-haspopup={mediaMode ? undefined : 'dialog'}
+            aria-label={
+              mediaMode
+                ? translate('projects.importMedia')
+                : translate('projects.addInstance')
+            }
             className="project-sidebar__tool"
             disabled={pending}
             onClick={(event) => {
+              if (mediaMode) {
+                void onImportMedia?.(null);
+                return;
+              }
               const bounds = event.currentTarget.getBoundingClientRect();
               openInstancePicker(
                 null,
@@ -799,7 +901,9 @@ export const ProjectSidebar = forwardRef<
             }}
             type="button"
             {...getTooltipTargetProps(
-              translate('projects.addInstance'),
+              mediaMode
+                ? translate('projects.importMedia')
+                : translate('projects.addInstance'),
               'bottom',
             )}
           >
@@ -848,8 +952,26 @@ export const ProjectSidebar = forwardRef<
           }
           onOpenNode={onOpenNode}
           onOpenNodes={onOpenNodes}
+          onImportFiles={
+            onImportMedia
+              ? (files, parentId) => void onImportMedia(parentId, files)
+              : undefined
+          }
+          onRequestInsertMedia={onInsertMedia}
           onRequestAddInstance={openInstancePicker}
           onRequestBranchMenu={openBranchMenu}
+          {...(appearance
+            ? {
+                nodeSeeds: appearance.snapshot.noteSeeds,
+                onRequestColor: (node, position, restoreFocus) => {
+                  setColorPicker({
+                    nodeId: node.nodeId,
+                    position,
+                    restoreFocus,
+                  });
+                },
+              }
+            : {})}
           onRequestCopySelection={(nodes) => {
             if (nodes.length === 1) {
               void performPathAction(onCopyPath, nodes[0]!.nodeId);
@@ -867,7 +989,7 @@ export const ProjectSidebar = forwardRef<
           onRequestMoveSelection={setMovingNodes}
           onRequestProperties={onRequestProperties}
           onRequestRename={(node) => setEdit({ mode: 'rename', node })}
-          onRequestTrash={setTrashingNode}
+          onRequestTrash={(node) => void requestTrash(node)}
           onRequestTrashSelection={setTrashingNodes}
           onSelectionChange={setSelection}
           onSelectionLimitReached={() =>
@@ -895,6 +1017,34 @@ export const ProjectSidebar = forwardRef<
           <TwemojiText text={project.name} />
         </button>
         <div className="project-sidebar__footer-actions">
+          {appearance ? (
+            <button
+              aria-expanded={Boolean(projectColorPicker)}
+              aria-haspopup="dialog"
+              aria-label={translate('projects.projectColor')}
+              className="project-sidebar__tool project-sidebar__color-tool"
+              onClick={(event) => {
+                const bounds = event.currentTarget.getBoundingClientRect();
+                setProjectColorPicker({
+                  position: { x: bounds.left, y: bounds.top - 362 },
+                  restoreFocus: event.currentTarget,
+                });
+              }}
+              style={
+                {
+                  '--project-color':
+                    appearance.snapshot.projectSeed ?? 'var(--color-accent)',
+                } as CSSProperties
+              }
+              type="button"
+              {...getTooltipTargetProps(
+                translate('projects.projectColor'),
+                'top',
+              )}
+            >
+              <span aria-hidden="true" />
+            </button>
+          ) : null}
           <button
             aria-label={translate('menu.about')}
             className="project-sidebar__tool"
@@ -935,6 +1085,33 @@ export const ProjectSidebar = forwardRef<
           onClose={() => setBranchMenu(undefined)}
           x={branchMenu.position.x}
           y={branchMenu.position.y}
+        />
+      ) : null}
+      {colorPicker && appearance ? (
+        <NodeColorPopover
+          nodeId={colorPicker.nodeId}
+          onClose={() => setColorPicker(undefined)}
+          onSelect={(seed) => {
+            void appearance.setNoteSeed(colorPicker.nodeId, seed);
+          }}
+          position={colorPicker.position}
+          restoreFocus={colorPicker.restoreFocus}
+          seed={appearance.snapshot.noteSeeds[colorPicker.nodeId] ?? null}
+          translate={translate}
+        />
+      ) : null}
+      {projectColorPicker && appearance ? (
+        <NodeColorPopover
+          onClose={() => setProjectColorPicker(undefined)}
+          onSelect={(seed) => {
+            void appearance.setProjectSeed(seed);
+          }}
+          position={projectColorPicker.position}
+          resetLabel={translate('projects.projectColorGlobal')}
+          restoreFocus={projectColorPicker.restoreFocus}
+          seed={appearance.snapshot.projectSeed}
+          title={translate('projects.projectColor')}
+          translate={translate}
         />
       ) : null}
       {instancePicker ? (
@@ -1005,6 +1182,7 @@ export const ProjectSidebar = forwardRef<
             onNodeTrashed?.(node);
           }}
           translate={translate}
+          warning={trashWarning}
         />
       ) : null}
       {trashingNodes ? (

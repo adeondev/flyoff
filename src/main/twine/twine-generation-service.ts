@@ -13,6 +13,7 @@ import {
   type TwineGenAIClient,
   type TwineGenerateContentConfig,
 } from './twine-generation-attempt';
+import { classifyTwineGenerationError } from './twine-generation-error';
 import { shouldRequireTwineResearch } from './twine-research-policy';
 import {
   createTwineRuntimeToolInstruction,
@@ -122,7 +123,13 @@ export class TwineGenerationService {
     channel: string,
     controller: AbortController,
   ): Promise<void> {
+    const currentDate = new Date();
+    const codeRequired = shouldRequireTwineCodeExecution(request);
+    const researchRequired =
+      request.researchEnabled ||
+      shouldRequireTwineResearch(request, currentDate);
     this.emit(webContents, channel, {
+      activity: researchRequired ? 'searching' : 'thinking',
       requestId: request.requestId,
       type: 'started',
     });
@@ -130,11 +137,6 @@ export class TwineGenerationService {
     try {
       const { GoogleGenAI } = await import('@google/genai');
       const ai = new GoogleGenAI({ apiKey }) as TwineGenAIClient;
-      const currentDate = new Date();
-      const codeRequired = shouldRequireTwineCodeExecution(request);
-      const researchRequired =
-        request.researchEnabled ||
-        shouldRequireTwineResearch(request, currentDate);
 
       if (!codeRequired && !researchRequired) {
         const result = await runTwineGenerationAttempt({
@@ -199,12 +201,8 @@ export class TwineGenerationService {
         }
       }
 
-      const failedRequirements = [
-        ...(researchRequired ? ['pesquisa real na web'] : []),
-        ...(codeRequired ? ['execução real de código'] : []),
-      ].join(' e ');
       this.emit(webContents, channel, {
-        message: `O Twine não conseguiu concluir ${failedRequirements}. Tente novamente.`,
+        code: 'tool-requirements',
         requestId: request.requestId,
         type: 'error',
       });
@@ -214,10 +212,7 @@ export class TwineGenerationService {
       }
 
       this.emit(webContents, channel, {
-        message:
-          error instanceof Error
-            ? error.message
-            : 'Não foi possível gerar a resposta do Twine.',
+        code: classifyTwineGenerationError(error),
         requestId: request.requestId,
         type: 'error',
       });

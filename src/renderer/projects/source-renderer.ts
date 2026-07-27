@@ -17,6 +17,15 @@ interface SourceRenderState {
 
 const renderStates = new WeakMap<HTMLElement, SourceRenderState>();
 
+function markActiveLine(root: HTMLElement, lineIndex: number): void {
+  for (const active of root.querySelectorAll(':scope > .md-line--active')) {
+    active.classList.remove('md-line--active');
+  }
+  if (lineIndex >= 0) {
+    root.children[lineIndex]?.classList.add('md-line--active');
+  }
+}
+
 function enableTwemojiFallback(root: ParentNode): void {
   for (const image of root.querySelectorAll<HTMLImageElement>(
     'img.twemoji__glyph',
@@ -118,10 +127,7 @@ function createLine(
   return element;
 }
 
-function hasCanonicalLines(
-  root: HTMLElement,
-  expectedLength: number,
-): boolean {
+function hasCanonicalLines(root: HTMLElement, expectedLength: number): boolean {
   return (
     root.childElementCount === expectedLength &&
     Array.from(root.children).every(
@@ -164,9 +170,7 @@ export function reconcileSource(root: HTMLElement, source: string): void {
           ? createSourceDocumentModel(source)
           : model,
     });
-    root.children[currentState?.activeLine ?? -1]?.classList.add(
-      'md-line--active',
-    );
+    markActiveLine(root, currentState?.activeLine ?? -1);
     applyCodeBlockWidths(root, model, model.change);
     return;
   }
@@ -224,9 +228,7 @@ export function reconcileSource(root: HTMLElement, source: string): void {
   applyCodeBlockWidths(root, model, model.change);
   const activeLine = currentState.activeLine;
   renderStates.set(root, { activeLine, model });
-  if (activeLine >= 0) {
-    root.children[activeLine]?.classList.add('md-line--active');
-  }
+  markActiveLine(root, activeLine);
 }
 
 export function updateActiveSourceLine(
@@ -242,8 +244,7 @@ export function updateActiveSourceLine(
   if (state.activeLine === lineIndex) {
     return;
   }
-  root.children[state.activeLine]?.classList.remove('md-line--active');
-  root.children[lineIndex]?.classList.add('md-line--active');
+  markActiveLine(root, lineIndex);
   state.activeLine = lineIndex;
 }
 

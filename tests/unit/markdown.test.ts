@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseInline, parseMarkdown } from '../../src/shared/markdown';
+import {
+  parseInline,
+  parseMarkdown,
+  serializeImageDirective,
+} from '../../src/shared/markdown';
 
 describe('markdown block parser', () => {
   it('parses ATX headings with their depth', () => {
@@ -84,6 +88,37 @@ describe('markdown block parser', () => {
 });
 
 describe('markdown inline parser', () => {
+  it('parses an inline image directive between words', () => {
+    const directive = {
+      version: 2 as const,
+      instanceId: '223e4567-e89b-42d3-a456-426614174001',
+      assetId: '123e4567-e89b-42d3-a456-426614174000',
+      path: 'Media/Lua.png',
+      alt: 'Lua',
+      mode: 'inline' as const,
+      align: 'left' as const,
+      width: 160,
+      height: 90,
+      minWidth: 96,
+      maxWidth: 1200,
+      margin: 8,
+      ratioLock: true,
+      positionLock: false,
+      caption: '',
+    };
+    const root = parseMarkdown(
+      `antes ${serializeImageDirective(directive)} depois`,
+    );
+    expect(root.children[0]).toMatchObject({
+      type: 'paragraph',
+      children: [
+        { type: 'text', value: 'antes ' },
+        { type: 'inline-image', directive },
+        { type: 'text', value: ' depois' },
+      ],
+    });
+  });
+
   it('parses strong, emphasis, strikethrough and highlight', () => {
     expect(parseInline('**b** *i* ~~s~~ ==h==')).toEqual([
       { type: 'strong', children: [{ type: 'text', value: 'b' }] },
@@ -129,6 +164,54 @@ describe('markdown inline parser', () => {
     ]);
   });
 
+  it('parses authored colors on Markdown links and wikilinks', () => {
+    expect(
+      parseInline(
+        '[site](https://x.dev){color=#3B82F6} [[Folder/Note|note]]{color=#ef4444}',
+      ),
+    ).toEqual([
+      {
+        type: 'link',
+        url: 'https://x.dev',
+        title: null,
+        color: '#3B82F6',
+        children: [{ type: 'text', value: 'site' }],
+      },
+      { type: 'text', value: ' ' },
+      {
+        type: 'link',
+        url: 'Folder/Note',
+        title: null,
+        color: '#ef4444',
+        syntax: 'wikilink',
+        children: [{ type: 'text', value: 'note' }],
+      },
+    ]);
+  });
+
+  it('parses a validated media directive as a block', () => {
+    const source =
+      '::media[Lua]{v=1 id=123e4567-e89b-12d3-a456-426614174000 path="Media/lua.png" placement=block span=6 offset=2 fit=contain ratio=1.5 lock=true caption=false}';
+    expect(parseMarkdown(source).children).toEqual([
+      {
+        type: 'media',
+        directive: {
+          version: 1,
+          id: '123e4567-e89b-12d3-a456-426614174000',
+          path: 'Media/lua.png',
+          description: 'Lua',
+          placement: 'block',
+          span: 6,
+          offset: 2,
+          fit: 'contain',
+          ratio: 1.5,
+          lock: true,
+          caption: false,
+        },
+      },
+    ]);
+  });
+
   it('parses the color attribute and rejects unsafe values', () => {
     expect(parseInline('[warn]{color=#e11}')).toEqual([
       {
@@ -146,6 +229,20 @@ describe('markdown inline parser', () => {
     ]);
     expect(parseInline('[x]{color=red;background:url(javascript:1)}')).toEqual([
       { type: 'text', value: '[x]{color=red;background:url(javascript:1)}' },
+    ]);
+    expect(parseInline('==blue=={color=#3B82F6}')).toEqual([
+      {
+        type: 'highlight',
+        color: '#3B82F6',
+        children: [{ type: 'text', value: 'blue' }],
+      },
+    ]);
+    expect(parseInline('==unsafe=={color=url(javascript:1)}')).toEqual([
+      {
+        type: 'highlight',
+        children: [{ type: 'text', value: 'unsafe' }],
+      },
+      { type: 'text', value: '{color=url(javascript:1)}' },
     ]);
   });
 

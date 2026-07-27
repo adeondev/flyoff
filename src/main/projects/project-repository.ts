@@ -29,6 +29,7 @@ import type {
   DiagramDocumentEnvelope,
   SaveDiagramDocumentRequest,
 } from '../../shared/contracts/diagrams';
+import type { ProjectMediaAsset } from '../../shared/contracts/media';
 import {
   serializeDiagramDocument,
   type DiagramDocument,
@@ -53,7 +54,16 @@ import {
   hasEncryptedNoteSignature,
   inspectEncryptedNote,
 } from './encrypted-note-format';
+import {
+  emptyProjectAppearanceSnapshot,
+  type ProjectAppearanceSnapshot,
+} from '../../shared/contracts/appearance';
 import { assertPortableProjectName } from './portable-name';
+import {
+  ProjectAppearanceStore,
+  type ProjectAppearanceState,
+} from './project-appearance-store';
+import { ProjectMediaStore } from './media-store';
 import { ProjectFileSystem } from './project-filesystem';
 import { ProjectLinkMaintenanceStore } from './project-link-maintenance';
 import type { ProjectFileIdentity } from './project-filesystem';
@@ -80,6 +90,7 @@ import { createProjectStorage, openProjectStorage } from './project-storage';
 import {
   getProjectPageStorageAdapter,
   projectPageDiskName,
+  projectPageStorageMatch,
   requireProjectPageStorageAdapter,
 } from './project-storage-adapters';
 
@@ -353,6 +364,8 @@ function sortEntries(entries: readonly ContentIndexEntry[]): ContentIndexEntry[]
 export class ProjectRepository {
   readonly rootPath: string;
   readonly linkMaintenance: ProjectLinkMaintenanceStore;
+  readonly appearance: ProjectAppearanceStore;
+  readonly media: ProjectMediaStore;
 
   private index: ProjectContentIndex;
   private manifest: ProjectManifest;
@@ -366,6 +379,7 @@ export class ProjectRepository {
     rootPath: string,
     manifest: ProjectManifest,
     index: ProjectContentIndex,
+    media: ProjectMediaStore,
     options: ProjectRepositoryOptions,
   ) {
     this.rootPath = rootPath;
@@ -373,6 +387,8 @@ export class ProjectRepository {
       rootPath,
       manifest.projectId,
     );
+    this.appearance = new ProjectAppearanceStore(rootPath, manifest.projectId);
+    this.media = media;
     this.manifest = manifest;
     this.index = index;
     this.trashItem = options.trashItem;
@@ -388,10 +404,16 @@ export class ProjectRepository {
     options: ProjectRepositoryOptions = {},
   ): Promise<ProjectRepository> {
     const storage = await createProjectStorage(rootPath, name, options);
+    const media = await ProjectMediaStore.open(
+      storage.rootPath,
+      storage.manifest.projectId,
+      options,
+    );
     return new ProjectRepository(
       storage.rootPath,
       storage.manifest,
       storage.index,
+      media,
       { ...options, createId: storage.createId },
     );
   }
@@ -407,10 +429,16 @@ export class ProjectRepository {
       projectId: storage.manifest.projectId,
       entries: [],
     };
+    const media = await ProjectMediaStore.open(
+      storage.rootPath,
+      storage.manifest.projectId,
+      options,
+    );
     const repository = new ProjectRepository(
       storage.rootPath,
       storage.manifest,
       index,
+      media,
       { ...options, createId: storage.createId },
     );
 
@@ -420,7 +448,69 @@ export class ProjectRepository {
       await repository.rebuildIndex();
     }
 
+    await repository.migrateLegacyMediaEntries();
+
     return repository;
+  }
+
+  private async migrateLegacyMediaEntries(): Promise<void> {
+    const legacy = this.index.entries.filter(
+      (entry): entry is ContentIndexPageEntry =>
+        entry.kind === 'page' && entry.pageType.startsWith('media:'),
+    );
+    if (legacy.length === 0) {
+      return;
+    }
+    const migration = await Promise.all(
+      legacy.map(async (entry) => ({
+        assetId: entry.nodeId,
+        absolutePath: await this.fileSystem.resolveExistingEntry(entry),
+        name: entry.name,
+      })),
+    );
+    const migrated = new Set(await this.media.migrateLegacy(migration));
+    if (migrated.size === 0) {
+      return;
+    }
+    const transactionRoot = path.join(
+      this.rootPath,
+      PROJECT_METADATA_DIRECTORY,
+      `media-migration-${this.createId()}`,
+    );
+    await mkdir(transactionRoot);
+    const staged: { originalPath: string; stagedPath: string }[] = [];
+    try {
+      for (const item of migration.filter(({ assetId }) =>
+        migrated.has(assetId),
+      )) {
+        const stagedPath = path.join(transactionRoot, item.assetId);
+        await rename(item.absolutePath, stagedPath);
+        staged.push({ originalPath: item.absolutePath, stagedPath });
+      }
+    } catch (error) {
+      for (const item of staged.reverse()) {
+        await rename(item.stagedPath, item.originalPath).catch(() => undefined);
+      }
+      await rm(transactionRoot, { recursive: true, force: true });
+      throw error;
+    }
+    const previousEntries = cloneEntries(this.index.entries);
+    this.index.entries = this.index.entries.filter(
+      ({ nodeId }) => !migrated.has(nodeId),
+    );
+    try {
+      await this.persistIndex();
+    } catch (error) {
+      this.index.entries = previousEntries;
+      for (const item of staged.reverse()) {
+        await rename(item.stagedPath, item.originalPath).catch(() => undefined);
+      }
+      await rm(transactionRoot, { recursive: true, force: true });
+      throw error;
+    }
+    await rm(transactionRoot, { recursive: true, force: true }).catch(
+      () => undefined,
+    );
   }
 
   private async recoverTrashTransactions(): Promise<void> {
@@ -517,9 +607,25 @@ export class ProjectRepository {
   }
 
   async getNode(nodeId: string): Promise<ProjectTreeNode> {
-    const entry = this.requireEntry(nodeId);
-    await this.fileSystem.resolveExistingEntry(entry);
-    return this.treeNode(entry);
+    const entry = this.index.entries.find(
+      (candidate) => candidate.nodeId === nodeId,
+    );
+    if (entry) {
+      await this.fileSystem.resolveExistingEntry(entry);
+      return this.treeNode(entry);
+    }
+    const asset = this.media.getAsset(nodeId);
+    this.media.resolveAssetPath(nodeId);
+    return {
+      canContainChildren: false,
+      extension: asset.extension,
+      hasChildren: false,
+      kind: 'page',
+      name: asset.name,
+      nodeId: asset.assetId,
+      pageType: `media:${asset.kind}`,
+      parentId: null,
+    };
   }
 
   listIndexedNodes(): readonly ProjectTreeNode[] {
@@ -611,7 +717,12 @@ export class ProjectRepository {
   }
 
   projectRelativePath(nodeId: string): string {
-    return this.requireEntry(nodeId).locator.replaceAll('\\', '/');
+    const entry = this.index.entries.find(
+      (candidate) => candidate.nodeId === nodeId,
+    );
+    return entry
+      ? entry.locator.replaceAll('\\', '/')
+      : this.media.getAsset(nodeId).relativePath;
   }
 
   projectedPathForMove(nodeId: string, parentId: string | null): string {
@@ -627,9 +738,15 @@ export class ProjectRepository {
   }
 
   async resolvePath(nodeId: string | null): Promise<string> {
-    return nodeId === null
-      ? this.fileSystem.resolveParentDirectory(undefined)
-      : this.fileSystem.resolveExistingEntry(this.requireEntry(nodeId));
+    if (nodeId === null) {
+      return this.fileSystem.resolveParentDirectory(undefined);
+    }
+    const entry = this.index.entries.find(
+      (candidate) => candidate.nodeId === nodeId,
+    );
+    return entry
+      ? this.fileSystem.resolveExistingEntry(entry)
+      : this.media.resolveAssetPath(nodeId);
   }
 
   async listChildren(parentId: string | null): Promise<readonly ProjectTreeNode[]> {
@@ -754,7 +871,69 @@ export class ProjectRepository {
       );
     }
     requireProjectPageStorageAdapter(pageType);
+    if (pageType.startsWith('media:')) {
+      throw new ProjectOperationError(
+        'invalid-operation',
+        'Media pages must be created by importing a media file.',
+      );
+    }
     return this.createNode(parentId, name, 'page', pageType);
+  }
+
+  async importMedia(
+    folderId: string | null,
+    sourcePath: string,
+  ): Promise<{ asset: ProjectMediaAsset; node: ProjectTreeNode }> {
+    const [asset] = await this.media.importPaths([sourcePath], folderId);
+    if (!asset) {
+      throw new ProjectOperationError(
+        'invalid-format',
+        'The image could not be imported.',
+      );
+    }
+    const node: ProjectTreeNode = {
+      canContainChildren: false,
+      extension: asset.extension,
+      hasChildren: false,
+      kind: 'page',
+      name: asset.name,
+      nodeId: asset.assetId,
+      pageType: `media:${asset.kind}`,
+      parentId: asset.folderId,
+    };
+    return {
+      node,
+      asset: {
+        nodeId: asset.assetId,
+        parentId: asset.folderId,
+        name: asset.name,
+        extension: asset.extension,
+        kind: asset.kind,
+        mimeType: asset.mimeType,
+        sizeBytes: asset.sizeBytes,
+        relativePath: asset.relativePath,
+        pixelWidth: asset.pixelWidth,
+        pixelHeight: asset.pixelHeight,
+        revision: asset.revision,
+      },
+    };
+  }
+
+  async getMediaAsset(nodeId: string): Promise<ProjectMediaAsset> {
+    const asset = this.media.getAsset(nodeId);
+    return {
+      nodeId: asset.assetId,
+      parentId: asset.folderId,
+      name: asset.name,
+      extension: asset.extension,
+      kind: asset.kind,
+      mimeType: asset.mimeType,
+      sizeBytes: asset.sizeBytes,
+      relativePath: asset.relativePath,
+      pixelWidth: asset.pixelWidth,
+      pixelHeight: asset.pixelHeight,
+      revision: asset.revision,
+    };
   }
 
   async createDiagramPage(
@@ -773,7 +952,13 @@ export class ProjectRepository {
 
   async renameNode(nodeId: string, name: string): Promise<ProjectTreeNode> {
     assertPortableProjectName(name);
-    const entry = this.requireEntry(nodeId);
+    const entry = this.index.entries.find(
+      (candidate) => candidate.nodeId === nodeId,
+    );
+    if (!entry) {
+      await this.media.renameEntry('asset', nodeId, name);
+      return this.getNode(nodeId);
+    }
 
     if (entry.name === name) {
       await this.fileSystem.resolveExistingEntry(entry);
@@ -785,7 +970,10 @@ export class ProjectRepository {
     const parentPath = await this.fileSystem.resolveParentDirectory(parent);
     const nextDiskName =
       entry.kind === 'page'
-        ? projectPageDiskName(name, entry.pageType)
+        ? `${name}${
+            projectPageStorageMatch(path.basename(entry.locator))?.extension ??
+            projectPageDiskName('', entry.pageType)
+          }`
         : name;
     await this.fileSystem.ensureNameAvailable(parentPath, nextDiskName, path.basename(oldAbsolutePath));
     const nextLocator = this.fileSystem.joinLocator(parent?.locator, nextDiskName);
@@ -1175,6 +1363,33 @@ export class ProjectRepository {
         'The selected content is not a project page.',
       );
     }
+    if (entry.pageType.startsWith('media:')) {
+      const asset = await this.getMediaAsset(nodeId);
+      const absolutePath = await this.fileSystem.resolveExistingEntry(entry);
+      const stats = await lstat(absolutePath);
+      return {
+        nodeId,
+        pageType: entry.pageType as
+          | 'media:image'
+          | 'media:video'
+          | 'media:audio',
+        contentSizeBytes: stats.size,
+        diskSizeBytes: stats.size,
+        createdAt:
+          Number.isFinite(stats.birthtimeMs) && stats.birthtimeMs > 0
+            ? stats.birthtime.toISOString()
+            : null,
+        modifiedAt: stats.mtime.toISOString(),
+        revision: revisionFor(
+          Buffer.from(`${stats.size}:${stats.mtimeMs}`, 'utf8'),
+        ),
+        readOnly: true,
+        passwordProtected: false,
+        locked: false,
+        extension: asset.extension,
+        mimeType: asset.mimeType,
+      };
+    }
     if (entry.pageType === 'diagram') {
       const absolutePath = await this.fileSystem.resolveExistingEntry(entry);
       const envelope = await readDiagramDocumentFile(
@@ -1252,6 +1467,59 @@ export class ProjectRepository {
     } finally {
       bytes.fill(0);
     }
+  }
+
+  async getAppearance(): Promise<ProjectAppearanceSnapshot> {
+    const locators = this.nodeLocators();
+    return this.appearanceSnapshot(await this.appearance.read(locators));
+  }
+
+  async setNoteAppearance(
+    nodeId: string,
+    seed: string | null,
+  ): Promise<ProjectAppearanceSnapshot> {
+    this.requireMarkdownEntry(nodeId);
+    const locators = this.nodeLocators();
+    await this.appearance.setNode(nodeId, seed, locators);
+    return this.appearanceSnapshot(await this.appearance.read(locators));
+  }
+
+  async setProjectAppearance(
+    seed: string | null,
+  ): Promise<ProjectAppearanceSnapshot> {
+    const locators = this.nodeLocators();
+    await this.appearance.setProject(seed, locators);
+    return this.appearanceSnapshot(await this.appearance.read(locators));
+  }
+
+  private nodeLocators(): Map<string, string> {
+    return new Map(
+      this.index.entries.map((entry) => [entry.nodeId, entry.locator]),
+    );
+  }
+
+  private appearanceSnapshot(
+    state: ProjectAppearanceState,
+  ): ProjectAppearanceSnapshot {
+    const markdownNodeIds = new Set(
+      this.index.entries
+        .filter(
+          (entry) => entry.kind === 'page' && entry.pageType === 'markdown',
+        )
+        .map((entry) => entry.nodeId),
+    );
+    const noteSeeds = Object.fromEntries(
+      [...state.seedsByNodeId].filter(([nodeId]) =>
+        markdownNodeIds.has(nodeId),
+      ),
+    );
+    if (state.projectSeed === null && Object.keys(noteSeeds).length === 0) {
+      return emptyProjectAppearanceSnapshot();
+    }
+    return {
+      projectSeed: state.projectSeed,
+      noteSeeds,
+    };
   }
 
   async protectPage(

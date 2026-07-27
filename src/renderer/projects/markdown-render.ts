@@ -1,17 +1,16 @@
 import {
   markdownHeadingSlug,
+  mediaAssetUrl,
   parseMarkdown,
   parseInternalLinkDestination,
   type BlockNode,
   type InlineNode,
 } from '../../shared/markdown';
-import {
-  twemojiAssetUrl,
-  twemojiSegments,
-} from '../components/twemoji';
+import { twemojiAssetUrl, twemojiSegments } from '../components/twemoji';
+import { colorContrastInk } from '../components/color';
 
 const SCHEME = /^([a-z][a-z0-9+.-]*):/i;
-const ALLOWED_ASSET_SCHEMES = /^(https?|flyoff)$/i;
+const ALLOWED_ASSET_SCHEMES = /^(https?|flyoff|flyoff-media)$/i;
 const ALLOWED_EXTERNAL_SCHEMES = /^(https?|mailto)$/i;
 function appendTwemojiText(parent: Node, value: string): void {
   for (const segment of twemojiSegments(value)) {
@@ -55,6 +54,30 @@ function appendTwemojiText(parent: Node, value: string): void {
   }
 }
 
+function makeCaptionExpandable(caption: HTMLElement): void {
+  caption.classList.add('markdown-caption');
+  caption.tabIndex = 0;
+  caption.setAttribute('role', 'button');
+  caption.setAttribute('aria-expanded', 'false');
+  const toggle = (): void => {
+    const expanded = caption.dataset.expanded === 'true';
+    if (expanded) {
+      delete caption.dataset.expanded;
+    } else {
+      caption.dataset.expanded = 'true';
+    }
+    caption.setAttribute('aria-expanded', String(!expanded));
+  };
+  caption.addEventListener('click', toggle);
+  caption.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') {
+      return;
+    }
+    event.preventDefault();
+    toggle();
+  });
+}
+
 function safeAssetUrl(url: string): string | null {
   const trimmed = url.trim();
   const scheme = SCHEME.exec(trimmed);
@@ -82,7 +105,52 @@ export function safeExternalUrl(url: string): string | null {
   }
 }
 
-function renderInline(nodes: readonly InlineNode[], parent: Node): void {
+function appendDirectiveImage(
+  directive: Extract<InlineNode, { type: 'inline-image' }>['directive'],
+  parent: Node,
+  projectId?: string,
+): void {
+  const wrapper = document.createElement('span');
+  wrapper.className = 'markdown-image markdown-image--inline';
+  wrapper.dataset.imageAssetId = directive.assetId;
+  wrapper.dataset.imageInstanceId = directive.instanceId;
+  wrapper.style.setProperty('--image-width', `${directive.width}px`);
+  wrapper.style.setProperty('--image-height', `${directive.height}px`);
+  wrapper.style.setProperty('--image-margin', `${directive.margin}px`);
+  wrapper.style.setProperty(
+    '--image-ratio',
+    String(directive.width / directive.height),
+  );
+  wrapper.style.width = `min(${directive.width}px, 100%)`;
+
+  const image = document.createElement('img');
+  image.alt = directive.alt;
+  image.className = 'markdown-image__content';
+  image.decoding = 'async';
+  image.draggable = false;
+  image.loading = 'lazy';
+  image.src = mediaAssetUrl(directive.assetId, projectId);
+  image.addEventListener(
+    'error',
+    () => wrapper.classList.add('markdown-image--missing'),
+    { once: true },
+  );
+  wrapper.appendChild(image);
+
+  if (directive.caption) {
+    const caption = document.createElement('span');
+    appendTwemojiText(caption, directive.caption);
+    makeCaptionExpandable(caption);
+    wrapper.appendChild(caption);
+  }
+  parent.appendChild(wrapper);
+}
+
+function renderInline(
+  nodes: readonly InlineNode[],
+  parent: Node,
+  projectId?: string,
+): void {
   for (const node of nodes) {
     switch (node.type) {
       case 'text':
@@ -99,8 +167,7 @@ function renderInline(nodes: readonly InlineNode[], parent: Node): void {
       }
       case 'strong':
       case 'emphasis':
-      case 'delete':
-      case 'highlight': {
+      case 'delete': {
         const tag =
           node.type === 'strong'
             ? 'strong'
@@ -110,19 +177,34 @@ function renderInline(nodes: readonly InlineNode[], parent: Node): void {
                 ? 'del'
                 : 'mark';
         const element = document.createElement(tag);
-        renderInline(node.children, element);
+        renderInline(node.children, element, projectId);
+        parent.appendChild(element);
+        break;
+      }
+      case 'highlight': {
+        const element = document.createElement('mark');
+        if (node.color) {
+          element.style.backgroundColor = node.color;
+          element.style.color = colorContrastInk(node.color);
+          element.dataset.customColor = '';
+        }
+        renderInline(node.children, element, projectId);
         parent.appendChild(element);
         break;
       }
       case 'color': {
         const element = document.createElement('span');
         element.style.color = node.color;
-        renderInline(node.children, element);
+        renderInline(node.children, element, projectId);
         parent.appendChild(element);
         break;
       }
       case 'link': {
         const element = document.createElement('a');
+        if (node.color) {
+          element.style.color = node.color;
+          element.dataset.customColor = '';
+        }
         const url = safeExternalUrl(node.url);
         if (url) {
           element.dataset.markdownExternalUrl = url;
@@ -146,10 +228,13 @@ function renderInline(nodes: readonly InlineNode[], parent: Node): void {
         if (node.title) {
           element.dataset.flyoffTooltip = node.title;
         }
-        renderInline(node.children, element);
+        renderInline(node.children, element, projectId);
         parent.appendChild(element);
         break;
       }
+      case 'inline-image':
+        appendDirectiveImage(node.directive, parent, projectId);
+        break;
       case 'image': {
         const element = document.createElement('img');
         const url = safeAssetUrl(node.url);
@@ -176,6 +261,8 @@ function inlineText(nodes: readonly InlineNode[]): string {
       value += ' ';
     } else if (node.type === 'image') {
       value += node.alt;
+    } else if (node.type === 'inline-image') {
+      value += node.directive.alt;
     } else if ('children' in node) {
       value += inlineText(node.children);
     }
@@ -186,6 +273,7 @@ function inlineText(nodes: readonly InlineNode[]): string {
 interface RenderContext {
   headingIds: Map<string, number>;
   headingPath: string[];
+  projectId?: string;
 }
 
 function renderBlocks(
@@ -209,13 +297,13 @@ function renderBlocks(
         if (node.divided) {
           element.classList.add('markdown-view__heading--divided');
         }
-        renderInline(node.children, element);
+        renderInline(node.children, element, context.projectId);
         parent.appendChild(element);
         break;
       }
       case 'paragraph': {
         const element = document.createElement('p');
-        renderInline(node.children, element);
+        renderInline(node.children, element, context.projectId);
         parent.appendChild(element);
         break;
       }
@@ -264,7 +352,7 @@ function renderBlocks(
             firstChild &&
             firstChild.type === 'paragraph'
           ) {
-            renderInline(firstChild.children, listItem);
+            renderInline(firstChild.children, listItem, context.projectId);
           } else {
             renderBlocks(item.children, listItem, context);
           }
@@ -273,6 +361,87 @@ function renderBlocks(
         }
 
         parent.appendChild(element);
+        break;
+      }
+      case 'media': {
+        const { directive } = node;
+        const figure = document.createElement('figure');
+        figure.className = `markdown-media markdown-media--${directive.placement}`;
+        figure.style.setProperty('--media-span', String(directive.span));
+        figure.style.setProperty('--media-offset', String(directive.offset));
+        figure.style.setProperty('--media-ratio', String(directive.ratio));
+        figure.dataset.mediaNodeId = directive.id;
+        figure.dataset.mediaFit = directive.fit;
+        const url = mediaAssetUrl(directive.id, context.projectId);
+        const extension = directive.path.split('.').pop()?.toLowerCase() ?? '';
+        const element = /^(mp4|m4v|webm|ogv)$/.test(extension)
+          ? document.createElement('video')
+          : /^(mp3|m4a|aac|wav|ogg|oga|opus|flac)$/.test(extension)
+            ? document.createElement('audio')
+            : document.createElement('img');
+        element.className = 'markdown-media__content';
+        if (element instanceof HTMLImageElement) {
+          element.alt = directive.description;
+          element.decoding = 'async';
+          element.loading = 'lazy';
+        } else {
+          element.controls = true;
+          element.preload = 'metadata';
+          element.setAttribute('aria-label', directive.description);
+        }
+        if (url) {
+          element.src = url;
+        }
+        element.addEventListener(
+          'error',
+          () => figure.classList.add('markdown-media--missing'),
+          { once: true },
+        );
+        figure.appendChild(element);
+        if (directive.caption && directive.description) {
+          const caption = document.createElement('figcaption');
+          appendTwemojiText(caption, directive.description);
+          makeCaptionExpandable(caption);
+          figure.appendChild(caption);
+        }
+        parent.appendChild(figure);
+        break;
+      }
+      case 'image-block': {
+        const { directive } = node;
+        const figure = document.createElement('figure');
+        figure.className = `markdown-image markdown-image--${directive.mode} markdown-image--${directive.align}`;
+        figure.dataset.imageAssetId = directive.assetId;
+        figure.dataset.imageInstanceId = directive.instanceId;
+        figure.style.setProperty('--image-width', `${directive.width}px`);
+        figure.style.setProperty('--image-height', `${directive.height}px`);
+        figure.style.setProperty('--image-margin', `${directive.margin}px`);
+        figure.style.setProperty(
+          '--image-ratio',
+          String(directive.width / directive.height),
+        );
+
+        const image = document.createElement('img');
+        image.alt = directive.alt;
+        image.className = 'markdown-image__content';
+        image.decoding = 'async';
+        image.draggable = false;
+        image.loading = 'lazy';
+        image.src = mediaAssetUrl(directive.assetId, context.projectId);
+        image.addEventListener(
+          'error',
+          () => figure.classList.add('markdown-image--missing'),
+          { once: true },
+        );
+        figure.appendChild(image);
+
+        if (directive.caption) {
+          const caption = document.createElement('figcaption');
+          appendTwemojiText(caption, directive.caption);
+          makeCaptionExpandable(caption);
+          figure.appendChild(caption);
+        }
+        parent.appendChild(figure);
         break;
       }
       case 'table': {
@@ -287,7 +456,7 @@ function renderBlocks(
           if (alignment) {
             element.style.textAlign = alignment;
           }
-          renderInline(cell, element);
+          renderInline(cell, element, context.projectId);
           headRow.appendChild(element);
         });
         head.appendChild(headRow);
@@ -302,7 +471,7 @@ function renderBlocks(
               if (alignment) {
                 element.style.textAlign = alignment;
               }
-              renderInline(cell, element);
+              renderInline(cell, element, context.projectId);
               bodyRow.appendChild(element);
             });
             body.appendChild(bodyRow);
@@ -320,10 +489,12 @@ function renderBlocks(
 export function renderMarkdownInto(
   container: HTMLElement,
   source: string,
+  options: { projectId?: string } = {},
 ): void {
   container.replaceChildren();
   renderBlocks(parseMarkdown(source).children, container, {
     headingIds: new Map(),
     headingPath: [],
+    projectId: options.projectId,
   });
 }

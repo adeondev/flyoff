@@ -28,6 +28,25 @@ afterEach(() => {
 });
 
 describe('toast queue', () => {
+  it('does not enqueue the same active error more than once', () => {
+    const first = toastQueueReducer(EMPTY_TOAST_QUEUE, {
+      type: 'enqueue',
+      toast: {
+        ...toast(1),
+        message: 'The requested project content no longer exists.',
+      },
+    });
+    const duplicate = toastQueueReducer(first, {
+      type: 'enqueue',
+      toast: {
+        ...toast(2),
+        message: 'The requested project content no longer exists.',
+      },
+    });
+    expect(duplicate).toBe(first);
+    expect(duplicate.visible).toHaveLength(1);
+  });
+
   it('shows four newest notifications and promotes queued work deterministically', () => {
     let state = EMPTY_TOAST_QUEUE;
     for (let index = 1; index <= 6; index += 1) {

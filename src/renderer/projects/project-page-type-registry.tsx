@@ -14,6 +14,8 @@ import type {
   ProjectInternalLinkResolution,
   ProjectInternalLinkTarget,
   ProjectLinkTarget,
+  ProjectMediaAsset,
+  ImportProjectMediaOutcome,
   ProjectPageNode,
   ProjectResult,
   DiagramDocumentEnvelope,
@@ -24,6 +26,7 @@ import type {
   SelectDiagramImportOutcome,
 } from '../../shared/contracts';
 import { isProjectInstanceTypeId } from '../../shared/contracts';
+import { mediaAssetUrl } from '../../shared/markdown';
 import type { TranslationKey } from '../../shared/i18n/catalogs';
 import type { Translate } from '../pages/page-types';
 import { useFlyoffPreferences } from '../preferences';
@@ -35,6 +38,7 @@ import {
 import type { MarkdownDocumentController } from './markdown-document-controller';
 import { MarkdownEditor } from './MarkdownEditor';
 import { MarkdownLockedView } from './MarkdownLockedView';
+import { MediaImageViewer } from './MediaImageViewer';
 import { projectNodeDisplayName } from './project-node-name';
 import { DiagramPage } from './diagram/DiagramPage';
 import type { DiagramController } from './diagram/diagram-controller';
@@ -79,8 +83,15 @@ export interface MarkdownLinkRuntime {
   ) => Promise<ProjectResult<ProjectPageNode>>;
 }
 
+export interface ProjectAppearanceRuntime {
+  seeds: Readonly<Record<string, string>>;
+  setNodeSeed: (nodeId: string, seed: string | null) => Promise<void>;
+}
+
 export interface ProjectPageRuntime {
+  projectId: string;
   markdown: MarkdownPageRuntime;
+  appearance?: ProjectAppearanceRuntime;
   diagram: {
     controller: DiagramController;
     readDocument: (
@@ -94,6 +105,16 @@ export interface ProjectPageRuntime {
       request: ExportDiagramRequest,
     ) => Promise<ProjectResult<ExportDiagramOutcome>>;
     onImported: (nodes: readonly ProjectPageNode[]) => void;
+  };
+  media: {
+    getAsset: (
+      nodeId: string,
+    ) => Promise<ProjectResult<ProjectMediaAsset>>;
+    importFiles: (
+      files: readonly File[],
+      parentId: string | null,
+    ) => Promise<ProjectResult<ImportProjectMediaOutcome>>;
+    revealAsset?: (assetId: string) => void;
   };
   onError?: (message: string) => void;
 }
@@ -114,6 +135,7 @@ export interface ProjectPageComponentProps {
 
 export interface ProjectPageTypeDefinition {
   pageType: string;
+  extension?: string;
   icon: string;
   title?: string;
   titleKey?: TranslationKey;
@@ -266,12 +288,18 @@ function MarkdownProjectPage({
         onStateChange(updateEditorModeState(pageState, mode))
       }
       onError={runtime.onError}
+      onRevealMediaAsset={runtime.media.revealAsset}
       linkRuntime={runtime.markdown.links}
+      importMediaFiles={(files) =>
+        runtime.media.importFiles(files, nodeId)
+      }
       navigation={
         runtime.markdown.navigation?.nodeId === nodeId
           ? runtime.markdown.navigation
           : undefined
       }
+      noteSeed={runtime.appearance?.seeds[nodeId] ?? null}
+      projectId={runtime.projectId}
       onScrollChange={onScrollChange}
       scrollTop={scrollTop}
       title={title}
@@ -281,9 +309,83 @@ function MarkdownProjectPage({
   );
 }
 
+function MediaProjectPage({
+  nodeId,
+  runtime,
+  translate,
+}: ProjectPageComponentProps) {
+  const [asset, setAsset] = useState<ProjectMediaAsset>();
+  const [error, setError] = useState<string>();
+
+  useEffect(() => {
+    let mounted = true;
+    void runtime.media.getAsset(nodeId).then((result) => {
+      if (!mounted) {
+        return;
+      }
+      if (!result.ok) {
+        setError(result.error.message);
+        return;
+      }
+      setAsset(result.value);
+    });
+    return () => {
+      mounted = false;
+    };
+  }, [nodeId, runtime.media]);
+
+  if (error) {
+    return (
+      <main className="project-content-unavailable" role="alert">
+        <p>{error}</p>
+      </main>
+    );
+  }
+  if (!asset) {
+    return (
+      <main className="project-content-unavailable" role="status">
+        <p>{translate('projects.loading')}</p>
+      </main>
+    );
+  }
+
+  const source = mediaAssetUrl(
+    asset.nodeId,
+    runtime.projectId,
+    asset.revision,
+  );
+  return (
+    <main className="project-media-preview">
+      <header className="project-media-preview__header">
+        <h1><TwemojiText text={`${asset.name}${asset.extension}`} /></h1>
+        <span>
+          {asset.mimeType} · {asset.sizeBytes.toLocaleString()} B
+          {asset.pixelWidth && asset.pixelHeight
+            ? ` · ${asset.pixelWidth} × ${asset.pixelHeight}`
+            : ''}
+        </span>
+      </header>
+      <div className="project-media-preview__stage">
+        {asset.kind === 'image' ? (
+          <MediaImageViewer
+            asset={asset}
+            source={source}
+            translate={translate}
+          />
+        ) : asset.kind === 'video' ? (
+          <video aria-label={asset.name} controls preload="metadata" src={source} />
+        ) : (
+          <audio aria-label={asset.name} controls preload="metadata" src={source} />
+        )}
+      </div>
+    </main>
+  );
+}
+
 export const PROJECT_PAGE_TYPE_DEFINITIONS = {
   markdown: {
     pageType: 'markdown',
+    extension: '.md',
     icon: markdownPageIcon,
     titleKey: 'projects.instanceNote',
     descriptionKey: 'projects.instanceNoteDescription',
@@ -292,6 +394,7 @@ export const PROJECT_PAGE_TYPE_DEFINITIONS = {
   },
   diagram: {
     pageType: 'diagram',
+    extension: '.flyd',
     icon: diagramIcon,
     titleKey: 'projects.instanceDiagram',
     descriptionKey: 'projects.instanceDiagramDescription',
@@ -318,6 +421,30 @@ export const PROJECT_PAGE_TYPE_DEFINITIONS = {
     titleKey: 'projects.instanceGallery',
     descriptionKey: 'projects.comingSoon',
     availability: 'coming-soon',
+  },
+  mediaImage: {
+    pageType: 'media:image',
+    icon: galleryIcon,
+    title: 'Imagem',
+    description: 'Arquivo de imagem da toca',
+    availability: 'available',
+    Page: MediaProjectPage,
+  },
+  mediaVideo: {
+    pageType: 'media:video',
+    icon: galleryIcon,
+    title: 'Vídeo',
+    description: 'Arquivo de vídeo da toca',
+    availability: 'available',
+    Page: MediaProjectPage,
+  },
+  mediaAudio: {
+    pageType: 'media:audio',
+    icon: galleryIcon,
+    title: 'Áudio',
+    description: 'Arquivo de áudio da toca',
+    availability: 'available',
+    Page: MediaProjectPage,
   },
 } as const satisfies Record<string, ProjectPageTypeDefinition>;
 

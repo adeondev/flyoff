@@ -20,6 +20,8 @@ export interface MarkdownEdit {
   selectionEnd: number;
 }
 
+export type MarkdownInlineColorKind = 'text' | 'highlight';
+
 const WRAPPERS: Partial<Record<MarkdownAction, string>> = {
   bold: '**',
   italic: '*',
@@ -139,4 +141,22 @@ export function applyMarkdownAction(
   return action === 'link'
     ? applyLink(value, start, end)
     : applyDivider(value, start, end);
+}
+
+export function applyMarkdownInlineColor(
+  kind: MarkdownInlineColorKind,
+  value: string,
+  start: number,
+  end: number,
+  color: string,
+): MarkdownEdit {
+  const selected = value.slice(start, end) || 'texto';
+  const prefix = kind === 'text' ? '[' : '==';
+  const suffix = kind === 'text' ? `]{color=${color}}` : `=={color=${color}}`;
+  const inserted = `${prefix}${selected}${suffix}`;
+  return {
+    value: value.slice(0, start) + inserted + value.slice(end),
+    selectionStart: start + prefix.length,
+    selectionEnd: start + prefix.length + selected.length,
+  };
 }

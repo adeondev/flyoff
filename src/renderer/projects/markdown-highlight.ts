@@ -1,16 +1,23 @@
+import { twemojiAssetUrl, twemojiSegments } from '../components/twemoji';
+import { colorContrastInk } from '../components/color';
 import {
-  twemojiAssetUrl,
-  twemojiSegments,
-} from '../components/twemoji';
+  parseImageDirective,
+  parseImageDirectiveAt,
+  parseMediaDirective,
+  type ImageDirective,
+  type MediaDirective,
+} from '../../shared/markdown';
 
 const ESCAPE: Record<string, string> = {
   '&': '&amp;',
   '<': '&lt;',
   '>': '&gt;',
+  '"': '&quot;',
+  "'": '&#39;',
 };
 
 function escapePlainHtml(value: string): string {
-  return value.replace(/[&<>]/g, (char) => ESCAPE[char]!);
+  return value.replace(/[&<>"']/g, (char) => ESCAPE[char]!);
 }
 
 function escapeHtml(value: string): string {
@@ -44,6 +51,67 @@ const PAIRS: readonly { delimiter: string; className: string }[] = [
   { delimiter: '~~', className: 'md-tok-strike' },
   { delimiter: '==', className: 'md-tok-highlight' },
 ];
+
+interface SourceColorAttribute {
+  color: string;
+  colorEnd: number;
+  colorStart: number;
+  end: number;
+}
+
+function sourceImageHost(
+  directive: ImageDirective,
+  source: string,
+  sourceStart: number,
+  sourceEnd: number,
+): string {
+  const style = `--source-image-width:${directive.width}px;--source-image-height:${directive.height}px;--source-image-margin:${directive.margin}px`;
+  return `<span class="md-source-image md-source-image--${directive.mode} md-source-image--${directive.align}" data-image-align="${directive.align}" data-image-asset="${directive.assetId}" data-image-height="${directive.height}" data-image-instance="${directive.instanceId}" data-image-margin="${directive.margin}" data-image-max="${directive.maxWidth}" data-image-min="${directive.minWidth}" data-image-mode="${directive.mode}" data-image-position-lock="${directive.positionLock}" data-image-ratio-lock="${directive.ratioLock}" data-image-source-end="${sourceEnd}" data-image-source-start="${sourceStart}" data-image-width="${directive.width}" style="${style};--source-image-ratio:${directive.width / directive.height}"><span aria-label="${escapePlainHtml(directive.alt)}" class="md-source-image__host" contenteditable="false" data-md-decoration role="img"><img alt="${escapePlainHtml(directive.alt)}" class="md-source-image__content" decoding="async" draggable="false" loading="lazy"></span><span aria-hidden="true" class="md-source-image__syntax">${escapeHtml(source)}</span></span>`;
+}
+
+function legacyImageSourceHost(
+  directive: MediaDirective,
+  source: string,
+): string {
+  const width = Math.max(96, Math.round((directive.span / 12) * 720));
+  const height = Math.max(72, Math.round(width / directive.ratio));
+  const mode = directive.placement.startsWith('wrap')
+    ? 'wrap'
+    : directive.placement;
+  const align = directive.placement === 'wrap-right' ? 'right' : 'left';
+  return `<span class="md-source-image md-source-image--legacy" data-image-align="${align}" data-image-asset="${directive.id}" data-image-height="${height}" data-image-instance="" data-image-margin="12" data-image-max="1200" data-image-min="96" data-image-mode="${mode}" data-image-position-lock="false" data-image-ratio-lock="${directive.lock}" data-image-width="${width}" style="--source-image-width:${width}px;--source-image-height:${height}px;--source-image-margin:12px;--source-image-ratio:${width / height}"><span aria-label="${escapePlainHtml(directive.description)}" class="md-source-image__host" contenteditable="false" data-md-decoration role="img"><img alt="${escapePlainHtml(directive.description)}" class="md-source-image__content" decoding="async" draggable="false" loading="lazy"></span><span class="md-source-image__syntax">${escapeHtml(source)}</span></span>`;
+}
+
+const SOURCE_COLOR_ATTRIBUTE =
+  /^\{color\s*=\s*(["']?)(#[0-9a-fA-F]{3,8}|[a-zA-Z]+)\1\s*\}/;
+
+function sourceColorAttribute(
+  text: string,
+  start: number,
+): SourceColorAttribute | null {
+  const match = SOURCE_COLOR_ATTRIBUTE.exec(text.slice(start));
+  const color = match?.[2];
+  if (!match || !color) {
+    return null;
+  }
+  const localColorStart = match[0].indexOf(color);
+  return {
+    color,
+    colorEnd: start + localColorStart + color.length,
+    colorStart: start + localColorStart,
+    end: start + match[0].length,
+  };
+}
+
+function colorTrigger(
+  kind: 'highlight' | 'text',
+  start: number,
+  end: number,
+  color?: string,
+): string {
+  const style = color ? ` style="--md-inline-color:${color}"` : '';
+  return `<button class="md-inline-color-trigger" contenteditable="false" data-md-color-end="${end}" data-md-color-kind="${kind}" data-md-color-start="${start}" data-md-color-value="${color ?? ''}" tabindex="-1" type="button"${style}></button>`;
+}
 
 function findClose(text: string, from: number, delimiter: string): number {
   let index = from;
@@ -89,7 +157,7 @@ function findBracket(text: string, from: number, close: string): number {
   return -1;
 }
 
-function highlightInline(text: string): string {
+function highlightInline(text: string, baseOffset = 0): string {
   let out = '';
   let plain = '';
   let index = 0;
@@ -125,27 +193,58 @@ function highlightInline(text: string): string {
       }
     }
 
-    if (
-      char === '[' &&
-      text[index + 1] === '[' &&
-      text[index - 1] !== '!'
-    ) {
+    if (char === ':' && text.startsWith('::image[', index)) {
+      const parsed = parseImageDirectiveAt(text, index);
+      if (parsed?.directive.mode === 'inline') {
+        flush();
+        out += sourceImageHost(
+          parsed.directive,
+          text.slice(parsed.start, parsed.end),
+          baseOffset + parsed.start,
+          baseOffset + parsed.end,
+        );
+        index = parsed.end;
+        continue;
+      }
+    }
+
+    if (char === '[' && text[index + 1] === '[' && text[index - 1] !== '!') {
       const tail = text.indexOf(']]', index + 2);
       if (tail !== -1) {
         flush();
+        const colorAttribute = sourceColorAttribute(text, tail + 2);
+        const end = colorAttribute?.end ?? tail + 2;
         const inside = text.slice(index + 2, tail);
         const aliasAt = inside.indexOf('|');
-        const destination =
-          aliasAt === -1 ? inside : inside.slice(0, aliasAt);
+        const destination = aliasAt === -1 ? inside : inside.slice(0, aliasAt);
         const alias = aliasAt === -1 ? '' : inside.slice(aliasAt);
         out += span(
           'md-source-link',
-          mark('[[') +
-            span('md-tok-link', escapeHtml(destination)) +
+          colorTrigger(
+            'text',
+            baseOffset + (colorAttribute?.colorStart ?? tail + 2),
+            baseOffset + (colorAttribute?.colorEnd ?? tail + 2),
+            colorAttribute?.color,
+          ) +
+            mark('[[') +
+            span(
+              colorAttribute
+                ? 'md-tok-link md-source-colored-text'
+                : 'md-tok-link',
+              colorAttribute
+                ? `<span style="color:${colorAttribute.color}">${escapeHtml(destination)}</span>`
+                : escapeHtml(destination),
+            ) +
             (alias ? span('md-tok-attr', escapeHtml(alias)) : '') +
-            mark(']]'),
+            mark(']]') +
+            (colorAttribute
+              ? span(
+                  'md-tok-attr',
+                  escapeHtml(text.slice(tail + 2, colorAttribute.end)),
+                )
+              : ''),
         );
-        index = tail + 2;
+        index = end;
         continue;
       }
     }
@@ -161,15 +260,45 @@ function highlightInline(text: string): string {
           flush();
           const label = text.slice(bracketStart + 1, labelEnd);
           const attr = text.slice(labelEnd + 1, tail + 1);
+          const colorAttribute = sourceColorAttribute(
+            text,
+            opener === '{' ? labelEnd + 1 : tail + 1,
+          );
+          const isLink = opener === '(' && char !== '!';
+          const end = colorAttribute?.end ?? tail + 1;
           out += span(
             'md-source-link',
-            (char === '!' ? mark('!') : '') +
+            (colorAttribute || isLink
+              ? colorTrigger(
+                  'text',
+                  baseOffset + (colorAttribute?.colorStart ?? tail + 1),
+                  baseOffset + (colorAttribute?.colorEnd ?? tail + 1),
+                  colorAttribute?.color,
+                )
+              : '') +
+              (char === '!' ? mark('!') : '') +
               mark('[') +
-              span('md-tok-link', highlightInline(label)) +
+              span(
+                colorAttribute
+                  ? 'md-tok-link md-source-colored-text'
+                  : 'md-tok-link',
+                colorAttribute
+                  ? `<span style="color:${colorAttribute.color}">${highlightInline(
+                      label,
+                      baseOffset + bracketStart + 1,
+                    )}</span>`
+                  : highlightInline(label, baseOffset + bracketStart + 1),
+              ) +
               mark(']') +
-              span('md-tok-attr', escapeHtml(attr)),
+              span('md-tok-attr', escapeHtml(attr)) +
+              (opener === '(' && colorAttribute
+                ? span(
+                    'md-tok-attr',
+                    escapeHtml(text.slice(tail + 1, colorAttribute.end)),
+                  )
+                : ''),
           );
-          index = tail + 1;
+          index = end;
           continue;
         }
       }
@@ -181,13 +310,45 @@ function highlightInline(text: string): string {
         const close = findClose(text, index + delimiter.length, delimiter);
         if (close > index + delimiter.length - 1) {
           flush();
+          const colorAttribute =
+            delimiter === '=='
+              ? sourceColorAttribute(text, close + delimiter.length)
+              : null;
+          const end = colorAttribute?.end ?? close + delimiter.length;
+          const trigger =
+            delimiter === '=='
+              ? colorTrigger(
+                  'highlight',
+                  baseOffset +
+                    (colorAttribute?.colorStart ?? close + delimiter.length),
+                  baseOffset +
+                    (colorAttribute?.colorEnd ?? close + delimiter.length),
+                  colorAttribute?.color,
+                )
+              : '';
+          const content = highlightInline(
+            text.slice(index + delimiter.length, close),
+            baseOffset + index + delimiter.length,
+          );
+          const coloredContent = colorAttribute
+            ? `<span class="md-source-colored-highlight" style="background:${colorAttribute.color};color:${colorContrastInk(
+                colorAttribute.color,
+              )}">${content}</span>`
+            : content;
           out += span(
             className,
-            mark(delimiter) +
-              highlightInline(text.slice(index + delimiter.length, close)) +
-              mark(delimiter),
+            trigger +
+              mark(delimiter) +
+              coloredContent +
+              mark(delimiter) +
+              (colorAttribute
+                ? span(
+                    'md-tok-attr',
+                    escapeHtml(text.slice(close + delimiter.length, end)),
+                  )
+                : ''),
           );
-          index = close + delimiter.length;
+          index = end;
           matchedPair = true;
           break;
         }
@@ -204,7 +365,10 @@ function highlightInline(text: string): string {
         out += span(
           'md-tok-em',
           mark(char) +
-            highlightInline(text.slice(index + 1, close)) +
+            highlightInline(
+              text.slice(index + 1, close),
+              baseOffset + index + 1,
+            ) +
             mark(char),
         );
         index = close + 1;
@@ -221,13 +385,21 @@ function highlightInline(text: string): string {
 }
 
 function highlightLine(line: string): string {
+  const image = parseImageDirective(line);
+  if (image) {
+    return sourceImageHost(image, line, 0, line.length);
+  }
+  const media = parseMediaDirective(line);
+  if (media) {
+    return legacyImageSourceHost(media, line);
+  }
   const dividedHeading = /^(\s*(#{1,6})--\s+)(.*)$/.exec(line);
   if (dividedHeading) {
     return (
       mark(dividedHeading[1]!) +
       span(
         `md-tok-heading md-tok-heading--divided md-tok-h${dividedHeading[2]!.length}`,
-        highlightInline(dividedHeading[3]!),
+        highlightInline(dividedHeading[3]!, dividedHeading[1]!.length),
       )
     );
   }
@@ -238,14 +410,17 @@ function highlightLine(line: string): string {
       mark(heading[1]!) +
       span(
         `md-tok-heading md-tok-h${heading[2]!.length}`,
-        highlightInline(heading[3]!),
+        highlightInline(heading[3]!, heading[1]!.length),
       )
     );
   }
 
   const blockquote = /^(\s*>\s?)(.*)$/.exec(line);
   if (blockquote) {
-    return mark(blockquote[1]!) + highlightInline(blockquote[2]!);
+    return (
+      mark(blockquote[1]!) +
+      highlightInline(blockquote[2]!, blockquote[1]!.length)
+    );
   }
 
   const list = /^(\s*)([-*+]|\d{1,9}[.)])(\s+)(\[[ xX]\]\s+)?(.*)$/.exec(line);
@@ -263,7 +438,13 @@ function highlightLine(line: string): string {
               escapeHtml(list[4]),
           )
         : '') +
-      highlightInline(list[5]!)
+      highlightInline(
+        list[5]!,
+        list[1]!.length +
+          list[2]!.length +
+          list[3]!.length +
+          (list[4]?.length ?? 0),
+      )
     );
   }
 
@@ -275,6 +456,7 @@ function highlightLine(line: string): string {
 }
 
 const FENCE_LINE = /^\s*(```+|~~~+)/;
+const HEADING_LINE = /^\s*#{1,6}(?:--)?\s+/;
 const CACHE_LIMIT = 4000;
 const lineCache = new Map<string, string>();
 
@@ -285,6 +467,7 @@ export interface HighlightedSourceLine {
   fenceAfter: boolean;
   fenceBefore: boolean;
   fenceLine: boolean;
+  heading: boolean;
   html: string;
   key: string;
   source: string;
@@ -304,6 +487,9 @@ export function sourceLineClassName(line: HighlightedSourceLine): string {
   }
   if (line.fenceLine) {
     classes.push('md-line--code-fence');
+  }
+  if (line.heading) {
+    classes.push('md-line--heading');
   }
 
   return classes.join(' ');
@@ -348,6 +534,7 @@ export function highlightSourceLine(
     fenceAfter: isFence ? !fenceBefore : fenceBefore,
     fenceBefore,
     fenceLine: isFence,
+    heading: state === 'n' && HEADING_LINE.test(source),
     html,
     key,
     source,

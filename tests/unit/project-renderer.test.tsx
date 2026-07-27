@@ -63,6 +63,7 @@ const folder: ProjectTreeNode = {
 };
 const note: ProjectTreeNode = {
   canContainChildren: true,
+  extension: '.md',
   hasChildren: false,
   nodeId: 'ffbf978c-43d7-4135-a3ea-f6e4e3ec76fb',
   parentId: null,
@@ -72,12 +73,23 @@ const note: ProjectTreeNode = {
 };
 const nestedNote: ProjectTreeNode = {
   canContainChildren: true,
+  extension: '.md',
   hasChildren: false,
   nodeId: 'fa1a9d28-9cb3-45fe-a11c-28e8fe3cfb8b',
   parentId: folder.nodeId,
   name: 'Plan',
   kind: 'page',
   pageType: 'markdown',
+};
+const diagram: ProjectTreeNode = {
+  canContainChildren: false,
+  extension: '.flyd',
+  hasChildren: false,
+  nodeId: '27a610aa-ae88-457c-ac73-1f6ac83546cf',
+  parentId: null,
+  name: 'Flow',
+  kind: 'page',
+  pageType: 'diagram',
 };
 
 function deferred<T>() {
@@ -186,6 +198,50 @@ describe('locked Markdown note', () => {
 });
 
 describe('project sidebar', () => {
+  it('shows real page extensions and keeps color and ellipsis in separate slots', async () => {
+    const preferences = createDefaultFlyoffPreferences();
+    preferences.documents.showFileExtensions = true;
+    const { container } = render(
+      <FlyoffPreferencesProvider value={preferenceContext(preferences)}>
+        <ProjectSidebar
+          appearance={{
+            snapshot: {
+              projectSeed: null,
+              noteSeeds: { [note.nodeId]: '#3B82F6' },
+            },
+            setNoteSeed: vi.fn(),
+            setProjectSeed: vi.fn(),
+          }}
+          loadChildren={vi.fn(async () => ({
+            ok: true as const,
+            value: [note, diagram],
+          }))}
+          onCreateNode={vi.fn()}
+          onMoveNode={vi.fn()}
+          onOpenNode={vi.fn()}
+          onOpenOverview={vi.fn()}
+          onRenameNode={vi.fn()}
+          onTrashNode={vi.fn()}
+          project={project}
+          translate={translate}
+        />
+      </FlyoffPreferencesProvider>,
+    );
+
+    expect(
+      await screen.findByRole('button', { name: 'Todo.md' }),
+    ).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Flow.flyd' })).toBeTruthy();
+    const noteItem = screen
+      .getByRole('button', { name: 'Todo.md' })
+      .closest('[role="treeitem"]')!;
+    expect(noteItem.querySelector('.project-tree__color-trigger')).toBeTruthy();
+    expect(noteItem.querySelector('.project-tree__menu-trigger')).toBeTruthy();
+    expect(
+      container.querySelectorAll('.project-tree__color-trigger'),
+    ).toHaveLength(1);
+  });
+
   it('offers advanced search operators by pointer and keyboard', async () => {
     render(
       <ProjectSidebar
@@ -1138,6 +1194,71 @@ describe('project naming and creation dialog', () => {
 });
 
 describe('Markdown editor', () => {
+  it('changes a source color token as one undoable operation', () => {
+    const original: MarkdownDocument = {
+      nodeId: note.nodeId,
+      content: '[John]{color=#3B82F6}',
+      readOnly: false,
+      revision: '1'.repeat(64),
+    };
+    const controller = new MarkdownDocumentController({
+      reload: vi.fn(),
+      save: successfulSave(),
+    });
+    const { container } = render(
+      <MarkdownEditor
+        controller={controller}
+        document={original}
+        translate={translate}
+      />,
+    );
+    const trigger = container.querySelector<HTMLButtonElement>(
+      '.md-inline-color-trigger',
+    )!;
+    fireEvent.click(trigger);
+
+    const hex = screen.getByLabelText(
+      'projects.nodeColorCustom: hexadecimal',
+    );
+    fireEvent.change(hex, { target: { value: '#ff0000' } });
+    fireEvent.blur(hex);
+    fireEvent.click(screen.getByRole('button', { name: 'toolbar.applyColor' }));
+
+    expect(controller.getSnapshot(note.nodeId)?.content).toBe(
+      '[John]{color=#FF0000}',
+    );
+    controller.undo(note.nodeId);
+    expect(controller.getSnapshot(note.nodeId)?.content).toBe(
+      original.content,
+    );
+  });
+
+  it('keeps source color indicators visible but inert in read-only notes', () => {
+    const original: MarkdownDocument = {
+      nodeId: note.nodeId,
+      content: '==John=={color=#3B82F6}',
+      readOnly: true,
+      revision: '1'.repeat(64),
+    };
+    const controller = new MarkdownDocumentController({
+      reload: vi.fn(),
+      save: successfulSave(),
+    });
+    const { container } = render(
+      <MarkdownEditor
+        controller={controller}
+        document={original}
+        translate={translate}
+      />,
+    );
+    const trigger = container.querySelector<HTMLButtonElement>(
+      '.md-inline-color-trigger',
+    )!;
+    expect(trigger.ariaDisabled).toBe('true');
+    fireEvent.click(trigger);
+    expect(screen.queryByRole('dialog', { name: 'toolbar.color' })).toBeNull();
+  });
+
   it('uses focus chrome by default and keeps the classic header available', () => {
     const original: MarkdownDocument = {
       nodeId: note.nodeId,
@@ -1199,6 +1320,50 @@ describe('Markdown editor', () => {
     expect(
       screen.queryByRole('button', { name: 'projects.editorModeMenu' }),
     ).toBeNull();
+  });
+
+  it('publishes the resolved note colour to the cascade and drops it when cleared', () => {
+    const original: MarkdownDocument = {
+      nodeId: note.nodeId,
+      content: '# Todo',
+      readOnly: false,
+      revision: '1'.repeat(64),
+    };
+    const controller = new MarkdownDocumentController({
+      reload: vi.fn(),
+      save: successfulSave(),
+    });
+    const view = render(
+      <MarkdownEditor
+        controller={controller}
+        document={original}
+        noteSeed="#3568A4"
+        title="Todo"
+        translate={translate}
+      />,
+    );
+
+    const editor = view.container.querySelector<HTMLElement>(
+      '.markdown-editor',
+    );
+    expect(editor?.hasAttribute('data-note-accent')).toBe(true);
+    expect(editor?.style.getPropertyValue('--note-seed')).toBe('#3568A4');
+
+    view.rerender(
+      <MarkdownEditor
+        controller={controller}
+        document={original}
+        noteSeed={null}
+        title="Todo"
+        translate={translate}
+      />,
+    );
+
+    const cleared = view.container.querySelector<HTMLElement>(
+      '.markdown-editor',
+    );
+    expect(cleared?.hasAttribute('data-note-accent')).toBe(false);
+    expect(cleared?.style.getPropertyValue('--note-seed')).toBe('');
   });
 
   it('synchronizes the focus toolbar globally and applies it to new editors', () => {
@@ -1985,6 +2150,66 @@ describe('Markdown editor', () => {
     expect(controller.getSnapshot(note.nodeId)?.content).toBe('a');
     expect(editor.querySelectorAll(':scope > .md-line')).toHaveLength(1);
     expect(editor.querySelector('[data-md-gutter]')?.textContent).toBe('1');
+  });
+
+  it('keeps the active row stable while deleting at the end of a line', () => {
+    const original: MarkdownDocument = {
+      nodeId: note.nodeId,
+      content: 'abc\nsecond',
+      readOnly: false,
+      revision: '1'.repeat(64),
+    };
+    const controller = new MarkdownDocumentController({
+      reload: vi.fn(),
+      save: successfulSave(),
+    });
+    render(
+      <MarkdownEditor
+        controller={controller}
+        document={original}
+        translate={translate}
+      />,
+    );
+    const editor = screen.getByRole('textbox', {
+      name: 'projects.editorLabel',
+    });
+    editor.focus();
+    writeSelection(editor, 3);
+    document.dispatchEvent(new Event('selectionchange'));
+    expect(
+      editor.children[0]?.classList.contains('md-line--active'),
+    ).toBe(true);
+
+    const second = editor.children[1] as HTMLElement;
+    const observer = new MutationObserver(() => undefined);
+    observer.observe(second, {
+      attributeFilter: ['class'],
+      attributeOldValue: true,
+      attributes: true,
+    });
+    fireEvent(
+      editor,
+      new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        inputType: 'deleteContentBackward',
+      }),
+    );
+    const records = observer.takeRecords();
+    observer.disconnect();
+
+    expect(controller.getSnapshot(note.nodeId)?.content).toBe('ab\nsecond');
+    expect(
+      editor.children[0]?.classList.contains('md-line--active'),
+    ).toBe(true);
+    expect(
+      editor.children[1]?.classList.contains('md-line--active'),
+    ).toBe(false);
+    expect(
+      records.some((record) =>
+        record.oldValue?.split(/\s+/).includes('md-line--active'),
+      ),
+    ).toBe(false);
   });
 
   it('records IME composition once and keeps toolbar edits in history', async () => {

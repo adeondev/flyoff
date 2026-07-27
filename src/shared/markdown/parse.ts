@@ -1,5 +1,6 @@
 import type { BlockNode, HeadingDepth, ListItem, Root } from './ast';
 import { parseInline } from './inline';
+import { parseImageDirective, parseMediaDirective } from './media';
 
 const BLANK = /^[ \t]*$/;
 const FENCE = /^ {0,3}(`{3,}|~{3,})[ \t]*([^`]*)$/;
@@ -10,6 +11,8 @@ const BLOCKQUOTE = /^ {0,3}>[ ]?(.*)$/;
 const LIST_ITEM = /^( {0,3})([-*+]|\d{1,9}[.)])([ \t]+)(.*)$/;
 const TASK = /^\[([ xX])\][ \t]+(.*)$/;
 const TABLE_DIVIDER_CELL = /^:?-{3,}:?$/;
+const MEDIA_DIRECTIVE = /^::media\[/;
+const IMAGE_DIRECTIVE = /^::image\[/;
 
 function splitTableRow(line: string): string[] {
   const trimmed = line.trim().replace(/^\|/, '').replace(/\|$/, '');
@@ -50,6 +53,9 @@ function tableAlignments(line: string) {
 }
 
 function isBlockStart(line: string): boolean {
+  const image = IMAGE_DIRECTIVE.test(line)
+    ? parseImageDirective(line)
+    : null;
   return (
     FENCE.test(line) ||
     DIVIDED_ATX.test(line) ||
@@ -57,6 +63,8 @@ function isBlockStart(line: string): boolean {
     THEMATIC_BREAK.test(line) ||
     BLOCKQUOTE.test(line) ||
     LIST_ITEM.test(line)
+    || MEDIA_DIRECTIVE.test(line) ||
+    Boolean(image && image.mode !== 'inline')
   );
 }
 
@@ -137,6 +145,24 @@ export function parseBlocks(lines: readonly string[]): BlockNode[] {
       blocks.push(parsed.block);
       index = parsed.end;
       continue;
+    }
+
+    if (MEDIA_DIRECTIVE.test(line)) {
+      const directive = parseMediaDirective(line);
+      if (directive) {
+        blocks.push({ type: 'media', directive });
+        index += 1;
+        continue;
+      }
+    }
+
+    if (IMAGE_DIRECTIVE.test(line)) {
+      const directive = parseImageDirective(line);
+      if (directive && directive.mode !== 'inline') {
+        blocks.push({ type: 'image-block', directive });
+        index += 1;
+        continue;
+      }
     }
 
     const dividedAtx = DIVIDED_ATX.exec(line);

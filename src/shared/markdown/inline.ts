@@ -1,4 +1,5 @@
 import type { InlineNode } from './ast';
+import { parseImageDirectiveAt } from './media';
 
 const PUNCTUATION = /[!-/:-@[-`{-~]/;
 const SAFE_COLOR = /^(#[0-9a-fA-F]{3,8}|[a-zA-Z]+)$/;
@@ -173,14 +174,19 @@ function parseBracket(
       };
     }
 
+    const attribute =
+      text[destination.end] === '{'
+        ? parseColorAttribute(text, destination.end)
+        : null;
     return {
       node: {
         type: 'link',
         url: destination.url,
         title: destination.title,
+        ...(attribute ? { color: attribute.color } : {}),
         children: parseInline(label),
       },
-      end: destination.end,
+      end: attribute?.end ?? destination.end,
     };
   }
 
@@ -220,16 +226,19 @@ function parseWikiLink(text: string, start: number): Parsed | null {
     aliasAt === -1
       ? destination
       : inside.slice(aliasAt + 1).trim() || destination;
+  const attribute =
+    text[close + 2] === '{' ? parseColorAttribute(text, close + 2) : null;
 
   return {
     node: {
       type: 'link',
       url: destination,
       title: null,
+      ...(attribute ? { color: attribute.color } : {}),
       syntax: 'wikilink',
       children: parseInline(label),
     },
-    end: close + 2,
+    end: attribute?.end ?? close + 2,
   };
 }
 
@@ -245,9 +254,20 @@ function parseEmphasis(text: string, start: number): Parsed | null {
     if (text.startsWith(delimiter, start)) {
       const close = findDelimiter(text, start + 2, delimiter);
       if (close > start + 1) {
+        const attribute =
+          type === 'highlight' && text[close + delimiter.length] === '{'
+            ? parseColorAttribute(text, close + delimiter.length)
+            : null;
         return {
-          node: { type, children: parseInline(text.slice(start + 2, close)) },
-          end: close + 2,
+          node:
+            type === 'highlight' && attribute
+              ? {
+                  type,
+                  color: attribute.color,
+                  children: parseInline(text.slice(start + 2, close)),
+                }
+              : { type, children: parseInline(text.slice(start + 2, close)) },
+          end: attribute?.end ?? close + delimiter.length,
         };
       }
     }
@@ -328,6 +348,16 @@ export function parseInline(text: string): InlineNode[] {
         }
         nodes.push({ type: 'inlineCode', value });
         index = close + run;
+        continue;
+      }
+    }
+
+    if (char === ':' && text.startsWith('::image[', index)) {
+      const parsed = parseImageDirectiveAt(text, index);
+      if (parsed?.directive.mode === 'inline') {
+        flush();
+        nodes.push({ type: 'inline-image', directive: parsed.directive });
+        index = parsed.end;
         continue;
       }
     }

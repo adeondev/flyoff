@@ -106,6 +106,10 @@ export interface TranslationCatalog {
     emojiRecent: string;
     emojiNoResults: string;
     emojiSkinTone: string;
+    color: string;
+    textColor: string;
+    highlightColor: string;
+    applyColor: string;
   };
   home: {
     prompt: string;
@@ -158,6 +162,11 @@ export interface TranslationCatalog {
     defaultModel: string;
     dropFiles: string;
     generating: string;
+    generationErrorAuthentication: string;
+    generationErrorNetwork: string;
+    generationErrorOverloaded: string;
+    generationErrorRateLimited: string;
+    generationErrorTools: string;
     generationFailed: string;
     hideApiKey: string;
     messageInput: string;
@@ -227,6 +236,7 @@ export interface TranslationCatalog {
     pinConversation: string;
     renameConversation: string;
     saveConversationName: string;
+    searchingNow: string;
     unarchiveConversation: string;
     unpinConversation: string;
     sources: string;
@@ -421,6 +431,69 @@ export interface TranslationCatalog {
     refresh: string;
     add: string;
     addInstance: string;
+    importMedia: string;
+    insertInActiveNote: string;
+    mediaGallery: string;
+    mediaEmpty: string;
+    mediaSearch: string;
+    mediaSort: string;
+    mediaSortName: string;
+    mediaSortDate: string;
+    mediaSortSize: string;
+    mediaSortType: string;
+    mediaSearchPathDescription: string;
+    mediaSearchFileDescription: string;
+    mediaSearchTypeDescription: string;
+    mediaSearchDateDescription: string;
+    mediaSearchSizeDescription: string;
+    mediaSearchWidthDescription: string;
+    mediaSearchHeightDescription: string;
+    mediaSearchOrientationDescription: string;
+    mediaSearchUsedDescription: string;
+    mediaSearchAll: string;
+    mediaSearchFolder: string;
+    mediaView: string;
+    mediaViewGrid: string;
+    mediaViewList: string;
+    mediaViewDetails: string;
+    mediaQuickPreview: string;
+    mediaFolderType: string;
+    mediaNewFolderDefault: string;
+    mediaDensityCompact: string;
+    mediaDensityNormal: string;
+    mediaDensityLarge: string;
+    mediaNewFolderWithSelection: string;
+    mediaSubfolders: string;
+    mediaImages: string;
+    mediaOpen: string;
+    mediaRename: string;
+    mediaDelete: string;
+    mediaMoveHere: string;
+    mediaFolderName: string;
+    mediaBack: string;
+    mediaSelected: string;
+    imageMenu: string;
+    imageOpenGallery: string;
+    imageMode: string;
+    imageInline: string;
+    imageBlock: string;
+    imageWrap: string;
+    imageAlign: string;
+    imageAlignLeft: string;
+    imageAlignCenter: string;
+    imageAlignRight: string;
+    imageRatioLock: string;
+    imagePositionLock: string;
+    imageRestoreOriginal: string;
+    imageDuplicate: string;
+    imageReplace: string;
+    imageAltText: string;
+    imageCaption: string;
+    imageSetMinimum: string;
+    imageSetMaximum: string;
+    imageResetLimits: string;
+    imageSizeLimits: string;
+    imageUsages: string;
     searchProject: string;
     noSearchResults: string;
     searchOptions: string;
@@ -461,6 +534,12 @@ export interface TranslationCatalog {
     rename: string;
     move: string;
     moveTo: string;
+    nodeColor: string;
+    nodeColorPresets: string;
+    nodeColorCustom: string;
+    nodeColorInherit: string;
+    projectColor: string;
+    projectColorGlobal: string;
     trash: string;
     openSelected: string;
     moveSelected: string;
@@ -532,6 +611,7 @@ export interface TranslationCatalog {
     moving: string;
     name: string;
     markdownExtension: string;
+    fileExtension: string;
     editorLabel: string;
     editorContextMenu: string;
     format: string;
@@ -905,6 +985,10 @@ export const ptBR = {
     emojiRecent: 'Usados recentemente',
     emojiNoResults: 'Nenhum emoji encontrado.',
     emojiSkinTone: 'Tom de pele',
+    color: 'Cor',
+    textColor: 'Texto',
+    highlightColor: 'Destaque',
+    applyColor: 'Aplicar cor',
   },
   home: {
     prompt: 'O que vai fazer hoje?',
@@ -961,6 +1045,16 @@ export const ptBR = {
     defaultModel: 'Padr\u00e3o',
     dropFiles: 'Solte os arquivos aqui',
     generating: 'Gerando resposta',
+    generationErrorAuthentication:
+      'A API key do Gemini n\u00e3o p\u00f4de ser autenticada. Verifique a chave e tente novamente.',
+    generationErrorNetwork:
+      'N\u00e3o foi poss\u00edvel conectar ao Gemini. Verifique sua conex\u00e3o e tente novamente.',
+    generationErrorOverloaded:
+      'O Gemini est\u00e1 temporariamente sobrecarregado. Tente novamente em alguns instantes.',
+    generationErrorRateLimited:
+      'O limite de uso do Gemini foi atingido. Aguarde um pouco e tente novamente.',
+    generationErrorTools:
+      'O Twine n\u00e3o conseguiu concluir as ferramentas necess\u00e1rias. Tente novamente.',
     generationFailed: 'N\u00e3o foi poss\u00edvel gerar a resposta do Twine.',
     hideApiKey: 'Ocultar',
     messageInput: 'Mensagem para o Twine',
@@ -1033,6 +1127,7 @@ export const ptBR = {
     pinConversation: 'Fixar conversa',
     renameConversation: 'Renomear conversa',
     saveConversationName: 'Salvar',
+    searchingNow: 'Pesquisando…',
     unarchiveConversation: 'Desarquivar conversa',
     unpinConversation: 'Desafixar conversa',
     sources: 'Fontes',
@@ -1196,7 +1291,7 @@ export const ptBR = {
       'Mostre apenas o essencial ou todos os detalhes.',
     showFileExtensions: 'Mostrar extens\u00f5es na \u00e1rvore',
     showFileExtensionsDescription:
-      'Mostra .md depois do nome de cada nota.',
+      'Mostra a extens\u00e3o real depois do nome de cada arquivo.',
     spellcheckEnabled: 'Ativar corretor ortogr\u00e1fico',
     spellcheckEnabledDescription:
       'Sinaliza palavras que podem estar escritas incorretamente.',
@@ -1281,6 +1376,70 @@ export const ptBR = {
     refresh: 'Atualizar',
     add: 'Adicionar',
     addInstance: 'Adicionar instância',
+    importMedia: 'Importar mídia',
+    insertInActiveNote: 'Inserir na nota ativa',
+    mediaGallery: 'Galeria de mídia',
+    mediaEmpty: 'Nenhuma imagem nesta pasta.',
+    mediaSearch: 'Pesquisar imagens',
+    mediaSort: 'Ordenar',
+    mediaSortName: 'Nome',
+    mediaSortDate: 'Data',
+    mediaSortSize: 'Tamanho',
+    mediaSortType: 'Tipo',
+    mediaSearchPathDescription: 'corresponder pasta ou caminho da mídia',
+    mediaSearchFileDescription: 'corresponder nome do arquivo',
+    mediaSearchTypeDescription: 'corresponder formato ou tipo MIME',
+    mediaSearchDateDescription: 'corresponder data de criação ou alteração',
+    mediaSearchSizeDescription: 'corresponder tamanho em bytes',
+    mediaSearchWidthDescription: 'corresponder largura em pixels',
+    mediaSearchHeightDescription: 'corresponder altura em pixels',
+    mediaSearchOrientationDescription:
+      'corresponder orientação horizontal, vertical ou quadrada',
+    mediaSearchUsedDescription: 'filtrar imagens usadas ou sem uso',
+    mediaSearchAll: 'Toda a mídia',
+    mediaSearchFolder: 'Pasta atual',
+    mediaView: 'Visualização',
+    mediaViewGrid: 'Grade',
+    mediaViewList: 'Lista',
+    mediaViewDetails: 'Detalhes',
+    mediaQuickPreview: 'Prévia rápida',
+    mediaFolderType: 'Pasta',
+    mediaNewFolderDefault: 'Nova pasta',
+    mediaDensityCompact: 'Compacta',
+    mediaDensityNormal: 'Normal',
+    mediaDensityLarge: 'Grande',
+    mediaNewFolderWithSelection: 'Nova pasta com a seleção',
+    mediaSubfolders: 'Subpastas',
+    mediaImages: 'Imagens',
+    mediaOpen: 'Abrir imagem',
+    mediaRename: 'Renomear',
+    mediaDelete: 'Excluir',
+    mediaMoveHere: 'Mover para esta pasta',
+    mediaFolderName: 'Nome da pasta',
+    mediaBack: 'Voltar',
+    mediaSelected: 'selecionados',
+    imageMenu: 'Opções da imagem',
+    imageOpenGallery: 'Abrir na galeria',
+    imageMode: 'Posicionamento',
+    imageInline: 'Em linha',
+    imageBlock: 'Bloco',
+    imageWrap: 'Contornar texto',
+    imageAlign: 'Alinhamento',
+    imageAlignLeft: 'Esquerda',
+    imageAlignCenter: 'Centro',
+    imageAlignRight: 'Direita',
+    imageRatioLock: 'Bloquear proporção',
+    imagePositionLock: 'Bloquear posição',
+    imageRestoreOriginal: 'Restaurar tamanho original',
+    imageDuplicate: 'Duplicar imagem',
+    imageReplace: 'Substituir imagem',
+    imageAltText: 'Texto alternativo',
+    imageCaption: 'Legenda',
+    imageSetMinimum: 'Usar tamanho atual como mínimo',
+    imageSetMaximum: 'Usar tamanho atual como máximo',
+    imageResetLimits: 'Restaurar limites de tamanho',
+    imageSizeLimits: 'Limites de tamanho',
+    imageUsages: 'Usos em notas',
     searchProject: 'Pesquisar nesta toca',
     noSearchResults: 'Nenhum resultado encontrado.',
     searchOptions: 'Opções de busca',
@@ -1323,6 +1482,12 @@ export const ptBR = {
     rename: 'Renomear',
     move: 'Mover',
     moveTo: 'Mover para…',
+    nodeColor: 'Cor da nota',
+    nodeColorPresets: 'Cores predefinidas',
+    nodeColorCustom: 'Cor personalizada',
+    nodeColorInherit: 'Usar cor da toca',
+    projectColor: 'Cor da toca',
+    projectColorGlobal: 'Usar cor global',
     trash: 'Mover para a lixeira',
     openSelected: 'Abrir selecionadas',
     moveSelected: 'Mover selecionadas\u2026',
@@ -1402,6 +1567,7 @@ export const ptBR = {
     moving: 'Movendo…',
     name: 'Nome',
     markdownExtension: 'Extensão Markdown',
+    fileExtension: 'Extensão do arquivo',
     editorLabel: 'Editor Markdown',
     editorContextMenu: 'A\u00e7\u00f5es do editor',
     format: 'Formatar',
@@ -1771,6 +1937,10 @@ export const enUS = {
     emojiRecent: 'Recently used',
     emojiNoResults: 'No emoji found.',
     emojiSkinTone: 'Skin tone',
+    color: 'Colour',
+    textColor: 'Text',
+    highlightColor: 'Highlight',
+    applyColor: 'Apply colour',
   },
   home: {
     prompt: 'What would you like to do today?',
@@ -1827,6 +1997,16 @@ export const enUS = {
     defaultModel: 'Default',
     dropFiles: 'Drop files here',
     generating: 'Generating response',
+    generationErrorAuthentication:
+      'The Gemini API key could not be authenticated. Check the key and try again.',
+    generationErrorNetwork:
+      'Could not connect to Gemini. Check your connection and try again.',
+    generationErrorOverloaded:
+      'Gemini is temporarily overloaded. Try again in a moment.',
+    generationErrorRateLimited:
+      'The Gemini usage limit was reached. Wait a moment and try again.',
+    generationErrorTools:
+      'Twine could not complete the required tools. Try again.',
     generationFailed: 'Could not generate the Twine response.',
     hideApiKey: 'Hide',
     messageInput: 'Message Twine',
@@ -1899,6 +2079,7 @@ export const enUS = {
     pinConversation: 'Pin conversation',
     renameConversation: 'Rename conversation',
     saveConversationName: 'Save',
+    searchingNow: 'Searching…',
     unarchiveConversation: 'Unarchive conversation',
     unpinConversation: 'Unpin conversation',
     sources: 'Sources',
@@ -2050,7 +2231,7 @@ export const enUS = {
       'Show only the essentials or every detail.',
     showFileExtensions: 'Show extensions in the tree',
     showFileExtensionsDescription:
-      'Shows .md after each note name.',
+      'Shows each file\u2019s real extension after its name.',
     spellcheckEnabled: 'Enable spellcheck',
     spellcheckEnabledDescription:
       'Marks words that may be misspelled.',
@@ -2135,6 +2316,70 @@ export const enUS = {
     refresh: 'Refresh',
     add: 'Add',
     addInstance: 'Add instance',
+    importMedia: 'Import media',
+    insertInActiveNote: 'Insert in active note',
+    mediaGallery: 'Media gallery',
+    mediaEmpty: 'No images in this folder.',
+    mediaSearch: 'Search images',
+    mediaSort: 'Sort',
+    mediaSortName: 'Name',
+    mediaSortDate: 'Date',
+    mediaSortSize: 'Size',
+    mediaSortType: 'Type',
+    mediaSearchPathDescription: 'match media folder or path',
+    mediaSearchFileDescription: 'match file name',
+    mediaSearchTypeDescription: 'match format or MIME type',
+    mediaSearchDateDescription: 'match creation or modification date',
+    mediaSearchSizeDescription: 'match size in bytes',
+    mediaSearchWidthDescription: 'match width in pixels',
+    mediaSearchHeightDescription: 'match height in pixels',
+    mediaSearchOrientationDescription:
+      'match landscape, portrait, or square orientation',
+    mediaSearchUsedDescription: 'filter used or unused images',
+    mediaSearchAll: 'All media',
+    mediaSearchFolder: 'Current folder',
+    mediaView: 'View',
+    mediaViewGrid: 'Grid',
+    mediaViewList: 'List',
+    mediaViewDetails: 'Details',
+    mediaQuickPreview: 'Quick preview',
+    mediaFolderType: 'Folder',
+    mediaNewFolderDefault: 'New folder',
+    mediaDensityCompact: 'Compact',
+    mediaDensityNormal: 'Normal',
+    mediaDensityLarge: 'Large',
+    mediaNewFolderWithSelection: 'New folder with selection',
+    mediaSubfolders: 'Subfolders',
+    mediaImages: 'Images',
+    mediaOpen: 'Open image',
+    mediaRename: 'Rename',
+    mediaDelete: 'Delete',
+    mediaMoveHere: 'Move to this folder',
+    mediaFolderName: 'Folder name',
+    mediaBack: 'Back',
+    mediaSelected: 'selected',
+    imageMenu: 'Image options',
+    imageOpenGallery: 'Open in gallery',
+    imageMode: 'Position',
+    imageInline: 'Inline',
+    imageBlock: 'Block',
+    imageWrap: 'Wrap text',
+    imageAlign: 'Alignment',
+    imageAlignLeft: 'Left',
+    imageAlignCenter: 'Center',
+    imageAlignRight: 'Right',
+    imageRatioLock: 'Lock aspect ratio',
+    imagePositionLock: 'Lock position',
+    imageRestoreOriginal: 'Restore original size',
+    imageDuplicate: 'Duplicate image',
+    imageReplace: 'Replace image',
+    imageAltText: 'Alternative text',
+    imageCaption: 'Caption',
+    imageSetMinimum: 'Use current size as minimum',
+    imageSetMaximum: 'Use current size as maximum',
+    imageResetLimits: 'Reset size limits',
+    imageSizeLimits: 'Size limits',
+    imageUsages: 'Uses in notes',
     searchProject: 'Search this den',
     noSearchResults: 'No results found.',
     searchOptions: 'Search options',
@@ -2176,6 +2421,12 @@ export const enUS = {
     rename: 'Rename',
     move: 'Move',
     moveTo: 'Move to…',
+    nodeColor: 'Note colour',
+    nodeColorPresets: 'Preset colours',
+    nodeColorCustom: 'Custom colour',
+    nodeColorInherit: 'Use den colour',
+    projectColor: 'Den colour',
+    projectColorGlobal: 'Use global colour',
     trash: 'Move to trash',
     openSelected: 'Open selected',
     moveSelected: 'Move selected\u2026',
@@ -2255,6 +2506,7 @@ export const enUS = {
     moving: 'Moving…',
     name: 'Name',
     markdownExtension: 'Markdown extension',
+    fileExtension: 'File extension',
     editorLabel: 'Markdown editor',
     editorContextMenu: 'Editor actions',
     format: 'Format',

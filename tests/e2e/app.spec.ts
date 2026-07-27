@@ -1,4 +1,10 @@
-import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises';
+import {
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -22,6 +28,7 @@ let electronProcess: ReturnType<ElectronApplication['process']>;
 let page: Page;
 let projectParentPath: string;
 let projectParentCanonicalPath: string;
+let mediaImportPath: string;
 let userDataPath: string;
 
 async function settleWithin(
@@ -110,6 +117,14 @@ test.describe('Flyoff desktop shell', () => {
       path.join(os.tmpdir(), 'flyoff-e2e-projects-'),
     );
     projectParentCanonicalPath = await realpath(projectParentPath);
+    mediaImportPath = path.join(projectParentCanonicalPath, 'media-e2e.png');
+    await writeFile(
+      mediaImportPath,
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAFElEQVR42mNk+M/wn4GBgYGJAQoAHgQCAf2i9aQAAAAASUVORK5CYII=',
+        'base64',
+      ),
+    );
 
     electronApp = await electron.launch({
       args: [
@@ -126,6 +141,7 @@ test.describe('Flyoff desktop shell', () => {
           projectParentCanonicalPath,
           e2eProjectName,
         ),
+        FLYOFF_E2E_MEDIA_IMPORT: mediaImportPath,
         FLYOFF_E2E_USER_DATA: userDataPath,
       },
     });
@@ -297,7 +313,7 @@ test.describe('Flyoff desktop shell', () => {
     await expect(page.locator('html')).toHaveAttribute('data-theme', 'flyoff');
 
     const accentOptions = page.locator(
-      '.settings-accent-picker__presets [role="radio"]',
+      '.settings-accent-picker .flyoff-swatches [role="radio"]',
     );
     await expect(accentOptions).toHaveCount(16);
     await accentOptions.nth(5).click();
@@ -428,10 +444,23 @@ test.describe('Flyoff desktop shell', () => {
     await expect(historyTrigger).not.toBeFocused();
     await expect(page.getByRole('tooltip')).toHaveCount(0);
     await page.getByRole('button', { name: labels.thinking }).click();
-    await expect(
-      page.getByRole('menuitemcheckbox', { name: labels.high }).locator('.home__icon'),
-    ).toHaveCount(0);
-    await page.keyboard.press('Escape');
+    const highThinkingItem = page.getByRole('menuitemcheckbox', {
+      name: labels.high,
+    });
+    await expect(highThinkingItem.locator('.home__icon')).toHaveCount(0);
+    await highThinkingItem.click();
+    const composerForm = page.locator('.twine-composer');
+    const composerShell = composerForm.locator(
+      '.twine-composer__input-shell',
+    );
+    await expect(composerForm).toHaveAttribute('data-thinking-level', 'high');
+    await expect
+      .poll(() =>
+        composerShell.evaluate(
+          (element) => getComputedStyle(element, '::before').animationName,
+        ),
+      )
+      .toBe('twine-composer-ring');
 
     await page.getByRole('button', { name: labels.approval }).click();
     const fullAccessItem = page.getByRole('menuitemcheckbox', {
@@ -650,6 +679,7 @@ test.describe('Flyoff desktop shell', () => {
         'controlWindow',
         'onWindowStateChanged',
         'executeMenuCommand',
+        'cancelProjectMediaImport',
         'getPreferences',
         'savePreferences',
         'resetPreferences',
@@ -683,6 +713,21 @@ test.describe('Flyoff desktop shell', () => {
         'copyProjectPath',
         'copyProjectPaths',
         'revealProjectPath',
+        'createMediaFolder',
+        'createMediaFolderWithEntries',
+        'getMediaGallery',
+        'getProjectAppearance',
+        'getProjectMediaAsset',
+        'importDroppedProjectMedia',
+        'listProjectMediaUsages',
+        'moveMediaEntries',
+        'onProjectMediaImportProgress',
+        'renameMediaEntry',
+        'selectProjectMedia',
+        'setProjectAppearance',
+        'setProjectNoteAppearance',
+        'startDroppedProjectMediaImport',
+        'trashMediaEntries',
         'getProjectPageProperties',
         'setProjectPageReadOnly',
         'protectProjectPage',
@@ -1374,6 +1419,149 @@ test.describe('Flyoff desktop shell', () => {
         ok: false,
         error: { code: 'invalid-operation' },
       });
+  });
+
+  test('keeps media selection, temporary folders and folder drops consistent', async () => {
+    const isEnglish = await page.evaluate(
+      () => document.documentElement.lang === 'en-US',
+    );
+    const labels = isEnglish
+      ? {
+          closeProject: 'Close den',
+          details: 'Details',
+          folderName: 'Folder name',
+          importMedia: 'Import media',
+          media: 'Media',
+          mediaGallery: 'Media gallery',
+          mediaSearch: 'Search images',
+          mediaView: 'View',
+          newFolder: 'New folder',
+          openProject: 'Open den',
+          projectRail: 'Den',
+        }
+      : {
+          closeProject: 'Fechar toca',
+          details: 'Detalhes',
+          folderName: 'Nome da pasta',
+          importMedia: 'Importar m\u00eddia',
+          media: 'M\u00eddia',
+          mediaGallery: 'Galeria de m\u00eddia',
+          mediaSearch: 'Pesquisar imagens',
+          mediaView: 'Visualiza\u00e7\u00e3o',
+          newFolder: 'Nova pasta',
+          openProject: 'Abrir toca',
+          projectRail: 'Toca',
+        };
+
+    await page.getByRole('button', { name: labels.openProject }).click();
+    const rail = page.getByRole('navigation');
+    await rail
+      .getByRole('button', { exact: true, name: labels.media })
+      .click();
+    const gallery = page.getByRole('complementary', {
+      name: labels.mediaGallery,
+    });
+    await expect(gallery).toBeVisible();
+    await gallery
+      .getByRole('button', { name: labels.importMedia })
+      .click();
+    const asset = gallery.getByRole('gridcell', {
+      name: 'media-e2e.png',
+    });
+    await expect(asset).toBeVisible();
+
+    await gallery
+      .getByRole('button', { name: labels.newFolder })
+      .click();
+    const draftName = gallery.getByRole('textbox', {
+      name: labels.folderName,
+    });
+    await expect(draftName).toBeVisible();
+    await expect
+      .poll(() =>
+        draftName.evaluate((element) => {
+          const input = element as HTMLInputElement;
+          return (
+            input.selectionStart === 0 &&
+            input.selectionEnd === input.value.length
+          );
+        }),
+      )
+      .toBe(true);
+    await draftName.press('Escape');
+    await expect(draftName).toHaveCount(0);
+    const scrollSurface = gallery.locator('.media-gallery__scroll');
+    await expect
+      .poll(() =>
+        scrollSurface.evaluate((element) => {
+          const style = getComputedStyle(element);
+          return `${style.outlineStyle}:${style.outlineWidth}`;
+        }),
+      )
+      .toBe('none:0px');
+
+    await gallery
+      .getByRole('button', { name: labels.newFolder })
+      .click();
+    const folderName = gallery.getByRole('textbox', {
+      name: labels.folderName,
+    });
+    await folderName.fill('Album E2E');
+    await folderName.press('Enter');
+    const folder = gallery.getByRole('gridcell', {
+      name: 'Album E2E',
+    });
+    await expect(folder).toBeVisible();
+
+    await asset.click();
+    await expect(asset).toHaveAttribute('aria-selected', 'true');
+    const selectedStyle = await asset.evaluate((element) => {
+      const style = getComputedStyle(element);
+      return {
+        background: style.backgroundColor,
+        outline: `${style.outlineStyle}:${style.outlineWidth}`,
+      };
+    });
+    expect(selectedStyle.outline).toBe('none:0px');
+    expect(selectedStyle.background).not.toBe('rgba(0, 0, 0, 0)');
+
+    await dispatchWorkspaceDrag(asset, folder);
+    await expect(asset).toHaveCount(0);
+    await folder.dblclick();
+    const movedAsset = gallery.getByRole('gridcell', {
+      name: 'media-e2e.png',
+    });
+    await expect(movedAsset).toBeVisible();
+
+    await movedAsset.focus();
+    await page.keyboard.press('Space');
+    const quickPreview = page.getByRole('dialog', {
+      name: 'media-e2e.png',
+    });
+    await expect(quickPreview).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(quickPreview).toHaveCount(0);
+
+    const search = gallery.getByRole('searchbox', {
+      name: labels.mediaSearch,
+    });
+    await search.focus();
+    await expect(
+      page.getByRole('listbox').getByRole('option'),
+    ).toHaveCount(9);
+    await page.keyboard.press('Escape');
+    await gallery
+      .getByRole('button', { name: labels.mediaView })
+      .click();
+    await page
+      .getByRole('menuitemcheckbox', { name: labels.details })
+      .click();
+    await expect(gallery.locator('.media-gallery__grid--details')).toBeVisible();
+
+    await rail
+      .getByRole('button', { exact: true, name: labels.projectRail })
+      .click();
+    await page.getByRole('button', { name: labels.closeProject }).click();
   });
 
   test('opens and searches the virtualized offline emoji picker without blocking', async () => {

@@ -3,6 +3,7 @@ export * from './twine-conversation-store';
 export * from './twine-content-service';
 export * from './twine-code-policy';
 export * from './twine-generation-service';
+export * from './twine-generation-error';
 export * from './twine-research-policy';
 export * from './twine-stream-parser';
 export * from './twine-system-instruction';

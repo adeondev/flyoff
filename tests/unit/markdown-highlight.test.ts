@@ -1,8 +1,34 @@
 import { describe, expect, it } from 'vitest';
 
 import { highlightSource } from '../../src/renderer/projects/markdown-highlight';
+import { serializeImageDirective } from '../../src/shared/markdown';
 
 describe('markdown source highlighter', () => {
+  it('decorates an inline image with its exact source interval', () => {
+    const directive = serializeImageDirective({
+      version: 2,
+      instanceId: '223e4567-e89b-42d3-a456-426614174001',
+      assetId: '123e4567-e89b-42d3-a456-426614174000',
+      path: 'Media/Lua.png',
+      alt: 'Lua',
+      mode: 'inline',
+      align: 'left',
+      width: 160,
+      height: 90,
+      minWidth: 96,
+      maxWidth: 1200,
+      margin: 8,
+      ratioLock: true,
+      positionLock: false,
+      caption: '',
+    });
+    const html = highlightSource(`antes ${directive} depois`);
+    expect(html).toContain('class="md-source-image md-source-image--inline');
+    expect(html).toContain('data-image-source-start="6"');
+    expect(html).toContain(`data-image-source-end="${6 + directive.length}"`);
+    expect(html).toContain('class="md-source-image__syntax"');
+  });
+
   it('escapes html so notes cannot inject markup', () => {
     const html = highlightSource('<img src=x onerror=alert(1)>');
 
@@ -13,6 +39,7 @@ describe('markdown source highlighter', () => {
   it('marks heading markers separately from the heading text', () => {
     const html = highlightSource('## Title');
 
+    expect(html).toContain('class="md-line md-line--heading"');
     expect(html).toContain('md-tok-mark');
     expect(html).toContain('md-tok-heading');
     expect(html).toContain('Title');
@@ -21,6 +48,7 @@ describe('markdown source highlighter', () => {
   it('marks custom divided headings without hiding their source marker', () => {
     const html = highlightSource('###-- Divided');
 
+    expect(html).toContain('class="md-line md-line--heading"');
     expect(html).toContain('md-tok-heading--divided');
     expect(html).toContain('###--');
     expect(html).toContain('Divided');
@@ -42,10 +70,11 @@ describe('markdown source highlighter', () => {
   });
 
   it('keeps fenced code content as code until the closing fence', () => {
-    const html = highlightSource('```ts\n**not bold**\n```');
+    const html = highlightSource('```ts\n# **not a heading**\n```');
 
     expect(html).toContain('md-tok-fence');
     expect(html).not.toContain('md-tok-strong');
+    expect(html).not.toContain('md-line--heading');
     expect(html.match(/md-line--code(?=[ "\n])/g)).toHaveLength(3);
     expect(html.match(/md-line--code-start/g)).toHaveLength(1);
     expect(html.match(/md-line--code-end/g)).toHaveLength(1);
@@ -65,7 +94,24 @@ describe('markdown source highlighter', () => {
 
   it('tokenises links and the color attribute', () => {
     expect(highlightSource('[x](https://a.dev)')).toContain('md-tok-link');
-    expect(highlightSource('[x]{color=red}')).toContain('md-tok-attr');
+    const coloredText = highlightSource('[x]{color=#3B82F6}');
+    expect(coloredText).toContain('md-tok-attr');
+    expect(coloredText).toContain('md-inline-color-trigger');
+    expect(coloredText).toContain('style="color:#3B82F6"');
+    expect(coloredText).toContain('data-md-color-start="10"');
+    expect(coloredText).toContain('data-md-color-end="17"');
+  });
+
+  it('adds editable source swatches for inherited and custom highlights', () => {
+    const inherited = highlightSource('prefix ==blue==');
+    expect(inherited).toContain('data-md-color-kind="highlight"');
+    expect(inherited).toContain('data-md-color-start="15"');
+    expect(inherited).toContain('data-md-color-end="15"');
+
+    const custom = highlightSource('==blue=={color=#3B82F6}');
+    expect(custom).toContain('background:#3B82F6');
+    expect(custom).toContain('data-md-color-start="15"');
+    expect(custom).toContain('data-md-color-end="22"');
   });
 
   it('preserves every character of the source text', () => {

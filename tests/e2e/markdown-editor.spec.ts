@@ -1,10 +1,4 @@
-import {
-  mkdtemp,
-  readFile,
-  realpath,
-  rm,
-  writeFile,
-} from 'node:fs/promises';
+import { mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -29,6 +23,7 @@ interface Labels {
   create: string;
   duplicateLine: string;
   edit: string;
+  editing: string;
   editor: string;
   editorModeMenu: string;
   expandToolbar: string;
@@ -54,7 +49,7 @@ interface Labels {
 
 function labelsFor(locale: string): Labels {
   return locale === 'en-US'
-      ? {
+    ? {
         addInstance: 'Add instance',
         chooseLocation: 'Choose location',
         collapseToolbar: 'Collapse formatting toolbar',
@@ -62,6 +57,7 @@ function labelsFor(locale: string): Labels {
         create: 'Create',
         duplicateLine: 'Duplicate line',
         edit: 'Edit',
+        editing: 'Edit',
         editor: 'Markdown editor',
         editorModeMenu: 'Note options',
         expandToolbar: 'Show formatting toolbar',
@@ -84,7 +80,7 @@ function labelsFor(locale: string): Labels {
         unmarkTask: 'Unmark task',
         undo: 'Undo',
       }
-      : {
+    : {
         addInstance: 'Adicionar instância',
         chooseLocation: 'Escolher local',
         copyAddress: 'Copiar endereço',
@@ -92,6 +88,7 @@ function labelsFor(locale: string): Labels {
         create: 'Criar',
         duplicateLine: 'Duplicar linha',
         edit: 'Editar',
+        editing: 'Edi\u00e7\u00e3o',
         expandToolbar: 'Mostrar barra de formata\u00e7\u00e3o',
         editor: 'Editor Markdown',
         editorModeMenu: 'Op\u00e7\u00f5es da nota',
@@ -196,7 +193,9 @@ async function addMarkdownNote(
   const nameInput = page.getByRole('textbox', { name: labels.name });
   await nameInput.fill(name);
   await nameInput.press('Enter');
-  await expect(page.getByRole('tab', { name })).toHaveAttribute(
+  await expect(
+    page.getByRole('tab', { name, exact: true }),
+  ).toHaveAttribute(
     'aria-selected',
     'true',
   );
@@ -232,6 +231,7 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
     app = await electron.launch({
       args: [
         appPath,
+        `--user-data-dir=${userDataPath}`,
         ...(process.platform === 'linux' && process.env.CI
           ? ['--no-sandbox']
           : []),
@@ -258,9 +258,7 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
     await dialog
       .getByRole('textbox', { name: labels.projectName })
       .fill(projectName);
-    await dialog
-      .getByRole('button', { name: labels.chooseLocation })
-      .click();
+    await dialog.getByRole('button', { name: labels.chooseLocation }).click();
     await expect(dialog.getByText(canonicalParent)).toBeVisible();
     await dialog.getByRole('button', { name: labels.create }).click();
     await page.getByRole('button', { name: labels.addInstance }).click();
@@ -282,12 +280,8 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
     await expect(editor.locator('[data-md-placeholder]')).toHaveCount(1);
 
     const toolbarRegion = () =>
-      page
-        .getByRole('tabpanel')
-        .locator('.markdown-editor__toolbar-region');
-    await page
-      .getByRole('button', { name: labels.collapseToolbar })
-      .click();
+      page.getByRole('tabpanel').locator('.markdown-editor__toolbar-region');
+    await page.getByRole('button', { name: labels.collapseToolbar }).click();
     await expect(toolbarRegion()).toHaveAttribute('data-collapsed', 'true');
 
     await page.getByRole('button', { name: labels.addInstance }).click();
@@ -305,9 +299,7 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
 
     await page.getByRole('tab', { name: noteName }).click();
     await expect(toolbarRegion()).toHaveAttribute('data-collapsed', 'true');
-    await page
-      .getByRole('button', { name: labels.expandToolbar })
-      .click();
+    await page.getByRole('button', { name: labels.expandToolbar }).click();
     await expect(toolbarRegion()).not.toHaveAttribute('data-collapsed');
     await page.getByRole('tab', { name: syncedNoteName }).click();
     await expect(toolbarRegion()).not.toHaveAttribute('data-collapsed');
@@ -354,23 +346,66 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
     await editor.press('Backspace');
     await expect.poll(() => sourceOf(editor)).toBe('a');
     await editor.selectText();
+    await page.keyboard.insertText('abc\nsecond');
+    await expect.poll(() => sourceOf(editor)).toBe('abc\nsecond');
+    await editor.evaluate((root) => {
+      const editorElement = root as HTMLElement;
+      const firstLine = editorElement.querySelector('.md-line__content');
+      const text = firstLine?.firstChild;
+      if (!text) {
+        throw new Error('First source line has no text node.');
+      }
+      editorElement.focus();
+      const selection = document.getSelection();
+      selection?.removeAllRanges();
+      const range = document.createRange();
+      range.setStart(text, text.textContent?.length ?? 0);
+      range.collapse(true);
+      selection?.addRange(range);
+      const samples: string[] = [];
+      editorElement.dataset.activeLineSamples = JSON.stringify(samples);
+      let frames = 0;
+      const sample = (): void => {
+        samples.push(
+          editorElement
+            .querySelector('.md-line--active')
+            ?.getAttribute('data-line') ?? '',
+        );
+        editorElement.dataset.activeLineSamples = JSON.stringify(samples);
+        frames += 1;
+        if (frames < 8) {
+          requestAnimationFrame(sample);
+        }
+      };
+      requestAnimationFrame(sample);
+    });
+    await page.keyboard.press('Backspace');
+    await expect.poll(() => sourceOf(editor)).toBe('ab\nsecond');
+    await expect
+      .poll(() =>
+        editor.evaluate((root) =>
+          JSON.parse(
+            (root as HTMLElement).dataset.activeLineSamples ?? '[]',
+          ),
+        ),
+      )
+      .toEqual(Array.from({ length: 8 }, () => '1'));
+    await editor.selectText();
     await page.keyboard.insertText('==uau==');
     await page.keyboard.press('Enter');
     await page.keyboard.insertText('[text](https://x.dev)');
     const sample = '==uau==\n[text](https://x.dev)';
     await expect.poll(() => sourceOf(editor)).toBe(sample);
     await editor.locator('.md-source-link').click({ button: 'right' });
-    await page
-      .getByRole('menuitem', { name: labels.copyAddress })
-      .click();
-    await expect.poll(() =>
-      app!.evaluate(({ clipboard }) => clipboard.readText()),
-    ).toBe('https://x.dev');
+    await page.getByRole('menuitem', { name: labels.copyAddress }).click();
+    await expect
+      .poll(() => app!.evaluate(({ clipboard }) => clipboard.readText()))
+      .toBe('https://x.dev');
 
     await clickSourceText(page, editor, 'text', 2);
-    await expect.poll(() => page.evaluate(() => getSelection()?.toString())).toBe(
-      'text',
-    );
+    await expect
+      .poll(() => page.evaluate(() => getSelection()?.toString()))
+      .toBe('text');
     await editor.evaluate((root) => {
       const editorElement = root as HTMLElement;
       const recordTripleMouseDown = (event: MouseEvent): void => {
@@ -380,10 +415,7 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
         editorElement.dataset.tripleMouseDownDefaultPrevented = String(
           event.defaultPrevented,
         );
-        editorElement.removeEventListener(
-          'mousedown',
-          recordTripleMouseDown,
-        );
+        editorElement.removeEventListener('mousedown', recordTripleMouseDown);
       };
       editorElement.addEventListener('mousedown', recordTripleMouseDown);
     });
@@ -393,15 +425,11 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
         editor.getAttribute('data-triple-mouse-down-default-prevented'),
       )
       .toBe('true');
-    await expect.poll(() => page.evaluate(() => getSelection()?.toString())).toBe(
-      '[text](https://x.dev)',
-    );
-    await page
-      .getByRole('button', { name: labels.editorModeMenu })
-      .click();
-    await page
-      .getByRole('menuitemcheckbox', { name: labels.split })
-      .click();
+    await expect
+      .poll(() => page.evaluate(() => getSelection()?.toString()))
+      .toBe('text');
+    await page.getByRole('button', { name: labels.editorModeMenu }).click();
+    await page.getByRole('menuitemcheckbox', { name: labels.split }).click();
     const reading = page.getByRole('document', { name: labels.reading });
     await expect(reading.locator('mark')).toHaveText('uau');
     await expect(reading.locator('br')).toHaveCount(1);
@@ -446,8 +474,7 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
       process.platform === 'darwin' ? 'Meta+ArrowUp' : 'Control+Home';
     const documentEnd =
       process.platform === 'darwin' ? 'Meta+ArrowDown' : 'Control+End';
-    const lineEnd =
-      process.platform === 'darwin' ? 'Meta+ArrowRight' : 'End';
+    const lineEnd = process.platform === 'darwin' ? 'Meta+ArrowRight' : 'End';
     const selectDocumentStart =
       process.platform === 'darwin'
         ? 'Meta+Shift+ArrowUp'
@@ -457,13 +484,9 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
         ? 'Meta+Shift+ArrowDown'
         : 'Control+Shift+End';
     const selectLineStart =
-      process.platform === 'darwin'
-        ? 'Meta+Shift+ArrowLeft'
-        : 'Shift+Home';
+      process.platform === 'darwin' ? 'Meta+Shift+ArrowLeft' : 'Shift+Home';
     const selectLineEnd =
-      process.platform === 'darwin'
-        ? 'Meta+Shift+ArrowRight'
-        : 'Shift+End';
+      process.platform === 'darwin' ? 'Meta+Shift+ArrowRight' : 'Shift+End';
     const selectWordForward =
       process.platform === 'darwin'
         ? 'Alt+Shift+ArrowRight'
@@ -487,9 +510,9 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
 
     await page.keyboard.press(`${primary}+A`);
     await page.keyboard.press(`${primary}+C`);
-    await expect.poll(() =>
-      app!.evaluate(({ clipboard }) => clipboard.readText()),
-    ).toBe(commandContent);
+    await expect
+      .poll(() => app!.evaluate(({ clipboard }) => clipboard.readText()))
+      .toBe(commandContent);
 
     const familyEmoji = '👨‍👩‍👧‍👦';
     await app.evaluate(
@@ -498,14 +521,15 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
     );
     await editor.selectText();
     await page.keyboard.press(`${primary}+V`);
+    await expect.poll(() => sourceOf(editor)).toBe(`a${familyEmoji}b`);
     await page.keyboard.press(documentStart);
     await page.keyboard.press('ArrowRight');
     await page.keyboard.press('ArrowRight');
     await page.keyboard.press('Shift+ArrowLeft');
     await page.keyboard.press(`${primary}+C`);
-    await expect.poll(() =>
-      app!.evaluate(({ clipboard }) => clipboard.readText()),
-    ).toBe(familyEmoji);
+    await expect
+      .poll(() => app!.evaluate(({ clipboard }) => clipboard.readText()))
+      .toBe(familyEmoji);
 
     await app.evaluate(
       ({ clipboard }, text) => clipboard.writeText(text),
@@ -517,12 +541,15 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
     await page.keyboard.press(documentStart);
     await page.keyboard.press('Shift+ArrowRight');
     await page.keyboard.press(`${primary}+C`);
-    await expect.poll(() =>
-      app!.evaluate(({ clipboard }) => clipboard.readText()),
-    ).toBe('a');
+    await expect
+      .poll(() => app!.evaluate(({ clipboard }) => clipboard.readText()))
+      .toBe('a');
 
     await page.keyboard.press(documentStart);
     await page.keyboard.press('Shift+ArrowDown');
+    await expect
+      .poll(() => page.evaluate(() => getSelection()?.toString() ?? ''))
+      .toContain('alpha');
     await page.keyboard.press(`${primary}+C`);
     await expect
       .poll(() => app!.evaluate(({ clipboard }) => clipboard.readText()))
@@ -530,6 +557,9 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
 
     await page.keyboard.press(documentEnd);
     await page.keyboard.press('Shift+ArrowUp');
+    await expect
+      .poll(() => page.evaluate(() => getSelection()?.toString() ?? ''))
+      .toContain('omega');
     await page.keyboard.press(`${primary}+C`);
     await expect
       .poll(() => app!.evaluate(({ clipboard }) => clipboard.readText()))
@@ -538,17 +568,17 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
     await page.keyboard.press(documentStart);
     await page.keyboard.press(selectLineEnd);
     await page.keyboard.press(`${primary}+C`);
-    await expect.poll(() =>
-      app!.evaluate(({ clipboard }) => clipboard.readText()),
-    ).toBe('alpha beta');
+    await expect
+      .poll(() => app!.evaluate(({ clipboard }) => clipboard.readText()))
+      .toBe('alpha beta');
 
     await page.keyboard.press(documentStart);
     await page.keyboard.press(lineEnd);
     await page.keyboard.press(selectLineStart);
     await page.keyboard.press(`${primary}+C`);
-    await expect.poll(() =>
-      app!.evaluate(({ clipboard }) => clipboard.readText()),
-    ).toBe('alpha beta');
+    await expect
+      .poll(() => app!.evaluate(({ clipboard }) => clipboard.readText()))
+      .toBe('alpha beta');
 
     await page.keyboard.press(documentStart);
     await page.keyboard.press(selectWordForward);
@@ -572,16 +602,16 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
     await page.keyboard.press(documentStart);
     await page.keyboard.press(selectDocumentEnd);
     await page.keyboard.press(`${primary}+C`);
-    await expect.poll(() =>
-      app!.evaluate(({ clipboard }) => clipboard.readText()),
-    ).toBe(commandContent);
+    await expect
+      .poll(() => app!.evaluate(({ clipboard }) => clipboard.readText()))
+      .toBe(commandContent);
 
     await page.keyboard.press(documentEnd);
     await page.keyboard.press(selectDocumentStart);
     await page.keyboard.press(`${primary}+C`);
-    await expect.poll(() =>
-      app!.evaluate(({ clipboard }) => clipboard.readText()),
-    ).toBe(commandContent);
+    await expect
+      .poll(() => app!.evaluate(({ clipboard }) => clipboard.readText()))
+      .toBe(commandContent);
 
     await page.keyboard.press(documentStart);
     await page.keyboard.press('Delete');
@@ -597,18 +627,18 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
 
     await page.keyboard.press(documentEnd);
     await page.keyboard.press(deleteWordBackward);
-    await expect.poll(() => sourceOf(editor)).toBe(
-      commandContent.slice(0, -'omega'.length),
-    );
+    await expect
+      .poll(() => sourceOf(editor))
+      .toBe(commandContent.slice(0, -'omega'.length));
     await page.keyboard.press(undo);
     await expect.poll(() => sourceOf(editor)).toBe(commandContent);
 
     if (process.platform !== 'darwin') {
       await page.keyboard.press(documentStart);
       await page.keyboard.press('Control+Delete');
-      await expect.poll(() => sourceOf(editor)).toBe(
-        commandContent.slice('alpha'.length),
-      );
+      await expect
+        .poll(() => sourceOf(editor))
+        .toBe(commandContent.slice('alpha'.length));
       await page.keyboard.press(undo);
       await expect.poll(() => sourceOf(editor)).toBe(commandContent);
     }
@@ -663,17 +693,13 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
     await page.keyboard.press(`${primary}+V`);
     await expect.poll(() => sourceOf(editor)).toBe(sample);
 
-    await app.evaluate(
-      ({ clipboard }) => clipboard.writeText('- [x] done'),
-    );
+    await app.evaluate(({ clipboard }) => clipboard.writeText('- [x] done'));
     await expect
       .poll(() => app!.evaluate(({ clipboard }) => clipboard.readText()))
       .toBe('- [x] done');
     await page.evaluate(
       () =>
-        new Promise<void>((resolve) =>
-          requestAnimationFrame(() => resolve()),
-        ),
+        new Promise<void>((resolve) => requestAnimationFrame(() => resolve())),
     );
     await editor.selectText();
     await page.keyboard.press(`${primary}+V`);
@@ -687,12 +713,8 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
 
     await task.click({ button: 'right' });
     await page.getByRole('menuitem', { name: labels.line }).click();
-    await page
-      .getByRole('menuitem', { name: labels.duplicateLine })
-      .click();
-    await expect.poll(() => sourceOf(editor)).toBe(
-      '- [x] done\n- [x] done',
-    );
+    await page.getByRole('menuitem', { name: labels.duplicateLine }).click();
+    await expect.poll(() => sourceOf(editor)).toBe('- [x] done\n- [x] done');
 
     task = editor.locator('.md-tok-task--checked').first();
     await task.click({ button: 'right' });
@@ -701,9 +723,7 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
     });
     await expect(toggleTask).toHaveAttribute('aria-checked', 'true');
     await toggleTask.click();
-    await expect.poll(() => sourceOf(editor)).toBe(
-      '- [ ] done\n- [x] done',
-    );
+    await expect.poll(() => sourceOf(editor)).toBe('- [ ] done\n- [x] done');
 
     await app.evaluate(
       ({ clipboard }, text) => clipboard.writeText(text),
@@ -850,18 +870,14 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
           page
             .locator('.workspace')
             .evaluate((element) =>
-              Number(
-                element.style.getPropertyValue('--md-scale'),
-              ),
+              Number(element.style.getPropertyValue('--md-scale')),
             ),
         )
         .toBe(targetScale);
 
       const metrics = await editor.evaluate((root) => {
         const line = root.querySelector<HTMLElement>('.md-line');
-        const long = root.querySelector<HTMLElement>(
-          '.md-line[data-line="2"]',
-        );
+        const long = root.querySelector<HTMLElement>('.md-line[data-line="2"]');
         const content = line?.querySelector<HTMLElement>('.md-line__content');
         const gutter = line?.querySelector<HTMLElement>('.md-line__gutter');
         const view = document.querySelector<HTMLElement>('.markdown-view');
@@ -888,12 +904,11 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
               ? gutter.getBoundingClientRect().right >
                 content.getBoundingClientRect().left
               : true,
-          lastNumber:
-            root.querySelector('.md-line:last-child')?.getAttribute('data-line'),
+          lastNumber: root
+            .querySelector('.md-line:last-child')
+            ?.getAttribute('data-line'),
           lineCount: root.querySelectorAll(':scope > .md-line').length,
-          lineHeight: lineStyle
-            ? Number.parseFloat(lineStyle.lineHeight)
-            : 0,
+          lineHeight: lineStyle ? Number.parseFloat(lineStyle.lineHeight) : 0,
           longHeight: long?.getBoundingClientRect().height ?? 0,
           readingPadding: view
             ? Number.parseFloat(getComputedStyle(view).paddingLeft)
@@ -942,9 +957,516 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
     );
     await expect.poll(() => sourceOf(editor)).toBe(layoutContent);
     await clickSourceText(page, editor, '1000', 2);
-    await expect.poll(() => page.evaluate(() => getSelection()?.toString())).toBe(
-      '1000',
+    await expect
+      .poll(() => page.evaluate(() => getSelection()?.toString()))
+      .toBe('1000');
+  } finally {
+    await stopApplication(app);
+    await rm(userDataPath, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
+    await rm(projectParent, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
+  }
+});
+
+test('drags an image block from its body with a live preview', async () => {
+  test.setTimeout(90_000);
+  const appPath = locatePackagedAsar(repositoryRoot);
+  const userDataPath = await mkdtemp(
+    path.join(os.tmpdir(), 'flyoff-image-drag-e2e-'),
+  );
+  const projectParent = await mkdtemp(
+    path.join(os.tmpdir(), 'flyoff-image-drag-project-'),
+  );
+  const canonicalParent = await realpath(projectParent);
+  const projectName = 'Image drag E2E';
+  const projectRoot = path.join(canonicalParent, projectName);
+  const imageSource =
+    '::image[Lua]{v=2 instance=223e4567-e89b-42d3-a456-426614174001 asset=123e4567-e89b-42d3-a456-426614174000 path="Media/Lua.png" mode=block align=center width=320 height=180 min=96 max=1200 margin=12 ratioLock=true positionLock=false caption=""}';
+  const inlineSource = imageSource
+    .replace('mode=block', 'mode=inline')
+    .replace('align=center', 'align=left');
+  let app: ElectronApplication | undefined;
+
+  try {
+    app = await electron.launch({
+      args: [
+        appPath,
+        `--user-data-dir=${userDataPath}`,
+        ...(process.platform === 'linux' && process.env.CI
+          ? ['--no-sandbox']
+          : []),
+      ],
+      env: {
+        ...process.env,
+        FLYOFF_E2E: '1',
+        FLYOFF_E2E_PROJECT_CREATE_PARENT: canonicalParent,
+        FLYOFF_E2E_PROJECT_OPEN_ROOT: projectRoot,
+        FLYOFF_E2E_USER_DATA: userDataPath,
+      },
+    });
+    const page = await app.firstWindow();
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForFunction(() =>
+      ['pt-BR', 'en-US'].includes(document.documentElement.lang),
     );
+    const labels = labelsFor(
+      await page.evaluate(() => document.documentElement.lang),
+    );
+
+    await page.getByRole('button', { name: labels.newProject }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog
+      .getByRole('textbox', { name: labels.projectName })
+      .fill(projectName);
+    await dialog.getByRole('button', { name: labels.chooseLocation }).click();
+    await expect(dialog.getByText(canonicalParent)).toBeVisible();
+    await dialog.getByRole('button', { name: labels.create }).click();
+
+    const editor = await addMarkdownNote(page, labels, 'Drag');
+    await page.evaluate(() => {
+      document.documentElement.dataset.motion = 'full';
+    });
+    const initial = `before\n${imageSource}\nafter`;
+    await page.keyboard.insertText(initial);
+    await expect.poll(() => sourceOf(editor)).toBe(initial);
+
+    const host = editor.locator('.md-source-image__host');
+    await expect(host).toBeVisible();
+    const hostBounds = await host.boundingBox();
+    expect(hostBounds).not.toBeNull();
+    const start = {
+      x: hostBounds!.x + hostBounds!.width / 2,
+      y: hostBounds!.y + hostBounds!.height / 2,
+    };
+    await page.mouse.click(start.x, start.y);
+    await expect(page.locator('.markdown-image-overlay')).toBeVisible();
+    await expect
+      .poll(() =>
+        page.evaluate(({ x, y }) => {
+          const hit = document.elementFromPoint(x, y);
+          return Boolean(hit?.closest('.md-source-image__host'));
+        }, start),
+      )
+      .toBe(true);
+
+    const lastLineBounds = await editor
+      .locator('.md-line')
+      .last()
+      .boundingBox();
+    expect(lastLineBounds).not.toBeNull();
+    await page.mouse.move(start.x, start.y);
+    await page.mouse.down();
+    await page.mouse.move(start.x + 24, start.y + 24, { steps: 2 });
+    await expect
+      .poll(() =>
+        page.evaluate(() => ({
+          dropLines: document.querySelectorAll('.md-line--image-drop')
+            .length,
+          ghost: document.querySelectorAll('.image-drag-ghost').length,
+          originHidden: document
+            .querySelector('.md-source-image')
+            ?.classList.contains('md-source-image--drag-origin'),
+          target: document.querySelectorAll('.markdown-image-drop-target')
+            .length,
+          targetAlign:
+            document
+              .querySelector('.md-line--image-drop')
+              ?.getAttribute('data-image-drop-align') ?? '',
+        })),
+      )
+      .toEqual({
+        dropLines: 1,
+        ghost: 1,
+        originHidden: true,
+        target: 1,
+        targetAlign: 'center',
+    });
+    await expect(page.locator('.image-drag-ghost')).toBeVisible();
+    await expect
+      .poll(() =>
+        page.evaluate(({ x, y }) => {
+          const ghost = document
+            .querySelector('.image-drag-ghost')
+            ?.getBoundingClientRect();
+          const target = document
+            .querySelector('.markdown-image-drop-target')
+            ?.getBoundingClientRect();
+          if (!ghost || !target) {
+            return false;
+          }
+          const ghostCenter = {
+            x: ghost.left + ghost.width / 2,
+            y: ghost.top + ghost.height / 2,
+          };
+          const targetCenter = {
+            x: target.left + target.width / 2,
+            y: target.top + target.height / 2,
+          };
+          return (
+            Math.abs(ghostCenter.x - x) <= 1 &&
+            Math.abs(ghostCenter.y - y) <= 1 &&
+            Math.abs(targetCenter.x - ghostCenter.x) <= 32 &&
+            Math.abs(targetCenter.y - ghostCenter.y) <= 24
+          );
+        }, { x: start.x + 24, y: start.y + 24 }),
+      )
+      .toBe(true);
+    const dropPoint = {
+      x: lastLineBounds!.x + lastLineBounds!.width / 2,
+      y: lastLineBounds!.y + lastLineBounds!.height - 1,
+    };
+    await page.mouse.move(dropPoint.x, dropPoint.y, { steps: 4 });
+    await page.evaluate(() => {
+      const samples: {
+        finalHidden: boolean;
+        ghost?: { height: number; left: number; top: number; width: number };
+        opacity: number;
+        phase: string;
+        target: boolean;
+      }[] = [];
+      document.body.dataset.imageLandingSamples = '[]';
+      let frames = 0;
+      const sample = (): void => {
+        const ghost = document
+          .querySelector<HTMLElement>('.image-drag-ghost');
+        const bounds = ghost?.getBoundingClientRect();
+        samples.push({
+          finalHidden: Boolean(
+            document.querySelector('.md-source-image--drag-settling'),
+          ),
+          ghost: bounds
+            ? {
+                height: bounds.height,
+                left: bounds.left,
+                top: bounds.top,
+                width: bounds.width,
+              }
+            : undefined,
+          opacity: ghost ? Number(getComputedStyle(ghost).opacity) : 1,
+          phase: ghost?.dataset.phase ?? 'idle',
+          target: Boolean(
+            document.querySelector('.markdown-image-drop-target'),
+          ),
+        });
+        document.body.dataset.imageLandingSamples = JSON.stringify(samples);
+        frames += 1;
+        if (ghost && frames < 30) {
+          requestAnimationFrame(sample);
+        }
+      };
+      sample();
+    });
+    await page.mouse.up();
+
+    await expect.poll(async () => {
+      const lines = (await sourceOf(editor)).split('\n');
+      return {
+        first: lines[0],
+        image: lines[2]?.replace(
+          / align=(?:left|center|right) /,
+          ' align=<dynamic> ',
+        ),
+        second: lines[1],
+      };
+    }).toEqual({
+      first: 'before',
+      image: imageSource.replace(
+        ' align=center ',
+        ' align=<dynamic> ',
+      ),
+      second: 'after',
+    });
+    await expect
+      .poll(() =>
+        page.evaluate((dropPoint) => {
+          const samples = JSON.parse(
+            document.body.dataset.imageLandingSamples ?? '[]',
+          ) as {
+            finalHidden: boolean;
+            ghost?: {
+              height: number;
+              left: number;
+              top: number;
+              width: number;
+            };
+            opacity: number;
+            phase: string;
+            target: boolean;
+          }[];
+          const holding = samples.find(
+            (sample) => sample.phase === 'holding' && sample.ghost,
+          );
+          const settling = samples.filter(
+            (sample) => sample.phase === 'settling',
+          );
+          return {
+            finalHidden: settling.some((sample) => sample.finalHidden),
+            heldAtPointer: holding?.ghost
+              ? Math.abs(
+                  holding.ghost.left + holding.ghost.width / 2 - dropPoint.x,
+                ) <= 1 &&
+                Math.abs(
+                  holding.ghost.top + holding.ghost.height / 2 - dropPoint.y,
+                ) <= 1
+              : false,
+            holding: Boolean(holding),
+            landingOpacity: Math.max(
+              0,
+              ...settling.map((sample) => sample.opacity),
+            ),
+            settling: settling.length > 0,
+            targetStayed:
+              settling.length > 0 &&
+              settling.every((sample) => sample.target),
+          };
+        }, dropPoint),
+      )
+      .toEqual({
+        finalHidden: true,
+        heldAtPointer: true,
+        holding: true,
+        landingOpacity: expect.any(Number),
+        settling: true,
+        targetStayed: true,
+      });
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const samples = JSON.parse(
+            document.body.dataset.imageLandingSamples ?? '[]',
+          ) as { opacity: number; phase: string }[];
+          return Math.max(
+            0,
+            ...samples
+              .filter((sample) => sample.phase === 'settling')
+              .map((sample) => sample.opacity),
+          );
+        }),
+      )
+      .toBeGreaterThan(0.8);
+    await expect(page.locator('.image-drag-ghost')).toHaveCount(0);
+    await expect(page.locator('.markdown-image-drop-target')).toHaveCount(0);
+    await expect(
+      editor.locator('.md-source-image--drag-settling'),
+    ).toHaveCount(0);
+    await expect(editor.locator('.md-line--active')).toHaveCount(1);
+    await expect(editor.locator('.md-line--active')).toHaveAttribute(
+      'data-line',
+      '3',
+    );
+    await expect(editor.locator('.md-line--image-drop')).toHaveCount(0);
+
+    const inlineInitial = `alpha ${inlineSource} beta gamma`;
+    await editor.selectText();
+    await page.keyboard.insertText(inlineInitial);
+    await expect.poll(() => sourceOf(editor)).toBe(inlineInitial);
+    await expect(editor.locator('.md-source-image__syntax')).toBeHidden();
+
+    const inlineHost = editor.locator('.md-source-image__host');
+    const inlineBounds = await inlineHost.boundingBox();
+    expect(inlineBounds).not.toBeNull();
+    const inlineStart = {
+      x: inlineBounds!.x + inlineBounds!.width / 2,
+      y: inlineBounds!.y + inlineBounds!.height / 2,
+    };
+    await page.mouse.move(inlineStart.x, inlineStart.y);
+    await page.mouse.down();
+    await page.mouse.move(inlineStart.x + 12, inlineStart.y + 4, {
+      steps: 2,
+    });
+    await expect(
+      editor.locator('.md-source-image--drag-origin'),
+    ).toHaveCount(1);
+    const inlineTarget = await sourceTextPoint(editor, 'gamma');
+    await page.mouse.move(inlineTarget.x, inlineTarget.y, { steps: 4 });
+    await expect(page.locator('.md-inline-image-drop-marker')).toBeVisible();
+    await page.mouse.up();
+    await expect.poll(async () => {
+      const source = await sourceOf(editor);
+      const imageAt = source.indexOf('::image[');
+      const imageEnd = source.indexOf('}', imageAt) + 1;
+      return {
+        hasSingleLine: !source.includes('\n'),
+        imageInText: imageAt > 0 && imageEnd > imageAt && imageEnd < source.length,
+        text: source.replace(/::image\[[^\n]+?\}\s*/u, ''),
+      };
+    }).toEqual({
+      hasSingleLine: true,
+      imageInText: true,
+      text: 'alpha beta gamma',
+    });
+
+    for (const align of ['left', 'right'] as const) {
+      const wrappedSource = `${imageSource
+        .replace('mode=block', 'mode=wrap')
+        .replace('align=center', `align=${align}`)}\nShort wrapped paragraph.\n## Heading after image`;
+      const layoutEditor = await addMarkdownNote(
+        page,
+        labels,
+        `Wrap ${align}`,
+      );
+      await page.keyboard.insertText(wrappedSource);
+      await expect.poll(() => sourceOf(layoutEditor)).toBe(wrappedSource);
+
+      const sourceImage = layoutEditor.locator('.md-source-image__host');
+      const sourceParagraph = layoutEditor.locator('.md-line').nth(1);
+      const sourceHeading = layoutEditor.locator('.md-line--heading');
+      await expect(sourceHeading).toHaveCount(1);
+      await expect
+        .poll(() =>
+          sourceHeading.evaluate((element) => getComputedStyle(element).clear),
+        )
+        .toBe('both');
+      await expect.poll(async () => {
+        const imageBounds = await sourceImage.boundingBox();
+        const paragraphBounds = await sourceParagraph.boundingBox();
+        const headingBounds = await sourceHeading.boundingBox();
+        return Boolean(
+          imageBounds &&
+            paragraphBounds &&
+            headingBounds &&
+            paragraphBounds.y < imageBounds.y + imageBounds.height &&
+            headingBounds.y >= imageBounds.y + imageBounds.height - 1,
+        );
+      }).toBe(true);
+
+      await page
+        .getByRole('button', { name: labels.editorModeMenu })
+        .click();
+      await page
+        .getByRole('menuitemcheckbox', { name: labels.reading })
+        .click();
+      const reading = page.getByRole('document', { name: labels.reading });
+      const readingImage = reading.locator('.markdown-image');
+      const readingParagraph = reading.locator('p');
+      const readingHeading = reading.locator('h2');
+      await readingImage.evaluate((figure) => {
+        figure.classList.remove('markdown-image--missing');
+        const image = figure.querySelector('img');
+        if (image) {
+          image.src = 'flyoff-asset://app/twemoji/1f680.svg';
+        }
+      });
+      await expect
+        .poll(() =>
+          readingImage
+            .locator('img')
+            .evaluate((element) => {
+              const image = element as HTMLImageElement;
+              return image.complete && image.naturalWidth > 0;
+            }),
+        )
+        .toBe(true);
+      await expect
+        .poll(() =>
+          readingHeading.evaluate((element) => getComputedStyle(element).clear),
+        )
+        .toBe('both');
+      await expect.poll(async () => {
+        const imageBounds = await readingImage.boundingBox();
+        const paragraphBounds = await readingParagraph.boundingBox();
+        const headingBounds = await readingHeading.boundingBox();
+        return Boolean(
+          imageBounds &&
+            paragraphBounds &&
+            headingBounds &&
+            paragraphBounds.y < imageBounds.y + imageBounds.height &&
+            headingBounds.y >= imageBounds.y + imageBounds.height - 1,
+        );
+      }).toBe(true);
+
+      await page
+        .getByRole('button', { name: labels.editorModeMenu })
+        .click();
+      await page.getByRole('menuitemcheckbox', { name: labels.split }).click();
+      await expect(layoutEditor).toBeVisible();
+      await expect(reading).toBeVisible();
+      await expect
+        .poll(() =>
+          sourceHeading.evaluate((element) => getComputedStyle(element).clear),
+        )
+        .toBe('both');
+      await expect
+        .poll(() =>
+          readingHeading.evaluate((element) => getComputedStyle(element).clear),
+        )
+        .toBe('both');
+
+      await page
+        .getByRole('button', { name: labels.editorModeMenu })
+        .click();
+      await page
+        .getByRole('menuitemcheckbox', { name: labels.editing, exact: true })
+        .click();
+    }
+
+    const largeImageSource = imageSource.replace(
+      'width=320 height=180',
+      'width=1200 height=900',
+    );
+    const largeEditor = await addMarkdownNote(page, labels, 'Large drag');
+    await page.keyboard.insertText(`before\n${largeImageSource}\nafter`);
+    await expect
+      .poll(() => sourceOf(largeEditor))
+      .toBe(`before\n${largeImageSource}\nafter`);
+    const largeHost = largeEditor.locator('.md-source-image__host');
+    await largeHost.scrollIntoViewIfNeeded();
+    const largeBounds = await largeHost.boundingBox();
+    expect(largeBounds).not.toBeNull();
+    expect(largeBounds!.width).toBeGreaterThan(640);
+    const largeStart = {
+      x: largeBounds!.x + largeBounds!.width / 2,
+      y: largeBounds!.y + Math.min(largeBounds!.height / 2, 240),
+    };
+    const largePointer = {
+      x: largeStart.x + 16,
+      y: largeStart.y + 16,
+    };
+    await page.mouse.move(largeStart.x, largeStart.y);
+    await page.mouse.down();
+    await page.mouse.move(largePointer.x, largePointer.y);
+    await expect(page.locator('.image-drag-ghost')).toBeVisible();
+    await expect
+      .poll(() =>
+        page.evaluate((pointer) => {
+          const ghost = document
+            .querySelector('.image-drag-ghost')
+            ?.getBoundingClientRect();
+          return ghost
+            ? {
+                bounded: ghost.width <= 640.1 && ghost.height <= 480.1,
+                centered:
+                  Math.abs(ghost.left + ghost.width / 2 - pointer.x) <= 1 &&
+                  Math.abs(ghost.top + ghost.height / 2 - pointer.y) <= 1,
+                width: ghost.width,
+              }
+            : null;
+        }, largePointer),
+      )
+      .toEqual({
+        bounded: true,
+        centered: true,
+        width: 640,
+      });
+    await expect
+      .poll(() =>
+        largeEditor.evaluate(
+          (element) => element.scrollWidth <= element.clientWidth + 1,
+        ),
+      )
+      .toBe(true);
+    await page.keyboard.press('Escape');
+    await page.mouse.up();
+    await expect(page.locator('.image-drag-ghost')).toHaveCount(0);
   } finally {
     await stopApplication(app);
     await rm(userDataPath, {
@@ -965,7 +1487,9 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
 test('navigates, previews and rewrites internal note links', async () => {
   test.setTimeout(90_000);
   const appPath = locatePackagedAsar(repositoryRoot);
-  const userDataPath = await mkdtemp(path.join(os.tmpdir(), 'flyoff-links-e2e-'));
+  const userDataPath = await mkdtemp(
+    path.join(os.tmpdir(), 'flyoff-links-e2e-'),
+  );
   const projectParent = await mkdtemp(
     path.join(os.tmpdir(), 'flyoff-links-project-'),
   );
@@ -1039,32 +1563,28 @@ test('navigates, previews and rewrites internal note links', async () => {
       .toBe(sourceContent);
 
     await editor.locator('.md-source-link').first().click({ button: 'right' });
-    await page
-      .getByRole('menuitem', { name: labels.peekDefinition })
-      .click();
+    await page.getByRole('menuitem', { name: labels.peekDefinition }).click();
     const preview = page.getByRole('dialog', { name: labels.linkPreview });
     await expect(preview).toContainText('Target body');
-    await expect(
-      page.getByRole('tab', { name: 'Source' }),
-    ).toHaveAttribute('aria-selected', 'true');
+    await expect(page.getByRole('tab', { name: 'Source' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
     await page.keyboard.press('Escape');
 
     await editor.locator('.md-source-link').first().click({ button: 'right' });
-    await page
-      .getByRole('menuitem', { name: labels.goToDefinition })
-      .click();
-    await expect(
-      page.getByRole('tab', { name: 'Target' }),
-    ).toHaveAttribute('aria-selected', 'true');
+    await page.getByRole('menuitem', { name: labels.goToDefinition }).click();
+    await expect(page.getByRole('tab', { name: 'Target' })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
     editor = page.locator('.markdown-source__editor:visible');
     await expect.poll(() => sourceOf(editor)).toBe(targetContent);
 
     await page.getByRole('tab', { name: 'Source' }).click();
     editor = page.locator('.markdown-source__editor:visible');
     await editor.locator('.md-source-link').first().click({ button: 'right' });
-    await page
-      .getByRole('menuitem', { name: labels.findReferences })
-      .click();
+    await page.getByRole('menuitem', { name: labels.findReferences }).click();
     const backlinks = page.getByRole('dialog', {
       name: new RegExp('Target'),
     });
@@ -1073,17 +1593,13 @@ test('navigates, previews and rewrites internal note links', async () => {
     await page.keyboard.press('Escape');
 
     await editor.locator('.md-source-link').first().click({ button: 'right' });
-    await page
-      .getByRole('menuitem', { name: labels.renameSymbol })
-      .click();
+    await page.getByRole('menuitem', { name: labels.renameSymbol }).click();
     const renameDialog = page.getByRole('dialog');
     const renameInput = renameDialog.getByRole('textbox', {
       name: labels.name,
     });
     await renameInput.fill('Renamed');
-    await renameDialog
-      .getByRole('button', { name: labels.rename })
-      .click();
+    await renameDialog.getByRole('button', { name: labels.rename }).click();
     const renamedContent =
       '[go](Renamed.md#Parent#Child)\n[[Renamed#Parent#Child|wiki]]';
     await expect.poll(() => sourceOf(editor)).toBe(renamedContent);

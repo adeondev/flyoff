@@ -1,3 +1,5 @@
+import type { ImageDirective, MediaDirective } from './media';
+
 export type HeadingDepth = 1 | 2 | 3 | 4 | 5 | 6;
 
 export interface Root {
@@ -74,6 +76,7 @@ export interface Delete {
 
 export interface Highlight {
   type: 'highlight';
+  color?: string;
   children: InlineNode[];
 }
 
@@ -92,6 +95,7 @@ export interface Link {
   type: 'link';
   url: string;
   title: string | null;
+  color?: string;
   syntax?: 'wikilink';
   children: InlineNode[];
 }
@@ -103,8 +107,23 @@ export interface Image {
   title: string | null;
 }
 
+export interface InlineImage {
+  type: 'inline-image';
+  directive: ImageDirective;
+}
+
 export interface Break {
   type: 'break';
+}
+
+export interface Media {
+  type: 'media';
+  directive: MediaDirective;
+}
+
+export interface ImageBlock {
+  type: 'image-block';
+  directive: ImageDirective;
 }
 
 export type BlockNode =
@@ -114,7 +133,9 @@ export type BlockNode =
   | List
   | Code
   | Table
-  | ThematicBreak;
+  | ThematicBreak
+  | Media
+  | ImageBlock;
 
 export type InlineNode =
   | Text
@@ -126,6 +147,7 @@ export type InlineNode =
   | InlineCode
   | Link
   | Image
+  | InlineImage
   | Break;
 
 export type MarkdownNode = Root | BlockNode | ListItem | InlineNode;

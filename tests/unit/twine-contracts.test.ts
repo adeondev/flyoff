@@ -78,6 +78,20 @@ describe('Twine IPC contracts', () => {
   it('validates stream events', () => {
     expect(
       isTwineGenerationEvent({
+        activity: 'thinking',
+        requestId: 'twine-request-1',
+        type: 'started',
+      }),
+    ).toBe(true);
+    expect(
+      isTwineGenerationEvent({
+        activity: 'unknown',
+        requestId: 'twine-request-1',
+        type: 'started',
+      }),
+    ).toBe(false);
+    expect(
+      isTwineGenerationEvent({
         requestId: 'twine-request-1',
         text: 'Olá',
         type: 'text-delta',
@@ -90,6 +104,20 @@ describe('Twine IPC contracts', () => {
         text: 'x',
         tool: 'unknown',
         type: 'tool',
+      }),
+    ).toBe(false);
+    expect(
+      isTwineGenerationEvent({
+        code: 'overloaded',
+        requestId: 'twine-request-1',
+        type: 'error',
+      }),
+    ).toBe(true);
+    expect(
+      isTwineGenerationEvent({
+        code: 'raw-provider-message',
+        requestId: 'twine-request-1',
+        type: 'error',
       }),
     ).toBe(false);
   });

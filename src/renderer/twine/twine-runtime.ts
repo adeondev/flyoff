@@ -5,6 +5,7 @@ import type {
   TwineConversationQueryResult,
   TwineConversationSnapshot,
   TwineConversationStoreSnapshot,
+  TwineGenerationErrorCode,
   TwineGenerationEvent,
 } from '../../shared/contracts';
 import {
@@ -18,6 +19,7 @@ import {
 import {
   activeTwineBranch,
   createTwineConversationState,
+  updateTwineBranchMessages,
   updateTwineMessageByRequest,
 } from './twine-conversation-state';
 import type {
@@ -56,8 +58,18 @@ export interface TwineRuntimeSnapshot {
 type ConversationUpdater = (
   current: TwineConversationState,
 ) => TwineConversationState;
+type GenerationErrorMessages = Record<TwineGenerationErrorCode, string>;
 
 const SAVE_DELAY_MS = 250;
+const DEFAULT_GENERATION_ERROR_MESSAGES: GenerationErrorMessages = {
+  authentication: 'The Gemini API key could not be authenticated.',
+  network: 'Could not connect to Gemini. Check your connection and try again.',
+  overloaded: 'Gemini is temporarily overloaded. Try again in a moment.',
+  'rate-limited': 'The Gemini usage limit was reached. Try again later.',
+  'tool-requirements':
+    'Twine could not complete the required tools. Try again.',
+  unknown: 'Could not generate the Twine response.',
+};
 
 function initialSnapshot(): TwineRuntimeSnapshot {
   return {
@@ -139,6 +151,7 @@ class TwineRuntime {
   >();
   private api: Partial<FlyoffApi> = {};
   private fallbackTitle = 'New conversation';
+  private generationErrorMessages = DEFAULT_GENERATION_ERROR_MESSAGES;
   private nextIdValue = 1;
   private activeRequestId?: string;
   private historyLoad?: Promise<void>;
@@ -169,8 +182,14 @@ class TwineRuntime {
     );
   }
 
-  configure(fallbackTitle: string): void {
+  configure(
+    fallbackTitle: string,
+    generationErrorMessages?: GenerationErrorMessages,
+  ): void {
     this.fallbackTitle = fallbackTitle;
+    if (generationErrorMessages) {
+      this.generationErrorMessages = generationErrorMessages;
+    }
   }
 
   nextId(prefix: string): string {
@@ -202,6 +221,25 @@ class TwineRuntime {
     }
     this.publish({ ...this.state, conversation });
     this.scheduleSave();
+  }
+
+  markAnswerRevealed(messageId: string): void {
+    const branch = activeTwineBranch(this.state.conversation);
+    const message = branch.messages.find(({ id }) => id === messageId);
+    if (message?.kind !== 'assistant' || message.answerRevealed) {
+      return;
+    }
+    const conversation = updateTwineBranchMessages(
+      this.state.conversation,
+      branch.id,
+      (messages) =>
+        messages.map((entry) =>
+          entry.id === messageId
+            ? { ...entry, answerRevealed: true }
+            : entry,
+        ),
+    );
+    this.publish({ ...this.state, conversation });
   }
 
   setDraft(draft: string): void {
@@ -425,6 +463,7 @@ class TwineRuntime {
     this.setConversation((current) =>
       updateTwineMessageByRequest(current, requestId, (entry) => ({
         ...entry,
+        activity: undefined,
         kind: 'system',
         status: 'error',
         text: entry.text || message,
@@ -443,6 +482,9 @@ class TwineRuntime {
       this.setConversation((current) =>
         updateTwineMessageByRequest(current, requestId, (message) => ({
           ...message,
+          activity: undefined,
+          answerRevealed:
+            message.answerRevealed || message.text.length === 0,
           status: 'complete',
           streamRequestId: undefined,
           thinkingDurationMs:
@@ -599,6 +641,12 @@ class TwineRuntime {
     }
     switch (event.type) {
       case 'started':
+        this.setConversation((current) =>
+          updateTwineMessageByRequest(current, event.requestId, (message) => ({
+            ...message,
+            activity: event.activity,
+          })),
+        );
         return;
       case 'thought-delta':
         this.queueDelta(event.requestId, 'thought', event.text);
@@ -611,6 +659,8 @@ class TwineRuntime {
         this.setConversation((current) =>
           updateTwineMessageByRequest(current, event.requestId, (message) => ({
             ...message,
+            activity:
+              event.tool === 'search' ? 'searching' : message.activity,
             tools: [
               ...(message.tools ?? []),
               {
@@ -645,6 +695,9 @@ class TwineRuntime {
         this.setConversation((current) =>
           updateTwineMessageByRequest(current, event.requestId, (message) => ({
             ...message,
+            activity: undefined,
+            answerRevealed:
+              message.answerRevealed || message.text.length === 0,
             status: 'complete',
             thinkingDurationMs:
               message.thinkingDurationMs ??
@@ -659,7 +712,10 @@ class TwineRuntime {
         void this.flushSave();
         return;
       case 'error':
-        this.failGeneration(event.requestId, event.message);
+        this.failGeneration(
+          event.requestId,
+          this.generationErrorMessages[event.code],
+        );
     }
   }
 

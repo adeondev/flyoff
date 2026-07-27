@@ -278,6 +278,8 @@ export function TwineComposer({
         className="twine-composer"
         data-drag-active={(!editMode && dragActive) || undefined}
         data-edit-mode={editMode || undefined}
+        data-generating={isGenerating || undefined}
+        data-thinking-level={thinkingLevel}
         onDragEnter={(event) => {
           event.preventDefault();
           if (!editMode) {

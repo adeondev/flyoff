@@ -18,7 +18,9 @@
   --color-accent: #8f4fc4;
   --color-accent-hover: #7e3eb5;
   --color-accent-bright: #b476df;
-  --color-accent-ink: var(--color-text);
+  --color-accent-ink: oklch(
+    from var(--color-accent) clamp(0, calc((0.62 - l) * 100), 1) 0 0
+  );
   --color-danger: #b62326;
   --color-danger-active: #c93d40;
   --color-warning: #f0a15a;
@@ -153,6 +155,22 @@
     var(--preference-accent-color) 90%,
     white
   );
+}
+
+[data-project-accent],
+[data-note-accent] {
+  --note-accent: oklch(from var(--note-seed) clamp(0.5, l, 0.88) c h);
+  --note-accent-hover: color-mix(in oklab, var(--note-accent) 82%, black);
+  --note-accent-bright: oklch(from var(--note-seed) clamp(0.72, l, 0.9) c h);
+  --note-accent-tint: color-mix(in oklab, var(--note-seed) 26%, transparent);
+  --note-accent-ink: oklch(
+    from var(--note-accent) clamp(0, calc((0.62 - l) * 100), 1) 0 0
+  );
+  --color-accent: var(--note-accent);
+  --color-accent-hover: var(--note-accent-hover);
+  --color-accent-bright: var(--note-accent-bright);
+  --color-accent-ink: var(--note-accent-ink);
+  --color-focus-ring: var(--note-accent-bright);
 }
 
 :root[data-interface-font='system'] {

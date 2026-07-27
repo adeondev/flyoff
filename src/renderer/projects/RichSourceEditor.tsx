@@ -4,11 +4,18 @@ import {
   useState,
   type KeyboardEvent,
   type MouseEvent,
+  type PointerEvent as ReactPointerEvent,
   type RefObject,
 } from 'react';
 
 import { useScrollPositionReporter } from '../hooks/use-scroll-position-reporter';
+import { parseHexColor, rgbToHex } from '../components/color';
 import type { FlyoffApi } from '../../shared/contracts';
+import type { Translate } from '../pages/page-types';
+import {
+  parseImageDirective,
+  serializeImageDirective,
+} from '../../shared/markdown';
 import type { SourceEditTransaction } from './markdown-history';
 import {
   hasWorkspaceDrag,
@@ -22,6 +29,7 @@ import {
   readSelection,
   readSource,
   replaceRange,
+  sourceOffsetAtPoint,
   writeSelection,
   type SourceSelection,
 } from './source-caret';
@@ -48,26 +56,58 @@ import {
   createSourceMenuRequest,
   type SourceMenuRequest,
 } from './source-context-actions';
+import {
+  ImageInteractionLayer,
+  type ImageSourceOperation,
+} from './ImageInteractionLayer';
+import {
+  IMAGE_INSTANCE_TRANSFER,
+  MEDIA_ASSET_TRANSFER,
+} from './media-transfer';
+import type { ImageInsertionPlacement } from './image-interaction';
 
 export interface RichSourceEditorProps {
+  activeOffset?: number;
   ariaLabel: string;
   autoFocus?: boolean;
   editorRef: RefObject<HTMLDivElement | null>;
   nodeId: string;
+  projectId?: string;
   viewId?: string;
   readOnly?: boolean;
   spellCheck?: boolean;
   checkCodeBlocks?: boolean;
+  inlineColorLabel?: string;
   spellcheckScope?: string;
   selection: SourceSelection;
   value: string;
   onKeyDown?: (event: KeyboardEvent<HTMLDivElement>) => void;
   onContextMenuRequest?: (request: SourceMenuRequest) => void;
+  onColorRequest?: (request: SourceInlineColorRequest) => void;
+  onImportFiles?: (files: readonly File[], offset: number) => void;
+  onInsertMediaAsset?: (
+    assetId: string,
+    projectId: string,
+    offset: number,
+    instanceId?: string,
+    placement?: ImageInsertionPlacement,
+  ) => boolean | Promise<boolean>;
+  onRevealMediaAsset?: (assetId: string) => void;
+  onImageOperation?: (operation: ImageSourceOperation) => void;
   onRedo: () => void;
   onScroll?: (scrollTop: number, settled?: boolean) => void;
   onSelectionChange: (selection: SourceSelection) => void;
   onTransaction: (transaction: SourceEditTransaction) => void;
   onUndo: () => void;
+  translate: Translate;
+}
+
+export interface SourceInlineColorRequest {
+  color: string | null;
+  end: number;
+  kind: 'highlight' | 'text';
+  position: { x: number; y: number };
+  start: number;
 }
 
 interface PendingInput {
@@ -81,15 +121,23 @@ function collapsedSelection(offset: number): SourceSelection {
 }
 
 export function RichSourceEditor({
+  activeOffset,
   ariaLabel,
   autoFocus = false,
   editorRef,
   nodeId,
+  projectId,
   viewId,
   readOnly = false,
   spellCheck = false,
   checkCodeBlocks = false,
+  inlineColorLabel,
   onKeyDown,
+  onColorRequest,
+  onImportFiles,
+  onInsertMediaAsset,
+  onRevealMediaAsset,
+  onImageOperation,
   onContextMenuRequest,
   onRedo,
   onScroll,
@@ -98,8 +146,10 @@ export function RichSourceEditor({
   onUndo,
   selection,
   spellcheckScope = '',
+  translate,
   value,
 }: RichSourceEditorProps) {
+  const activeSourceOffset = activeOffset ?? selection.end;
   const scrollReporter = useScrollPositionReporter(onScroll);
   const composingRef = useRef(false);
   const [spellcheckRevision, setSpellcheckRevision] = useState(0);
@@ -173,11 +223,22 @@ export function RichSourceEditor({
         ? stateRef.current.selection
         : selection;
     reconcileSource(root, value);
+    for (const trigger of root.querySelectorAll<HTMLButtonElement>(
+      '.md-inline-color-trigger',
+    )) {
+      if (inlineColorLabel) {
+        trigger.setAttribute('aria-label', inlineColorLabel);
+        trigger.dataset.flyoffTooltip = inlineColorLabel;
+        trigger.dataset.flyoffTooltipPlacement = 'top';
+      }
+      trigger.ariaDisabled = String(readOnly);
+    }
     if (focused) {
       writeSelection(root, nextSelection);
     }
     stateRef.current = { content: value, selection: nextSelection };
-  }, [editorRef, selection, value]);
+    updateActiveSourceLine(root, value, nextSelection.end);
+  }, [editorRef, inlineColorLabel, readOnly, selection, value]);
 
   useEffect(() => {
     const root = editorRef.current;
@@ -280,9 +341,18 @@ export function RichSourceEditor({
   useEffect(() => {
     const root = editorRef.current;
     if (root) {
-      updateActiveSourceLine(root, value, selection.end);
+      const localSelection =
+        root.ownerDocument.activeElement === root &&
+        stateRef.current.content === value
+          ? stateRef.current.selection
+          : undefined;
+      updateActiveSourceLine(
+        root,
+        value,
+        localSelection?.end ?? activeSourceOffset,
+      );
     }
-  }, [editorRef, selection.end, value]);
+  }, [activeSourceOffset, editorRef, value]);
 
   useEffect(() => {
     const root = editorRef.current;
@@ -291,6 +361,15 @@ export function RichSourceEditor({
     }
     const editor = root;
 
+    function reconcileSelection(
+      content: string,
+      nextSelection: SourceSelection,
+    ): void {
+      reconcileSource(editor, content);
+      writeSelection(editor, nextSelection);
+      updateActiveSourceLine(editor, content, nextSelection.end);
+    }
+
     function commit(
       before: SourceEditTransaction['before'],
       content: string,
@@ -298,8 +377,7 @@ export function RichSourceEditor({
       inputType: string,
       timestamp: number,
     ): void {
-      reconcileSource(editor, content);
-      writeSelection(editor, nextSelection);
+      reconcileSelection(content, nextSelection);
       const after = { content, selection: nextSelection };
       stateRef.current = after;
       pendingRef.current = undefined;
@@ -358,8 +436,7 @@ export function RichSourceEditor({
       const timestamp = pendingRef.current?.timestamp ?? performance.now();
 
       if (after.content === before.content) {
-        reconcileSource(editor, after.content);
-        writeSelection(editor, after.selection);
+        reconcileSelection(after.content, after.selection);
         stateRef.current = after;
         pendingRef.current = undefined;
         callbacksRef.current.onSelectionChange(after.selection);
@@ -431,8 +508,7 @@ export function RichSourceEditor({
       if (resolved) {
         event.preventDefault();
         if (resolved.content === before.content) {
-          reconcileSource(editor, resolved.content);
-          writeSelection(editor, resolved.selection);
+          reconcileSelection(resolved.content, resolved.selection);
           stateRef.current = resolved;
           callbacksRef.current.onSelectionChange(resolved.selection);
           return;
@@ -456,13 +532,17 @@ export function RichSourceEditor({
 
     function handleInput(event: InputEvent): void {
       if (readOnlyRef.current) {
-        reconcileSource(editor, stateRef.current.content);
-        writeSelection(editor, stateRef.current.selection);
+        reconcileSelection(
+          stateRef.current.content,
+          stateRef.current.selection,
+        );
         return;
       }
       if (suppressedInputRef.current === event.inputType) {
-        reconcileSource(editor, stateRef.current.content);
-        writeSelection(editor, stateRef.current.selection);
+        reconcileSelection(
+          stateRef.current.content,
+          stateRef.current.selection,
+        );
         suppressedInputRef.current = undefined;
         return;
       }
@@ -481,10 +561,18 @@ export function RichSourceEditor({
       if (suppressedInputRef.current === 'insertFromPaste') {
         return;
       }
-      const inserted = sourceTextFromTransfer(
-        event.clipboardData,
-        editor.ownerDocument,
+      const image = parseImageDirective(
+        event.clipboardData?.getData(IMAGE_INSTANCE_TRANSFER) ?? '',
       );
+      const inserted = image
+        ? serializeImageDirective({
+            ...image,
+            instanceId: crypto.randomUUID(),
+          })
+        : sourceTextFromTransfer(
+            event.clipboardData,
+            editor.ownerDocument,
+          );
       if (inserted) {
         commitReplacement('insertFromPaste', inserted);
       }
@@ -504,6 +592,13 @@ export function RichSourceEditor({
         isWorkspaceDragActive() ||
         hasWorkspaceDrag(event.dataTransfer)
       ) {
+        return;
+      }
+      if (
+        event.dataTransfer.types.includes(MEDIA_ASSET_TRANSFER) ||
+        event.dataTransfer.types.includes('Files')
+      ) {
+        suppressPairedInput('insertFromDrop');
         return;
       }
       if (suppressedInputRef.current === 'insertFromDrop') {
@@ -589,8 +684,10 @@ export function RichSourceEditor({
         composingRef.current = false;
         if (readOnlyRef.current) {
           pendingRef.current = undefined;
-          reconcileSource(editor, stateRef.current.content);
-          writeSelection(editor, stateRef.current.selection);
+          reconcileSelection(
+            stateRef.current.content,
+            stateRef.current.selection,
+          );
           return;
         }
         finishNativeInput('insertCompositionText');
@@ -612,6 +709,11 @@ export function RichSourceEditor({
         content: stateRef.current.content,
         selection: nextSelection,
       };
+      updateActiveSourceLine(
+        editor,
+        stateRef.current.content,
+        nextSelection.end,
+      );
       callbacksRef.current.onSelectionChange(nextSelection);
     }
 
@@ -620,6 +722,7 @@ export function RichSourceEditor({
       isComposing: () => composingRef.current,
       onSelectionChange: (content, nextSelection) => {
         stateRef.current = { content, selection: nextSelection };
+        updateActiveSourceLine(editor, content, nextSelection.end);
         callbacksRef.current.onSelectionChange(nextSelection);
       },
     });
@@ -693,6 +796,77 @@ export function RichSourceEditor({
     );
   }
 
+  function handleColorPointerDown(
+    event: ReactPointerEvent<HTMLDivElement>,
+  ): void {
+    if ((event.target as Element).closest('.md-inline-color-trigger')) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }
+
+  function handleClick(event: MouseEvent<HTMLDivElement>): void {
+    const trigger = (event.target as Element).closest<HTMLButtonElement>(
+      '.md-inline-color-trigger',
+    );
+    if (!trigger) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    if (readOnly || !onColorRequest) {
+      return;
+    }
+    const line = trigger.closest<HTMLElement>('.md-line');
+    const model = getSourceDocumentModel(event.currentTarget);
+    const lineIndex = Number(line?.dataset.line) - 1;
+    const localStart = Number(trigger.dataset.mdColorStart);
+    const localEnd = Number(trigger.dataset.mdColorEnd);
+    const kind = trigger.dataset.mdColorKind;
+    if (
+      !model ||
+      !Number.isInteger(lineIndex) ||
+      lineIndex < 0 ||
+      !Number.isInteger(localStart) ||
+      !Number.isInteger(localEnd) ||
+      (kind !== 'text' && kind !== 'highlight')
+    ) {
+      return;
+    }
+    const bounds = trigger.getBoundingClientRect();
+    const explicitColor = trigger.dataset.mdColorValue || null;
+    const styles = getComputedStyle(trigger);
+    const computed = styles.backgroundColor;
+    const channels = computed.match(
+      /^rgba?\(\s*(\d+)\D+(\d+)\D+(\d+)/,
+    );
+    const inheritedColor = [
+      '--note-seed',
+      '--preference-accent-color',
+      '--color-accent',
+    ]
+      .map((property) => styles.getPropertyValue(property).trim())
+      .find((candidate) => parseHexColor(candidate));
+    const color =
+      explicitColor ??
+      inheritedColor ??
+      (channels
+        ? rgbToHex({
+            red: Number(channels[1]),
+            green: Number(channels[2]),
+            blue: Number(channels[3]),
+          })
+        : null);
+    const lineStart = model.lineStarts[lineIndex]!;
+    onColorRequest({
+      color,
+      end: lineStart + localEnd,
+      kind,
+      position: { x: bounds.left, y: bounds.bottom + 5 },
+      start: lineStart + localStart,
+    });
+  }
+
   return (
     <div className="markdown-source">
       <div
@@ -705,8 +879,41 @@ export function RichSourceEditor({
         data-markdown-view-id={viewId}
         data-spellcheck-code-blocks={String(checkCodeBlocks)}
         data-spellcheck-enabled={String(spellCheck)}
+        onClick={handleClick}
         onContextMenu={handleContextMenu}
+        onDragOver={(event) => {
+          if (
+            !readOnly &&
+            onImportFiles &&
+            event.dataTransfer.types.includes('Files')
+          ) {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'copy';
+          }
+        }}
+        onDrop={(event) => {
+          if (
+            event.dataTransfer.types?.includes(MEDIA_ASSET_TRANSFER)
+          ) {
+            return;
+          }
+          const offset =
+            sourceOffsetAtPoint(
+              event.currentTarget,
+              event.clientX,
+              event.clientY,
+            ) ?? stateRef.current.selection.end;
+          if (
+            !readOnly &&
+            onImportFiles &&
+            event.dataTransfer.files.length > 0
+          ) {
+            event.preventDefault();
+            onImportFiles(Array.from(event.dataTransfer.files), offset);
+          }
+        }}
         onKeyDown={handleKeyDown}
+        onPointerDown={handleColorPointerDown}
         onScroll={(event) =>
           scrollReporter.reportScroll(event.currentTarget.scrollTop)
         }
@@ -718,6 +925,16 @@ export function RichSourceEditor({
         spellCheck={spellCheck}
         suppressContentEditableWarning
         tabIndex={0}
+      />
+      <ImageInteractionLayer
+        editorRef={editorRef}
+        onInsertMediaAsset={onInsertMediaAsset}
+        onOperation={onImageOperation}
+        onRevealAsset={onRevealMediaAsset}
+        onSelectionChange={onSelectionChange}
+        projectId={projectId}
+        readOnly={readOnly}
+        translate={translate}
       />
     </div>
   );

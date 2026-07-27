@@ -28,6 +28,14 @@ export function toastQueueReducer(
   action: ToastQueueAction,
 ): ToastQueueState {
   if (action.type === 'enqueue') {
+    if (
+      [...state.visible, ...state.queued].some(
+        ({ message, tone }) =>
+          message === action.toast.message && tone === action.toast.tone,
+      )
+    ) {
+      return state;
+    }
     return state.visible.length < 4
       ? { ...state, visible: [action.toast, ...state.visible] }
       : { ...state, queued: [...state.queued, action.toast] };

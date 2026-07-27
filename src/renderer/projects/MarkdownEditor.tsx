@@ -13,8 +13,17 @@ import readingModeIcon from '../../../public/images/icons/editor/preview.svg';
 import splitModeIcon from '../../../public/images/icons/actions/sidebar-toggle.svg';
 import closeToolbarIcon from '../../../public/images/icons/actions/close-toolbar.svg';
 import openToolbarIcon from '../../../public/images/icons/actions/open-toolbar.svg';
-import type { MarkdownDocument } from '../../shared/contracts';
-import { extractInternalLinks } from '../../shared/markdown';
+import type {
+  ImportProjectMediaOutcome,
+  MarkdownDocument,
+  MediaAsset,
+  ProjectResult,
+} from '../../shared/contracts';
+import {
+  extractInternalLinks,
+  serializeImageDirective,
+} from '../../shared/markdown';
+import { noteAccentProps } from '../appearance/note-accent';
 import { MaskedIcon } from '../components/MaskedIcon';
 import { TwemojiText } from '../components/twemoji';
 import type { MenuItem } from '../components/menu';
@@ -24,13 +33,22 @@ import { useFlyoffPreferences } from '../preferences';
 import type { EditorMode } from './editor-mode';
 import {
   applyMarkdownAction,
+  applyMarkdownInlineColor,
   type MarkdownAction,
+  type MarkdownInlineColorKind,
 } from './markdown-actions';
 import { MarkdownReadingView } from './MarkdownReadingView';
 import { MarkdownFocusShelf } from './MarkdownFocusShelf';
 import { MarkdownSourceContextMenu } from './MarkdownSourceContextMenu';
 import { MarkdownToolbar } from './MarkdownToolbar';
-import { RichSourceEditor } from './RichSourceEditor';
+import { MarkdownColorPopover } from './MarkdownColorPopover';
+import {
+  RichSourceEditor,
+  type SourceInlineColorRequest,
+} from './RichSourceEditor';
+import type { ImageSourceOperation } from './ImageInteractionLayer';
+import type { ImageInsertionPlacement } from './image-interaction';
+import { rewriteImageSource } from './image-source-edit';
 import {
   readSelection,
   writeSelection,
@@ -78,10 +96,16 @@ export interface MarkdownEditorProps {
   onDirtyChange?: (dirty: boolean) => void;
   onError?: (message: string) => void;
   onModeChange?: (mode: EditorMode) => void;
+  onRevealMediaAsset?: (assetId: string) => void;
   onScrollChange?: (scrollTop: number, settled?: boolean) => void;
   scrollTop?: number;
   linkRuntime?: MarkdownLinkRuntime;
   navigation?: MarkdownLinkNavigation;
+  importMediaFiles?: (
+    files: readonly File[],
+  ) => Promise<ProjectResult<ImportProjectMediaOutcome>>;
+  noteSeed?: string | null;
+  projectId?: string;
   viewId?: string;
 }
 
@@ -119,24 +143,29 @@ export const MarkdownEditor = forwardRef<
     onDirtyChange,
     onError,
     onModeChange,
+    onRevealMediaAsset,
     onScrollChange,
     scrollTop = 0,
     linkRuntime,
     navigation,
+    importMediaFiles,
+    noteSeed = null,
+    projectId,
     viewId = document.nodeId,
     title,
     translate,
   },
   forwardedRef,
 ) {
-  const { preferences, update: updatePreferences } =
-    useFlyoffPreferences();
+  const { preferences, update: updatePreferences } = useFlyoffPreferences();
   const editorPreferences = preferences.editor;
   const toolbarCollapsed = editorPreferences.toolbarCollapsed;
   const [snapshot, setSnapshot] = useState(() =>
     controller.open(document, viewId),
   );
   const [liveSelection, setLiveSelection] = useState(snapshot.selection);
+  const [sourceColorRequest, setSourceColorRequest] =
+    useState<SourceInlineColorRequest | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
   const readingRef = useRef<HTMLDivElement>(null);
   const selectionRef = useRef(snapshot.selection);
@@ -239,9 +268,11 @@ export const MarkdownEditor = forwardRef<
     }
     const frame = requestAnimationFrame(() => {
       if (mode === 'reading') {
-        const heading = [...(readingRef.current?.querySelectorAll<HTMLElement>(
-          '[data-markdown-heading-path]',
-        ) ?? [])].find((element) => {
+        const heading = [
+          ...(readingRef.current?.querySelectorAll<HTMLElement>(
+            '[data-markdown-heading-path]',
+          ) ?? []),
+        ].find((element) => {
           try {
             return (
               JSON.stringify(
@@ -275,8 +306,7 @@ export const MarkdownEditor = forwardRef<
       };
       writeSelection(editor, nextSelection);
       handleSourceSelection(nextSelection);
-      const line =
-        snapshot.content.slice(0, offset).split('\n').length;
+      const line = snapshot.content.slice(0, offset).split('\n').length;
       editor
         .querySelector<HTMLElement>(`.md-line[data-line="${line}"]`)
         ?.scrollIntoView({ block: 'center' });
@@ -377,11 +407,7 @@ export const MarkdownEditor = forwardRef<
       return;
     }
 
-    if (
-      !event.altKey &&
-      (event.ctrlKey || event.metaKey) &&
-      key === 's'
-    ) {
+    if (!event.altKey && (event.ctrlKey || event.metaKey) && key === 's') {
       event.preventDefault();
       if (!editingDisabled && snapshot.status !== 'conflict') {
         void controller.save(nodeId);
@@ -400,13 +426,21 @@ export const MarkdownEditor = forwardRef<
     if (editingDisabled || edit.content === currentContent) {
       return;
     }
+    const editor = editorRef.current;
+    const viewport = editor
+      ? { left: editor.scrollLeft, top: editor.scrollTop }
+      : undefined;
 
-    controller.commitEditorTransaction(nodeId, {
-      before: { content: currentContent, selection: beforeSelection },
-      after: edit,
-      inputType,
-      timestamp: performance.now(),
-    }, viewId);
+    controller.commitEditorTransaction(
+      nodeId,
+      {
+        before: { content: currentContent, selection: beforeSelection },
+        after: edit,
+        inputType,
+        timestamp: performance.now(),
+      },
+      viewId,
+    );
     if (!restoreFocus) {
       selectionRef.current = edit.selection;
       publishLiveSelection(edit.selection);
@@ -414,9 +448,13 @@ export const MarkdownEditor = forwardRef<
     }
     requestAnimationFrame(() => {
       const editor = editorRef.current;
-      editor?.focus();
+      editor?.focus({ preventScroll: true });
       if (editor) {
         writeSelection(editor, edit.selection);
+        if (viewport) {
+          editor.scrollLeft = viewport.left;
+          editor.scrollTop = viewport.top;
+        }
       }
     });
   }
@@ -482,6 +520,222 @@ export const MarkdownEditor = forwardRef<
     );
   }
 
+  function handleInlineColor(
+    kind: MarkdownInlineColorKind,
+    color: string,
+  ): void {
+    if (editingDisabled) {
+      return;
+    }
+    const currentSelection = selectionRef.current;
+    const currentContent =
+      controller.getSnapshot(nodeId, viewId)?.content ?? snapshot.content;
+    const edit = applyMarkdownInlineColor(
+      kind,
+      currentContent,
+      currentSelection.start,
+      currentSelection.end,
+      color,
+    );
+    commitContextEdit(
+      {
+        content: edit.value,
+        selection: {
+          start: edit.selectionStart,
+          end: edit.selectionEnd,
+          direction: 'forward',
+        },
+      },
+      currentSelection,
+      `toolbar:color:${kind}`,
+    );
+  }
+
+  function handleSourceInlineColor(color: string): void {
+    if (!sourceColorRequest || editingDisabled) {
+      return;
+    }
+    const currentContent =
+      controller.getSnapshot(nodeId, viewId)?.content ?? snapshot.content;
+    const inserted =
+      sourceColorRequest.start === sourceColorRequest.end
+        ? `{color=${color}}`
+        : color;
+    const content =
+      currentContent.slice(0, sourceColorRequest.start) +
+      inserted +
+      currentContent.slice(sourceColorRequest.end);
+    const delta =
+      inserted.length - (sourceColorRequest.end - sourceColorRequest.start);
+    const currentSelection = selectionRef.current;
+    const adjust = (offset: number): number =>
+      offset <= sourceColorRequest.start
+        ? offset
+        : offset >= sourceColorRequest.end
+          ? offset + delta
+          : sourceColorRequest.start + inserted.length;
+    const nextSelection = {
+      start: adjust(currentSelection.start),
+      end: adjust(currentSelection.end),
+      direction: currentSelection.direction,
+    };
+    commitContextEdit(
+      { content, selection: nextSelection },
+      currentSelection,
+      'source:inline-color',
+    );
+    setSourceColorRequest(null);
+  }
+
+  function insertMediaAssets(
+    assets: readonly (Pick<
+      MediaAsset,
+      'assetId' | 'name' | 'relativePath' | 'pixelWidth' | 'pixelHeight'
+    > & { instanceId?: string })[],
+    offset: number,
+    inputType: string,
+    placement?: ImageInsertionPlacement,
+  ): boolean {
+    const currentContent =
+      controller.getSnapshot(nodeId, viewId)?.content ?? snapshot.content;
+    const directives = assets
+      .map((asset) => {
+        const naturalWidth = asset.pixelWidth ?? 640;
+        const naturalHeight = asset.pixelHeight ?? 360;
+        const width = Math.min(640, naturalWidth);
+        return serializeImageDirective({
+          version: 2,
+          instanceId: asset.instanceId ?? crypto.randomUUID(),
+          assetId: asset.assetId,
+          path: asset.relativePath,
+          alt: asset.name,
+          mode: placement?.mode ?? 'wrap',
+          align: placement?.align ?? 'left',
+          width,
+          height: Math.max(
+            24,
+            Math.round((width * naturalHeight) / naturalWidth),
+          ),
+          minWidth: 96,
+          maxWidth: 1200,
+          margin: 12,
+          ratioLock: true,
+          positionLock: false,
+          caption: '',
+        });
+      })
+      .join('\n');
+    if (!directives) {
+      return false;
+    }
+    const clampedOffset = Math.max(0, Math.min(currentContent.length, offset));
+    const prefix =
+      clampedOffset > 0 && currentContent[clampedOffset - 1] !== '\n'
+        ? '\n'
+        : '';
+    const suffix =
+      clampedOffset < currentContent.length &&
+      currentContent[clampedOffset] !== '\n'
+        ? '\n'
+        : '';
+    const inserted = `${prefix}${directives}${suffix}`;
+    const caret = clampedOffset + inserted.length;
+    commitContextEdit(
+      {
+        content:
+          currentContent.slice(0, clampedOffset) +
+          inserted +
+          currentContent.slice(clampedOffset),
+        selection: { start: caret, end: caret, direction: 'none' },
+      },
+      selectionRef.current,
+      inputType,
+      false,
+    );
+    return true;
+  }
+
+  async function handleMediaFiles(
+    files: readonly File[],
+    offset: number,
+  ): Promise<void> {
+    if (editingDisabled || !importMediaFiles || files.length === 0) {
+      return;
+    }
+    const result = await importMediaFiles(files);
+    if (!result.ok) {
+      onError?.(result.error.message);
+      return;
+    }
+    insertMediaAssets(
+      result.value.assets
+        .filter((asset) => asset.kind === 'image')
+        .map((asset) => ({
+          assetId: asset.nodeId,
+          name: asset.name,
+          relativePath: asset.relativePath,
+          pixelWidth: null,
+          pixelHeight: null,
+        })),
+      offset,
+      'source:image-import',
+    );
+  }
+
+  async function handleGalleryAsset(
+    assetId: string,
+    sourceProjectId: string,
+    offset: number,
+    instanceId?: string,
+    placement?: ImageInsertionPlacement,
+  ): Promise<boolean> {
+    if (editingDisabled || !projectId || sourceProjectId !== projectId) {
+      return false;
+    }
+    const result = await window.flyoff.getMediaGallery();
+    if (!result.ok) {
+      onError?.(result.error.message);
+      return false;
+    }
+    const asset = result.value.assets.find(
+      (candidate) => candidate.assetId === assetId,
+    );
+    if (!asset || asset.kind !== 'image') {
+      return false;
+    }
+    return insertMediaAssets(
+      [{ ...asset, instanceId }],
+      offset,
+      'source:image-gallery-drop',
+      placement,
+    );
+  }
+
+  function handleImageOperation(operation: ImageSourceOperation): void {
+    if (editingDisabled) {
+      return;
+    }
+    const currentContent =
+      controller.getSnapshot(nodeId, viewId)?.content ?? snapshot.content;
+    const edit = rewriteImageSource(currentContent, operation);
+    if (!edit) {
+      return;
+    }
+    const previousSelection = selectionRef.current;
+    commitContextEdit(
+      {
+        content: edit.content,
+        selection: {
+          start: edit.caret,
+          end: edit.caret,
+          direction: 'none',
+        },
+      },
+      previousSelection,
+      `source:image-${operation.type}`,
+    );
+  }
+
   function restoreEditorFocus(): void {
     requestAnimationFrame(() => {
       const editor = editorRef.current;
@@ -533,6 +787,7 @@ export const MarkdownEditor = forwardRef<
       data-source-style={editorPreferences.sourceStyle}
       data-wrap={String(editorPreferences.wrapLongLines)}
       data-chrome-layout={editorPreferences.chromeLayout}
+      {...noteAccentProps(noteSeed)}
     >
       {focusLayout ? null : (
         <header className="markdown-editor__header">
@@ -604,20 +859,17 @@ export const MarkdownEditor = forwardRef<
           </div>
         </section>
       ) : null}
-      {!focusLayout &&
-      mode !== 'reading' &&
-      editorPreferences.showToolbar ? (
+      {!focusLayout && mode !== 'reading' && editorPreferences.showToolbar ? (
         <MarkdownToolbar
           disabled={editingDisabled}
           onEmoji={handleEmojiInsert}
           onEmojiPickerClose={restoreEditorFocus}
           onAction={handleMarkdownAction}
+          onColor={handleInlineColor}
           translate={translate}
         />
       ) : null}
-      {focusLayout &&
-      mode !== 'reading' &&
-      editorPreferences.showToolbar ? (
+      {focusLayout && mode !== 'reading' && editorPreferences.showToolbar ? (
         <div
           className="markdown-editor__toolbar-region"
           data-collapsed={toolbarCollapsed || undefined}
@@ -628,6 +880,7 @@ export const MarkdownEditor = forwardRef<
               onEmoji={handleEmojiInsert}
               onEmojiPickerClose={restoreEditorFocus}
               onAction={handleMarkdownAction}
+              onColor={handleInlineColor}
               translate={translate}
             />
           </div>
@@ -666,16 +919,28 @@ export const MarkdownEditor = forwardRef<
       <div className={`markdown-editor__body markdown-editor__body--${mode}`}>
         {mode === 'reading' ? null : (
           <RichSourceEditor
+            activeOffset={liveSelection.end}
             ariaLabel={translate('projects.editorLabel')}
             autoFocus={autoFocus}
             checkCodeBlocks={preferences.spellcheck.checkCodeBlocks}
             editorRef={editorRef}
+            inlineColorLabel={translate('toolbar.color')}
             nodeId={nodeId}
             viewId={viewId}
             readOnly={editingDisabled}
             onContextMenuRequest={sourceMenu.open}
+            onColorRequest={setSourceColorRequest}
+            onImportFiles={
+              importMediaFiles
+                ? (files, offset) => void handleMediaFiles(files, offset)
+                : undefined
+            }
+            onInsertMediaAsset={handleGalleryAsset}
+            onImageOperation={handleImageOperation}
+            projectId={projectId}
             onKeyDown={handleKeyDown}
             onRedo={() => controller.redo(nodeId, viewId)}
+            onRevealMediaAsset={onRevealMediaAsset}
             onScroll={(scrollPosition, settled) => {
               onScrollChange?.(scrollPosition, settled);
               splitScroll.handleSourceScroll();
@@ -688,6 +953,7 @@ export const MarkdownEditor = forwardRef<
             selection={snapshot.selection}
             spellCheck={preferences.spellcheck.enabled}
             spellcheckScope={preferences.spellcheck.languages.join('\u0000')}
+            translate={translate}
             value={snapshot.content}
           />
         )}
@@ -709,15 +975,25 @@ export const MarkdownEditor = forwardRef<
               )
             }
             onScrollIntent={splitScroll.handleReadingIntent}
+            projectId={projectId}
             translate={translate}
             updatePolicy={mode === 'split' ? 'split' : 'immediate'}
             viewRef={readingRef}
           />
         )}
       </div>
-      {!focusLayout &&
-      mode !== 'reading' &&
-      editorPreferences.showStatusBar ? (
+      {sourceColorRequest ? (
+        <MarkdownColorPopover
+          initialColor={sourceColorRequest.color ?? noteSeed ?? undefined}
+          initialKind={sourceColorRequest.kind}
+          kindLocked
+          onApply={(_, color) => handleSourceInlineColor(color)}
+          onClose={() => setSourceColorRequest(null)}
+          position={sourceColorRequest.position}
+          translate={translate}
+        />
+      ) : null}
+      {!focusLayout && mode !== 'reading' && editorPreferences.showStatusBar ? (
         <footer
           aria-label={translate('projects.editorPosition')}
           className="markdown-editor__position"
@@ -760,8 +1036,8 @@ export const MarkdownEditor = forwardRef<
           context={sourceMenu.context}
           editingDisabled={editingDisabled}
           isMac={
-            editorRef.current?.ownerDocument.documentElement.dataset.platform ===
-            'darwin'
+            editorRef.current?.ownerDocument.documentElement.dataset
+              .platform === 'darwin'
           }
           onAction={sourceMenu.onAction}
           onClose={sourceMenu.onClose}

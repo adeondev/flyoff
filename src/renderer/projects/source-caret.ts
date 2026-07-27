@@ -59,7 +59,10 @@ function serializeNode(node: Node): string {
   }
 
   const element = node as Element;
-  if (element.hasAttribute('data-md-gutter')) {
+  if (
+    element.hasAttribute('data-md-gutter') ||
+    element.hasAttribute('data-md-decoration')
+  ) {
     return '';
   }
   if (element.tagName === 'BR') {
@@ -441,6 +444,22 @@ export function writeSelection(
 
 export function writeCaret(root: HTMLElement, target: number): void {
   writeSelection(root, target);
+}
+
+export function sourceCaretRect(
+  root: HTMLElement,
+  target: number,
+): DOMRect | undefined {
+  const position = positionAt(root, target);
+  const range = root.ownerDocument.createRange();
+  try {
+    range.setStart(position.node, position.offset);
+    range.collapse(true);
+    const rect = range.getClientRects()[0] ?? range.getBoundingClientRect();
+    return rect.width || rect.height ? rect : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 export function replaceRange(

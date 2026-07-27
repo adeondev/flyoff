@@ -352,7 +352,9 @@ export function ProjectPagePropertiesDialog({
               <dd>
                 {node.pageType === 'diagram'
                   ? translate('projects.instanceDiagram')
-                  : translate('projects.propertiesMarkdownNote')}
+                  : node.pageType.startsWith('media:')
+                    ? translate('rail.media')
+                    : translate('projects.propertiesMarkdownNote')}
               </dd>
             </div>
             <div>
@@ -407,6 +409,16 @@ export function ProjectPagePropertiesDialog({
                   </dd>
                 </div>
               </>
+            ) : null}
+            {displayedProperties?.pageType.startsWith('media:') ? (
+              <div>
+                <dt>{translate('projects.propertiesType')}</dt>
+                <dd>
+                  {'mimeType' in displayedProperties
+                    ? `${displayedProperties.mimeType} · ${displayedProperties.extension}`
+                    : EMPTY_VALUE}
+                </dd>
+              </div>
             ) : null}
           </dl>
           <div className="project-page-properties__load-status">

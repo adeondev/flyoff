@@ -62,8 +62,8 @@ describe('source word selection', () => {
     );
   });
 
-  it('selects the complete logical line with Markdown and punctuation', () => {
-    const line = '**Informação** em 2026-07-16.';
+  it('selects one semantic sentence without a list marker', () => {
+    const line = '- **Informação** em 2026-07-16. Outra frase.';
     const source = `Introdução\n${line}\nFim`;
     const lineStart = source.indexOf(line);
     const resolved = expandTripleClickSelection(
@@ -71,7 +71,9 @@ describe('source word selection', () => {
       selection(lineStart + 4, lineStart + 9),
     );
 
-    expect(source.slice(resolved.start, resolved.end)).toBe(line);
+    expect(source.slice(resolved.start, resolved.end)).toBe(
+      '**Informação** em 2026-07-16.',
+    );
     expect(resolved.direction).toBe('forward');
   });
 
@@ -84,7 +86,7 @@ describe('source word selection', () => {
       selection(lineStart + 2),
     );
 
-    expect(source.slice(resolved.start, resolved.end)).toBe(line);
+    expect(source.slice(resolved.start, resolved.end)).toBe('texto');
   });
 
   it('preserves the native range on an empty logical line', () => {

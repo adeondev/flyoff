@@ -91,9 +91,18 @@ const DEFAULT_GRID_WIDTH = 340;
 const DEFAULT_GRID_HEIGHT = 240;
 const catalog = catalogData as EmojiCatalog;
 const entriesByUnicode = new Map<string, EmojiCatalogEntry>();
+const pickerEntries = catalog.entries.map((emoji) => ({ emoji }));
+const entriesByGroup = new Map<number, PickerEmoji[]>();
 
-for (const entry of catalog.entries) {
+for (const [index, entry] of catalog.entries.entries()) {
   entriesByUnicode.set(entry.unicode, entry);
+  const pickerEntry = pickerEntries[index]!;
+  const groupEntries = entriesByGroup.get(entry.group);
+  if (groupEntries) {
+    groupEntries.push(pickerEntry);
+  } else {
+    entriesByGroup.set(entry.group, [pickerEntry]);
+  }
   for (const skin of entry.skins ?? []) {
     entriesByUnicode.set(skin, entry);
   }
@@ -182,6 +191,7 @@ export function EmojiPicker({
   const [query, setQuery] = useState('');
   const [group, setGroup] = useState(0);
   const [activeIndex, setActiveIndex] = useState(0);
+  const [rowsReady, setRowsReady] = useState(1);
   const [position, setPosition] = useState({ left: 8, top: 8 });
   const [viewport, setViewport] = useState<GridViewport>({
     height: DEFAULT_GRID_HEIGHT,
@@ -194,10 +204,9 @@ export function EmojiPicker({
   const deferredQuery = useDeferredValue(normalizedQuery);
   const visible = useMemo<readonly PickerEmoji[]>(() => {
     if (deferredQuery) {
-      return catalog.entries
-        .filter(({ search }) => search.includes(deferredQuery))
-        .slice(0, SEARCH_RESULT_LIMIT)
-        .map((emoji) => ({ emoji }));
+      return pickerEntries
+        .filter(({ emoji }) => emoji.search.includes(deferredQuery))
+        .slice(0, SEARCH_RESULT_LIMIT);
     }
     if (group === -1) {
       return recent.flatMap((unicode) => {
@@ -216,9 +225,7 @@ export function EmojiPicker({
         }];
       });
     }
-    return catalog.entries
-      .filter((entry) => entry.group === group)
-      .map((emoji) => ({ emoji }));
+    return entriesByGroup.get(group) ?? [];
   }, [deferredQuery, group, recent]);
   const columns = Math.max(
     1,
@@ -241,7 +248,11 @@ export function EmojiPicker({
     ) + GRID_OVERSCAN_ROWS,
   );
   const startIndex = startRow * columns;
-  const endIndex = Math.min(visible.length, endRow * columns);
+  const mountedRowCount = Math.max(1, endRow - startRow);
+  const endIndex = Math.min(
+    visible.length,
+    (startRow + Math.min(rowsReady, mountedRowCount)) * columns,
+  );
   const mounted = visible.slice(startIndex, endIndex);
   const firstVisibleRow = Math.floor(viewport.scrollTop / GRID_ROW_HEIGHT);
   const lastVisibleRow = Math.ceil(
@@ -340,6 +351,16 @@ export function EmojiPicker({
       document.removeEventListener('keydown', closeOnEscape, true);
     };
   }, [anchorRef, onClose, open]);
+
+  useEffect(() => {
+    if (!open || rowsReady >= mountedRowCount) {
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      setRowsReady((current) => Math.min(mountedRowCount, current + 1));
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [mountedRowCount, open, rowsReady]);
 
   useEffect(
     () => () => {

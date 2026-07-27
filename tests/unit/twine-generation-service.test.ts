@@ -15,6 +15,7 @@ vi.mock('@google/genai', () => ({
 
 import type { TwineGenerationEvent } from '../../src/shared/contracts';
 import {
+  classifyTwineGenerationError,
   createTwineGenerateContentConfig,
   TwineGenerationService,
   TWINE_CODE_RETRY_INSTRUCTION,
@@ -150,6 +151,47 @@ describe('Twine generation config', () => {
   });
 });
 
+describe('Twine generation errors', () => {
+  it.each([
+    [
+      new Error(
+        '{"error":{"message":"{\\"error\\":{\\"code\\":503,\\"status\\":\\"UNAVAILABLE\\",\\"message\\":\\"This model is currently experiencing high demand\\"}}"}}',
+      ),
+      'overloaded',
+    ],
+    [new Error('429 RESOURCE_EXHAUSTED: quota exceeded'), 'rate-limited'],
+    [new Error('API_KEY_INVALID: invalid API key'), 'authentication'],
+    [new Error('TypeError: fetch failed because of ECONNRESET'), 'network'],
+    [new Error('Unexpected provider failure'), 'unknown'],
+  ] as const)('classifies provider failures without exposing them', (error, code) => {
+    expect(classifyTwineGenerationError(error)).toBe(code);
+  });
+
+  it('emits only a safe error code for provider failures', async () => {
+    googleGenAiMocks.generateContentStream.mockRejectedValueOnce(
+      new Error(
+        '{"error":{"code":503,"status":"UNAVAILABLE","message":"This model is currently experiencing high demand"}}',
+      ),
+    );
+    const target = createEventTarget();
+
+    new TwineGenerationService().start(
+      baseRequest,
+      'test-key',
+      target.webContents,
+      'twine:generation',
+    );
+    await target.terminal;
+
+    expect(target.events.at(-1)).toEqual({
+      code: 'overloaded',
+      requestId: baseRequest.requestId,
+      type: 'error',
+    });
+    expect(JSON.stringify(target.events)).not.toContain('high demand');
+  });
+});
+
 describe('Twine research enforcement', () => {
   beforeEach(() => {
     googleGenAiMocks.generateContentStream.mockReset();
@@ -177,6 +219,11 @@ describe('Twine research enforcement', () => {
     await target.terminal;
 
     expect(googleGenAiMocks.generateContentStream).toHaveBeenCalledTimes(1);
+    expect(target.events[0]).toEqual({
+      activity: 'thinking',
+      requestId: baseRequest.requestId,
+      type: 'started',
+    });
     expect(target.events).toContainEqual({
       requestId: baseRequest.requestId,
       text: 'Resposta direta.',
@@ -254,6 +301,11 @@ describe('Twine research enforcement', () => {
     await target.terminal;
 
     expect(googleGenAiMocks.generateContentStream).toHaveBeenCalledTimes(2);
+    expect(target.events[0]).toEqual({
+      activity: 'thinking',
+      requestId: baseRequest.requestId,
+      type: 'started',
+    });
     const secondCall = googleGenAiMocks.generateContentStream.mock.calls[1]?.[0];
     expect(secondCall.config.systemInstruction).toContain(
       TWINE_CODE_RETRY_INSTRUCTION,
@@ -604,12 +656,12 @@ describe('Twine research enforcement', () => {
     expect(googleGenAiMocks.generateContentStream).toHaveBeenCalledTimes(2);
     expect(target.events).toHaveLength(2);
     expect(target.events[0]).toEqual({
+      activity: 'searching',
       requestId: baseRequest.requestId,
       type: 'started',
     });
     expect(target.events[1]).toEqual({
-      message:
-        'O Twine não conseguiu concluir pesquisa real na web. Tente novamente.',
+      code: 'tool-requirements',
       requestId: baseRequest.requestId,
       type: 'error',
     });

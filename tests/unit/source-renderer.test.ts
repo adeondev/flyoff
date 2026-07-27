@@ -54,6 +54,20 @@ describe('incremental source renderer', () => {
     expect(readSource(root)).toBe('one\nchanged\nthree');
   });
 
+  it('updates semantic heading rows during incremental reconciliation', () => {
+    const root = document.createElement('div');
+    reconcileSource(root, 'before\nplain\nafter');
+
+    reconcileSource(root, 'before\n## Heading\nafter');
+    expect(root.children[1]?.classList.contains('md-line--heading')).toBe(true);
+
+    reconcileSource(root, 'before\n###-- Divided\nafter');
+    expect(root.children[1]?.classList.contains('md-line--heading')).toBe(true);
+
+    reconcileSource(root, 'before\nplain\nafter');
+    expect(root.querySelector('.md-line--heading')).toBeNull();
+  });
+
   it('renumbers preserved suffix lines after insertion and deletion', () => {
     const root = document.createElement('div');
     reconcileSource(root, 'one\nthree');
@@ -104,9 +118,8 @@ describe('incremental source renderer', () => {
     reconcileSource(root, 'text\n```\ncodee\n```');
 
     expect(
-      root.querySelector<HTMLElement>(
-        '.md-line--code > .md-line__content',
-      )?.spellcheck,
+      root.querySelector<HTMLElement>('.md-line--code > .md-line__content')
+        ?.spellcheck,
     ).toBe(false);
 
     const enabledRoot = document.createElement('div');
@@ -166,33 +179,19 @@ describe('incremental source renderer', () => {
     const root = document.createElement('div');
     reconcileSource(root, 'before\n```\na\nlongest-code-line\n```\nafter');
 
-    const codeLines = [
-      ...root.querySelectorAll<HTMLElement>('.md-line--code'),
-    ];
+    const codeLines = [...root.querySelectorAll<HTMLElement>('.md-line--code')];
     expect(
       codeLines.map((line) =>
         line.style.getPropertyValue('--md-code-inline-size'),
       ),
-    ).toEqual(
-      Array.from(
-        { length: 4 },
-        () => 'calc(17ch + 24px)',
-      ),
-    );
+    ).toEqual(Array.from({ length: 4 }, () => 'calc(17ch + 24px)'));
 
     reconcileSource(root, 'before\n```\na\nshort\n```\nafter');
     expect(
-      [
-        ...root.querySelectorAll<HTMLElement>('.md-line--code'),
-      ].map((line) =>
+      [...root.querySelectorAll<HTMLElement>('.md-line--code')].map((line) =>
         line.style.getPropertyValue('--md-code-inline-size'),
       ),
-    ).toEqual(
-      Array.from(
-        { length: 4 },
-        () => 'calc(5ch + 24px)',
-      ),
-    );
+    ).toEqual(Array.from({ length: 4 }, () => 'calc(5ch + 24px)'));
   });
 
   it('respects the global spellcheck switch and marks the active line', () => {
@@ -211,5 +210,20 @@ describe('incremental source renderer', () => {
     updateActiveSourceLine(root, 'one\ntwo', 0);
     expect(root.children[0]?.classList.contains('md-line--active')).toBe(true);
     expect(root.children[1]?.classList.contains('md-line--active')).toBe(false);
+  });
+
+  it('does not retain a stale active line when preserved rows move', () => {
+    const root = document.createElement('div');
+    reconcileSource(root, 'one\nthree');
+    updateActiveSourceLine(root, 'one\nthree', 4);
+
+    reconcileSource(root, 'one\ntwo\nthree');
+
+    expect(root.querySelectorAll(':scope > .md-line--active')).toHaveLength(1);
+    expect(root.children[1]?.classList.contains('md-line--active')).toBe(true);
+
+    updateActiveSourceLine(root, 'one\ntwo\nthree', 0);
+    expect(root.querySelectorAll(':scope > .md-line--active')).toHaveLength(1);
+    expect(root.children[0]?.classList.contains('md-line--active')).toBe(true);
   });
 });

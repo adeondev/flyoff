@@ -1,4 +1,5 @@
 import type { SourceSelection } from './source-caret';
+import { parseImageDirectiveAt } from '../../shared/markdown';
 
 const WORD_CORE = /^[\p{L}\p{M}\p{N}_]$/u;
 const WORD_JOINER = /^['\u2019_-]$/u;
@@ -254,7 +255,154 @@ export function expandTripleClickSelection(
     end += 1;
   }
 
-  return start === end
-    ? normalized
-    : { start, end, direction: 'forward' };
+  if (start === end) {
+    return normalized;
+  }
+
+  const line = source.slice(start, end);
+  if (/^\s*::(?:image|media)\[/.test(line)) {
+    return normalized;
+  }
+  const prefix =
+    /^(?:\s{0,3}(?:#{1,6}(?:--)?|>|[-*+]|\d{1,9}[.)])\s+)(?:\[[ xX]\]\s+)?/.exec(
+      line,
+    )?.[0].length ?? 0;
+  const visible: string[] = [];
+  const offsets: number[] = [];
+  let index = prefix;
+
+  const append = (from: number, to: number): void => {
+    for (let cursor = from; cursor < to; cursor += 1) {
+      visible.push(line[cursor]!);
+      offsets.push(cursor);
+    }
+  };
+
+  while (index < line.length) {
+    if (line[index] === '`') {
+      const close = line.indexOf('`', index + 1);
+      if (probe - start >= index && (close === -1 || probe - start <= close)) {
+        return normalized;
+      }
+      index = close === -1 ? line.length : close + 1;
+      continue;
+    }
+    if (line.startsWith('::image[', index)) {
+      const parsed = parseImageDirectiveAt(line, index);
+      if (parsed) {
+        if (
+          probe - start >= parsed.start &&
+          probe - start <= parsed.end
+        ) {
+          return normalized;
+        }
+        index = parsed.end;
+        continue;
+      }
+    }
+    if (line.startsWith('[[', index)) {
+      const close = line.indexOf(']]', index + 2);
+      if (close !== -1) {
+        const inside = line.slice(index + 2, close);
+        const alias = inside.indexOf('|');
+        const labelStart = index + 2 + (alias === -1 ? 0 : alias + 1);
+        append(labelStart, close);
+        index = close + 2;
+        const attribute = /^\{color\s*=[^}]+\}/.exec(line.slice(index));
+        index += attribute?.[0].length ?? 0;
+        continue;
+      }
+    }
+    if (line[index] === '[') {
+      const labelEnd = line.indexOf(']', index + 1);
+      if (labelEnd !== -1 && line[labelEnd + 1] === '(') {
+        const destinationEnd = line.indexOf(')', labelEnd + 2);
+        if (destinationEnd !== -1) {
+          append(index + 1, labelEnd);
+          index = destinationEnd + 1;
+          const attribute = /^\{color\s*=[^}]+\}/.exec(line.slice(index));
+          index += attribute?.[0].length ?? 0;
+          continue;
+        }
+      }
+    }
+    const pair = ['**', '__', '~~', '=='].find((value) =>
+      line.startsWith(value, index),
+    );
+    if (pair) {
+      index += pair.length;
+      continue;
+    }
+    if (line[index] === '*' || line[index] === '_') {
+      index += 1;
+      continue;
+    }
+    append(index, index + 1);
+    index += 1;
+  }
+
+  if (visible.length === 0) {
+    return normalized;
+  }
+  const localProbe = Math.max(prefix, probe - start);
+  let visibleProbe = offsets.findIndex((offset) => offset >= localProbe);
+  if (visibleProbe === -1) {
+    visibleProbe = visible.length - 1;
+  }
+  const text = visible.join('');
+  const segment =
+    typeof Intl.Segmenter === 'function'
+      ? new Intl.Segmenter(undefined, { granularity: 'sentence' })
+          .segment(text)
+          .containing(visibleProbe)
+      : undefined;
+  let visibleStart = segment?.index ?? 0;
+  let visibleEnd = segment
+    ? segment.index + segment.segment.length
+    : text.length;
+  while (visibleStart < visibleEnd && /\s/.test(text[visibleStart]!)) {
+    visibleStart += 1;
+  }
+  while (visibleEnd > visibleStart && /\s/.test(text[visibleEnd - 1]!)) {
+    visibleEnd -= 1;
+  }
+  const rawStart = offsets[visibleStart];
+  const rawEndOffset = offsets[visibleEnd - 1];
+  if (rawStart === undefined || rawEndOffset === undefined) {
+    return normalized;
+  }
+  let safeStart = rawStart;
+  const safeEnd = rawEndOffset + line[rawEndOffset]!.length;
+  for (const delimiter of ['**', '__', '~~', '==']) {
+    if (
+      line.slice(0, safeStart).endsWith(delimiter) &&
+      line.indexOf(delimiter, safeStart) < safeEnd
+    ) {
+      safeStart -= delimiter.length;
+      break;
+    }
+  }
+  const wikiStart = line.lastIndexOf('[[', safeStart);
+  const wikiEnd = line.indexOf(']]', safeStart);
+  if (wikiStart >= prefix && wikiStart < safeStart && wikiEnd < safeEnd) {
+    safeStart = wikiStart;
+  } else {
+    const linkStart = line.lastIndexOf('[', safeStart);
+    const linkLabelEnd = line.indexOf('](', safeStart);
+    const linkEnd =
+      linkLabelEnd === -1 ? -1 : line.indexOf(')', linkLabelEnd + 2);
+    if (
+      linkStart >= prefix &&
+      linkStart < safeStart &&
+      linkEnd !== -1 &&
+      linkEnd < safeEnd
+    ) {
+      safeStart = linkStart;
+    }
+  }
+  return {
+    start: start + safeStart,
+    end: start + safeEnd,
+    direction: 'forward',
+  };
 }

@@ -25,6 +25,7 @@ import { getTooltipTargetProps } from '../components/tooltip';
 import type { Translate } from '../pages/page-types';
 import { formatTwineFileSize } from './TwineAttachments';
 import { TwineMarkdown } from './TwineMarkdown';
+import { TwineThinkingIndicator } from './TwineThinkingIndicator';
 import { TwineThoughtPanel } from './TwineThoughtPanel';
 import { twinePlainTextFromMarkdown } from './twine-content';
 import type {
@@ -41,6 +42,7 @@ interface TwineConversationProps {
   onDelete: (messageId: string) => void;
   onEditRequest: (messageId: string) => void;
   onRegenerate: (messageId: string) => void;
+  onRevealComplete?: (messageId: string) => void;
   onRewind: (messageId: string) => void;
   onScrollStateChange: (state: TwineConversationScrollState) => void;
   onVariantChange: (offset: -1 | 1) => void;
@@ -54,6 +56,15 @@ interface TwineConversationProps {
 
 const BOTTOM_THRESHOLD = 96;
 
+function answerKey(
+  conversationId: string | null,
+  message: TwineMessage,
+): string {
+  return `${conversationId ?? 'session'}:${message.id}:${
+    message.streamRequestId ?? 'stored'
+  }`;
+}
+
 export function TwineConversation({
   active,
   conversationId,
@@ -63,6 +74,7 @@ export function TwineConversation({
   onDelete,
   onEditRequest,
   onRegenerate,
+  onRevealComplete,
   onRewind,
   onScrollStateChange,
   onVariantChange,
@@ -82,12 +94,13 @@ export function TwineConversation({
     offset: number;
   } | undefined>(undefined);
   const previousMessageCountRef = useRef(messages.length);
-  const streamingRequestId = [...messages]
+  const streamingMessage = [...messages]
     .reverse()
     .find(
       (message) =>
         message.status === 'streaming' && Boolean(message.streamRequestId),
-    )?.streamRequestId;
+    );
+  const streamingRequestId = streamingMessage?.streamRequestId;
   const previousStreamingRequestIdRef = useRef(streamingRequestId);
   const conversationIdentityRef = useRef(conversationId);
   const restoredConversationIdRef = useRef<string | null | undefined>(
@@ -98,6 +111,9 @@ export function TwineConversation({
   const [visibleAnswerKeys, setVisibleAnswerKeys] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
+  const [animatedSourceKeys, setAnimatedSourceKeys] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
   const actionAnnouncementTimerRef = useRef<number | undefined>(undefined);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior): void => {
@@ -528,16 +544,45 @@ export function TwineConversation({
               data-twine-message-id={message.id}
               key={message.id}
             >
+              {message.kind === 'assistant' ? (
+                <header className="twine-message__identity">
+                  <img alt="" aria-hidden="true" src={twineIcon} />
+                  <span className="twine-message__identity-copy">
+                    <strong>{translate('pages.twine')}</strong>
+                    {message.status === 'streaming' &&
+                    !visibleAnswerKeys.has(
+                      answerKey(conversationId, message),
+                    ) ? (
+                      <span
+                        className="twine-message__generation"
+                        data-activity={message.activity ?? 'thinking'}
+                      >
+                        <TwineThinkingIndicator
+                          activity={message.activity ?? 'thinking'}
+                        />
+                        <span
+                          aria-hidden="true"
+                          className="twine-message__generation-status"
+                        >
+                          {message.activity === 'searching'
+                            ? translate('twine.searchingNow')
+                            : translate('twine.thinkingNow')}
+                        </span>
+                      </span>
+                    ) : null}
+                  </span>
+                </header>
+              ) : null}
               <div className="twine-message__body">
                 {message.kind === 'assistant' && message.thought ? (
                   <TwineThoughtPanel
                     answerVisible={
                       (!message.streamRequestId && message.status !== 'streaming') ||
                       visibleAnswerKeys.has(
-                        `${conversationId ?? 'session'}:${message.id}`,
+                        answerKey(conversationId, message),
                       )
                     }
-                    cacheKey={`${conversationId ?? 'session'}:${message.id}:thought`}
+                    cacheKey={`${answerKey(conversationId, message)}:thought`}
                     message={message}
                     translate={translate}
                   />
@@ -562,11 +607,12 @@ export function TwineConversation({
                 ) : null}
                 {message.text ? (
                   <TwineMarkdown
-                    cacheKey={`${conversationId ?? 'session'}:${message.id}:text`}
+                    cacheKey={`${answerKey(conversationId, message)}:text`}
+                    key={answerKey(conversationId, message)}
                     onFirstVisibleGrapheme={
                       message.kind === 'assistant'
                         ? () => {
-                            const key = `${conversationId ?? 'session'}:${message.id}`;
+                            const key = answerKey(conversationId, message);
                             setVisibleAnswerKeys((current) => {
                               if (current.has(key)) {
                                 return current;
@@ -576,13 +622,23 @@ export function TwineConversation({
                           }
                         : undefined
                     }
+                    onRevealComplete={
+                      message.kind === 'assistant' &&
+                      message.streamRequestId &&
+                      !message.answerRevealed
+                        ? () => {
+                            const key = answerKey(conversationId, message);
+                            setAnimatedSourceKeys((current) =>
+                              current.has(key)
+                                ? current
+                                : new Set([...current, key]),
+                            );
+                            onRevealComplete?.(message.id);
+                          }
+                        : undefined
+                    }
                     source={message.text}
                     streaming={message.status === 'streaming'}
-                  />
-                ) : message.status === 'streaming' ? (
-                  <span
-                    aria-label={translate('twine.generating')}
-                    className="twine-message__stream-caret"
                   />
                 ) : null}
                 {message.attachments.length > 0 ? (
@@ -605,25 +661,39 @@ export function TwineConversation({
                     ))}
                   </div>
                 ) : null}
-                {message.sources && message.sources.length > 0 ? (
-                  <div className="twine-message__sources">
-                    <strong>{translate('twine.sources')}</strong>
-                    <ol>
-                      {message.sources.map((source) => (
-                        <li key={source.url}>
-                          <button
-                            onClick={() =>
-                              void window.flyoff?.openExternalLink({
-                                url: source.url,
-                              })
-                            }
-                            type="button"
-                          >
-                            {source.title}
-                          </button>
-                        </li>
-                      ))}
-                    </ol>
+                {message.sources &&
+                message.sources.length > 0 &&
+                (message.answerRevealed ||
+                  (!message.streamRequestId &&
+                    message.status !== 'streaming') ||
+                  (!message.text && message.status !== 'streaming')) ? (
+                  <div
+                    className="twine-message__sources"
+                    data-animate={
+                      animatedSourceKeys.has(
+                        answerKey(conversationId, message),
+                      ) || undefined
+                    }
+                  >
+                    <div className="twine-message__sources-content">
+                      <strong>{translate('twine.sources')}</strong>
+                      <ol>
+                        {message.sources.map((source) => (
+                          <li key={source.url}>
+                            <button
+                              onClick={() =>
+                                void window.flyoff?.openExternalLink({
+                                  url: source.url,
+                                })
+                              }
+                              type="button"
+                            >
+                              {source.title}
+                            </button>
+                          </li>
+                        ))}
+                      </ol>
+                    </div>
                   </div>
                 ) : null}
               </div>
@@ -776,8 +846,14 @@ export function TwineConversation({
       <p aria-live="polite" className="twine-sr-status">
         {actionAnnouncement || (messages.at(-1)?.status === 'error'
           ? translate('twine.generationFailed')
-          : messages.some(({ status }) => status === 'streaming')
-            ? translate('twine.generating')
+          : streamingMessage
+            ? visibleAnswerKeys.has(
+                answerKey(conversationId, streamingMessage),
+              )
+              ? translate('twine.generating')
+              : streamingMessage.activity === 'searching'
+                ? translate('twine.searchingNow')
+                : translate('twine.thinkingNow')
             : messages.at(-1)?.kind === 'assistant'
               ? translate('twine.responseReady')
               : '')}

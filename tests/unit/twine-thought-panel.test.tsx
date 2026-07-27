@@ -78,9 +78,11 @@ describe('Twine thought panel', () => {
         translate={translate}
       />,
     );
-    const details = view.container.querySelector('details')!;
-    expect(details.open).toBe(true);
-    expect(screen.getByText('twine.thinkingNow')).toBeTruthy();
+    expect(view.container.querySelector('details')).toBeNull();
+    expect(
+      view.container.querySelector('.twine-thought--active'),
+    ).toBeTruthy();
+    expect(screen.queryByText('twine.thinkingNow')).toBeNull();
 
     view.rerender(
       <TwineThoughtPanel
@@ -90,7 +92,11 @@ describe('Twine thought panel', () => {
         translate={translate}
       />,
     );
+    const details = view.container.querySelector('details')!;
     expect(details.open).toBe(false);
+    expect(
+      details.querySelector('.twine-thought__reveal'),
+    ).toBeTruthy();
     expect(screen.getByText('twine.thoughtFor 2s')).toBeTruthy();
 
     fireEvent.click(details.querySelector('summary')!);

@@ -45,7 +45,7 @@ describe('Flyoff preferences', () => {
     expect(normalized.editor.fontSize).toBe(24);
     expect(normalized.editor.lineHeight).toBe(1.3);
     expect(normalized.spellcheck.languages).toEqual(['pt-BR']);
-    expect(normalized.version).toBe(7);
+    expect(normalized.version).toBe(8);
     expect(normalized.editor.emojiRecent).toEqual([]);
     expect(normalized.editor.emojiSkinTone).toBe(0);
     expect(normalized.appearance.accentColor).toBeNull();
@@ -80,7 +80,7 @@ describe('Flyoff preferences', () => {
 
     const migrated = normalizeFlyoffPreferences(previous);
 
-    expect(migrated.version).toBe(7);
+    expect(migrated.version).toBe(8);
     expect(migrated.editor.emojiRecent).toEqual([]);
     expect(migrated.editor.emojiSkinTone).toBe(0);
     expect(migrated.appearance.accentColor).toBeNull();
@@ -93,6 +93,39 @@ describe('Flyoff preferences', () => {
     expect(migrated.accessibility).toEqual({
       focusIndicator: 'standard',
       reduceTransparency: false,
+    });
+  });
+
+  it('normalizes bounded per-project media gallery view state', () => {
+    const projectId = '123e4567-e89b-42d3-a456-426614174000';
+    const folderId = '123e4567-e89b-42d3-a456-426614174001';
+    const normalized = normalizeFlyoffPreferences({
+      workspace: {
+        mediaGalleryProjects: {
+          invalid: { folderId },
+          [projectId]: {
+            version: 99,
+            viewMode: 'details',
+            density: 'compact',
+            searchScope: 'folder',
+            sort: 'date-newest',
+            folderId,
+            history: [null, 'invalid', folderId],
+          },
+        },
+      },
+    });
+
+    expect(normalized.workspace.mediaGalleryProjects).toEqual({
+      [projectId]: {
+        version: 1,
+        viewMode: 'details',
+        density: 'compact',
+        searchScope: 'folder',
+        sort: 'date-newest',
+        folderId,
+        history: [null, folderId],
+      },
     });
   });
 

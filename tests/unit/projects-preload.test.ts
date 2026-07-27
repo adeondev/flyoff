@@ -107,6 +107,7 @@ describe('project preload bridge', () => {
     const secondNodeId = '44444444-4444-4444-8444-444444444444';
     const nodes = [nodeId, secondNodeId].map((currentNodeId, index) => ({
       canContainChildren: true,
+      extension: '.md',
       hasChildren: false,
       kind: 'page' as const,
       name: `Note ${index + 1}`,

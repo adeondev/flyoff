@@ -24,9 +24,11 @@ import {
   createSystemTrashItem,
   registerExternalLinkHandler,
   registerMenuCommandHandler,
+  registerProjectMediaHandlers,
   applySpellcheckPreferences,
   registerPreferencesHandlers,
   registerDiagramHandlers,
+  registerProjectAppearanceHandlers,
   registerProjectNoteActivityHandlers,
   registerProjectHandlers,
   registerTabSessionHandlers,
@@ -36,6 +38,7 @@ import {
   type SelectProjectDirectory,
   type SelectDiagramExportFile,
   type SelectDiagramImportFile,
+  type SelectProjectMediaFiles,
 } from './ipc';
 import { CloseCoordinator } from './lifecycle';
 import { createApplicationMenuTemplate } from './menu';
@@ -56,6 +59,7 @@ import {
   hardenCommandLine,
   hasRemoteDebuggingSwitch,
   registerFlyoffAssetProtocol,
+  registerFlyoffMediaProtocol,
   registerFlyoffProtocol,
   registerFlyoffScheme,
 } from './security';
@@ -194,12 +198,22 @@ function createE2eDiagramExportSelector(): SelectDiagramExportFile | undefined {
   const filePath = e2eAbsolutePath('FLYOFF_E2E_DIAGRAM_EXPORT');
   return filePath ? async () => filePath : undefined;
 }
+
+function createE2eMediaImportSelector(): SelectProjectMediaFiles | undefined {
+  if (process.env.FLYOFF_E2E !== '1') {
+    return undefined;
+  }
+  const filePath = e2eAbsolutePath('FLYOFF_E2E_MEDIA_IMPORT');
+  return filePath ? async () => [filePath] : undefined;
+}
 let removeBootstrapHandler: (() => void) | undefined;
 let removeExternalLinkHandler: (() => void) | undefined;
 let removeMenuCommandHandler: (() => void) | undefined;
+let removeProjectMediaHandlers: (() => void) | undefined;
 let removePreferencesHandlers: (() => void) | undefined;
 let removeDiagramHandlers: (() => void) | undefined;
 let removeProjectNoteActivityHandlers: (() => void) | undefined;
+let removeProjectAppearanceHandlers: (() => void) | undefined;
 let removeProjectHandlers: (() => void) | undefined;
 let removeTabSessionHandlers: (() => void) | undefined;
 let removeTwineHandlers: (() => void) | undefined;
@@ -241,12 +255,16 @@ function cleanupApplication(): void {
   removeExternalLinkHandler = undefined;
   removeMenuCommandHandler?.();
   removeMenuCommandHandler = undefined;
+  removeProjectMediaHandlers?.();
+  removeProjectMediaHandlers = undefined;
   removePreferencesHandlers?.();
   removePreferencesHandlers = undefined;
   removeDiagramHandlers?.();
   removeDiagramHandlers = undefined;
   removeProjectNoteActivityHandlers?.();
   removeProjectNoteActivityHandlers = undefined;
+  removeProjectAppearanceHandlers?.();
+  removeProjectAppearanceHandlers = undefined;
   removeProjectHandlers?.();
   removeProjectHandlers = undefined;
   removeTabSessionHandlers?.();
@@ -380,6 +398,9 @@ async function startApplication(): Promise<void> {
           'svg',
         ),
   );
+  registerFlyoffMediaProtocol((projectId, assetId) =>
+    projectService!.resolveMediaProtocolAsset(projectId, assetId),
+  );
   configureSessionSecurity(session.defaultSession, usePackagedRenderer);
 
   coreClient = new NativeCoreClient({
@@ -481,6 +502,14 @@ async function startApplication(): Promise<void> {
       ? { selectDirectory: projectDirectorySelector }
       : {}),
   });
+  const mediaImportSelector = createE2eMediaImportSelector();
+  removeProjectMediaHandlers = registerProjectMediaHandlers({
+    isAllowedUrl,
+    projectService,
+    ...(mediaImportSelector
+      ? { selectMediaFiles: mediaImportSelector }
+      : {}),
+  });
   const diagramImportSelector = createE2eDiagramImportSelector();
   const diagramExportSelector = createE2eDiagramExportSelector();
   removeDiagramHandlers = registerDiagramHandlers({
@@ -490,6 +519,10 @@ async function startApplication(): Promise<void> {
     ...(diagramExportSelector ? { selectExportFile: diagramExportSelector } : {}),
   });
   removeProjectNoteActivityHandlers = registerProjectNoteActivityHandlers(
+    projectService,
+    isAllowedUrl,
+  );
+  removeProjectAppearanceHandlers = registerProjectAppearanceHandlers(
     projectService,
     isAllowedUrl,
   );

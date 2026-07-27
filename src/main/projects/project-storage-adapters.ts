@@ -127,3 +127,33 @@ registerProjectPageStorageAdapter({
   initialContent: '',
   operations: ['create', 'rename', 'move', 'trash', 'read', 'write'],
 });
+
+registerProjectPageStorageAdapter({
+  pageType: 'media:image',
+  extensions: ['.png', '.jpg', '.jpeg', '.webp', '.gif', '.avif'],
+  initialContent: '',
+  operations: ['rename', 'move', 'trash', 'read'],
+});
+
+registerProjectPageStorageAdapter({
+  pageType: 'media:video',
+  extensions: ['.mp4', '.m4v', '.webm', '.ogv'],
+  initialContent: '',
+  operations: ['rename', 'move', 'trash', 'read'],
+});
+
+registerProjectPageStorageAdapter({
+  pageType: 'media:audio',
+  extensions: [
+    '.mp3',
+    '.m4a',
+    '.aac',
+    '.wav',
+    '.ogg',
+    '.oga',
+    '.opus',
+    '.flac',
+  ],
+  initialContent: '',
+  operations: ['rename', 'move', 'trash', 'read'],
+});

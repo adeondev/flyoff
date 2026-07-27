@@ -397,5 +397,9 @@ export function toProjectTreeNode(
     name: entry.name,
     kind: 'page',
     pageType: entry.pageType,
+    extension:
+      getProjectPageStorageAdapter(entry.pageType)?.extensions.find(
+        (candidate) => entry.locator.toLocaleLowerCase().endsWith(candidate),
+      ) ?? path.posix.extname(entry.locator),
   };
 }

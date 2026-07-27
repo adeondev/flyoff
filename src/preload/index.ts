@@ -1,3 +1,4 @@
+import { webUtils } from 'electron';
 import { contextBridge, ipcRenderer, webFrame } from 'electron/renderer';
 
 import {
@@ -55,6 +56,37 @@ import {
   PROJECT_IPC_CHANNELS,
   DIAGRAM_IPC_CHANNELS,
   PROJECT_NOTE_ACTIVITY_IPC_CHANNELS,
+  PROJECT_APPEARANCE_IPC_CHANNELS,
+  PROJECT_MEDIA_IPC_CHANNELS,
+  isCreateMediaFolderRequest,
+  isCreateMediaFolderWithEntriesRequest,
+  isGetProjectMediaAssetRequest,
+  isImportProjectMediaOutcome,
+  isImportProjectMediaRequest,
+  isCancelProjectMediaImportRequest,
+  isProjectMediaImportProgress,
+  isStartProjectMediaImportOutcome,
+  isMediaGallerySnapshot,
+  isMoveMediaEntriesRequest,
+  isProjectMediaAsset,
+  isProjectMediaUsageList,
+  isRenameMediaEntryRequest,
+  isTrashMediaEntriesRequest,
+  isProjectAppearanceSnapshot,
+  isSetProjectAppearanceRequest,
+  isSetProjectNoteAppearanceRequest,
+  type SetProjectAppearanceRequest,
+  type SetProjectNoteAppearanceRequest,
+  type GetProjectMediaAssetRequest,
+  type CreateMediaFolderRequest,
+  type CreateMediaFolderWithEntriesRequest,
+  type ImportProjectMediaRequest,
+  type CancelProjectMediaImportRequest,
+  type ProjectMediaImportProgress,
+  type ListProjectMediaUsagesRequest,
+  type MoveMediaEntriesRequest,
+  type RenameMediaEntryRequest,
+  type TrashMediaEntriesRequest,
   isCreateProjectRequest,
   isGetProjectNodeRequest,
   isRestoreProjectRequest,
@@ -683,6 +715,244 @@ const flyoffApi: FlyoffApi = Object.freeze({
       );
     }
 
+    return result;
+  },
+  async getProjectAppearance() {
+    const result: unknown = await ipcRenderer.invoke(
+      PROJECT_APPEARANCE_IPC_CHANNELS.get,
+    );
+
+    if (!isProjectResult(result, isProjectAppearanceSnapshot)) {
+      throw new Error('The main process returned an invalid project appearance.');
+    }
+
+    return result;
+  },
+  async setProjectNoteAppearance(request: SetProjectNoteAppearanceRequest) {
+    if (!isSetProjectNoteAppearanceRequest(request)) {
+      throw new TypeError('Invalid project appearance request.');
+    }
+
+    const result: unknown = await ipcRenderer.invoke(
+      PROJECT_APPEARANCE_IPC_CHANNELS.setNote,
+      request,
+    );
+
+    if (!isProjectResult(result, isProjectAppearanceSnapshot)) {
+      throw new Error('The main process returned an invalid project appearance.');
+    }
+
+    return result;
+  },
+  async setProjectAppearance(request: SetProjectAppearanceRequest) {
+    if (!isSetProjectAppearanceRequest(request)) {
+      throw new TypeError('Invalid project appearance request.');
+    }
+
+    const result: unknown = await ipcRenderer.invoke(
+      PROJECT_APPEARANCE_IPC_CHANNELS.setProject,
+      request,
+    );
+
+    if (!isProjectResult(result, isProjectAppearanceSnapshot)) {
+      throw new Error('The main process returned an invalid project appearance.');
+    }
+
+    return result;
+  },
+  async selectProjectMedia(request: ImportProjectMediaRequest) {
+    if (!isImportProjectMediaRequest(request)) {
+      throw new TypeError('Invalid project media import request.');
+    }
+    const result: unknown = await ipcRenderer.invoke(
+      PROJECT_MEDIA_IPC_CHANNELS.selectImport,
+      request,
+    );
+    if (!isProjectResult(result, isImportProjectMediaOutcome)) {
+      throw new Error('The main process returned an invalid media import.');
+    }
+    return result;
+  },
+  async importDroppedProjectMedia(
+    files: readonly File[],
+    request: ImportProjectMediaRequest,
+  ) {
+    if (
+      !isImportProjectMediaRequest(request) ||
+      !Array.isArray(files) ||
+      files.length === 0 ||
+      files.length > 500
+    ) {
+      throw new TypeError('Invalid dropped project media.');
+    }
+    const paths = files.map((file) => webUtils.getPathForFile(file));
+    if (paths.some((candidate) => !candidate)) {
+      throw new TypeError('Dropped media must be local files.');
+    }
+    const result: unknown = await ipcRenderer.invoke(
+      PROJECT_MEDIA_IPC_CHANNELS.importPaths,
+      { ...request, paths },
+    );
+    if (!isProjectResult(result, isImportProjectMediaOutcome)) {
+      throw new Error('The main process returned an invalid media import.');
+    }
+    return result;
+  },
+  async startDroppedProjectMediaImport(
+    files: readonly File[],
+    request: ImportProjectMediaRequest,
+  ) {
+    if (
+      !isImportProjectMediaRequest(request) ||
+      !Array.isArray(files) ||
+      files.length === 0 ||
+      files.length > 500
+    ) {
+      throw new TypeError('Invalid dropped project media.');
+    }
+    const paths = files.map((file) => webUtils.getPathForFile(file));
+    if (paths.some((candidate) => !candidate)) {
+      throw new TypeError('Dropped media must be local files.');
+    }
+    const result: unknown = await ipcRenderer.invoke(
+      PROJECT_MEDIA_IPC_CHANNELS.startImport,
+      { ...request, paths },
+    );
+    if (!isProjectResult(result, isStartProjectMediaImportOutcome)) {
+      throw new Error('The main process returned an invalid media operation.');
+    }
+    return result;
+  },
+  async cancelProjectMediaImport(
+    request: CancelProjectMediaImportRequest,
+  ) {
+    if (!isCancelProjectMediaImportRequest(request)) {
+      throw new TypeError('Invalid media cancellation request.');
+    }
+    const result: unknown = await ipcRenderer.invoke(
+      PROJECT_MEDIA_IPC_CHANNELS.cancelImport,
+      request,
+    );
+    if (!isProjectResult(result, (value): value is null => value === null)) {
+      throw new Error('The main process returned an invalid cancellation.');
+    }
+    return result;
+  },
+  onProjectMediaImportProgress(
+    listener: (progress: ProjectMediaImportProgress) => void,
+  ) {
+    const handler = (_event: Electron.IpcRendererEvent, value: unknown) => {
+      if (isProjectMediaImportProgress(value)) {
+        listener(value);
+      }
+    };
+    ipcRenderer.on(PROJECT_MEDIA_IPC_CHANNELS.importProgress, handler);
+    return () =>
+      ipcRenderer.removeListener(
+        PROJECT_MEDIA_IPC_CHANNELS.importProgress,
+        handler,
+      );
+  },
+  async getProjectMediaAsset(request: GetProjectMediaAssetRequest) {
+    if (!isGetProjectMediaAssetRequest(request)) {
+      throw new TypeError('Invalid project media request.');
+    }
+    const result: unknown = await ipcRenderer.invoke(
+      PROJECT_MEDIA_IPC_CHANNELS.getAsset,
+      request,
+    );
+    if (!isProjectResult(result, isProjectMediaAsset)) {
+      throw new Error('The main process returned invalid project media.');
+    }
+    return result;
+  },
+  async listProjectMediaUsages(request: ListProjectMediaUsagesRequest) {
+    if (!isGetProjectMediaAssetRequest(request)) {
+      throw new TypeError('Invalid project media usage request.');
+    }
+    const result: unknown = await ipcRenderer.invoke(
+      PROJECT_MEDIA_IPC_CHANNELS.listUsages,
+      request,
+    );
+    if (!isProjectResult(result, isProjectMediaUsageList)) {
+      throw new Error('The main process returned invalid media usages.');
+    }
+    return result;
+  },
+  async getMediaGallery() {
+    const result: unknown = await ipcRenderer.invoke(
+      PROJECT_MEDIA_IPC_CHANNELS.getSnapshot,
+    );
+    if (!isProjectResult(result, isMediaGallerySnapshot)) {
+      throw new Error('The main process returned an invalid media gallery.');
+    }
+    return result;
+  },
+  async createMediaFolder(request: CreateMediaFolderRequest) {
+    if (!isCreateMediaFolderRequest(request)) {
+      throw new TypeError('Invalid media folder request.');
+    }
+    const result: unknown = await ipcRenderer.invoke(
+      PROJECT_MEDIA_IPC_CHANNELS.createFolder,
+      request,
+    );
+    if (!isProjectResult(result, isMediaGallerySnapshot)) {
+      throw new Error('The main process returned an invalid media gallery.');
+    }
+    return result;
+  },
+  async createMediaFolderWithEntries(
+    request: CreateMediaFolderWithEntriesRequest,
+  ) {
+    if (!isCreateMediaFolderWithEntriesRequest(request)) {
+      throw new TypeError('Invalid media folder with entries request.');
+    }
+    const result: unknown = await ipcRenderer.invoke(
+      PROJECT_MEDIA_IPC_CHANNELS.createFolderWithEntries,
+      request,
+    );
+    if (!isProjectResult(result, isMediaGallerySnapshot)) {
+      throw new Error('The main process returned an invalid media gallery.');
+    }
+    return result;
+  },
+  async renameMediaEntry(request: RenameMediaEntryRequest) {
+    if (!isRenameMediaEntryRequest(request)) {
+      throw new TypeError('Invalid media rename request.');
+    }
+    const result: unknown = await ipcRenderer.invoke(
+      PROJECT_MEDIA_IPC_CHANNELS.renameEntry,
+      request,
+    );
+    if (!isProjectResult(result, isMediaGallerySnapshot)) {
+      throw new Error('The main process returned an invalid media gallery.');
+    }
+    return result;
+  },
+  async moveMediaEntries(request: MoveMediaEntriesRequest) {
+    if (!isMoveMediaEntriesRequest(request)) {
+      throw new TypeError('Invalid media move request.');
+    }
+    const result: unknown = await ipcRenderer.invoke(
+      PROJECT_MEDIA_IPC_CHANNELS.moveEntries,
+      request,
+    );
+    if (!isProjectResult(result, isMediaGallerySnapshot)) {
+      throw new Error('The main process returned an invalid media gallery.');
+    }
+    return result;
+  },
+  async trashMediaEntries(request: TrashMediaEntriesRequest) {
+    if (!isTrashMediaEntriesRequest(request)) {
+      throw new TypeError('Invalid media trash request.');
+    }
+    const result: unknown = await ipcRenderer.invoke(
+      PROJECT_MEDIA_IPC_CHANNELS.trashEntries,
+      request,
+    );
+    if (!isProjectResult(result, isMediaGallerySnapshot)) {
+      throw new Error('The main process returned an invalid media gallery.');
+    }
     return result;
   },
   async listProjectChildren(request: ListProjectChildrenRequest) {

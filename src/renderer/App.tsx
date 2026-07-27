@@ -52,10 +52,16 @@ import {
   type ProjectInternalLinkResolution,
   type ProjectInternalLinkTarget,
   type ProjectLinkTarget,
+  type MediaAsset,
+  type ProjectMediaAsset,
+  type ProjectMediaUsage,
+  type ImportProjectMediaOutcome,
   type ProjectPageNode,
   type ProjectNodesMutationOutcome,
   type ProjectLocationSelection,
   type ProjectNoteActivityEntry,
+  type ProjectAppearanceSnapshot,
+  emptyProjectAppearanceSnapshot,
   type ProjectFailureDetails,
   type ProjectGraphNode,
   type ProjectGraphSnapshot,
@@ -76,6 +82,7 @@ import { SessionRestoreToast } from './components/dialog/SessionRestoreToast';
 import { ToastHost } from './components/feedback/ToastHost';
 import { useToastQueue } from './components/feedback/toast-state';
 import { MaskedIcon } from './components/MaskedIcon';
+import { accentSeedStyle } from './appearance/note-accent';
 import {
   MenuBar,
   type MenuBarItem,
@@ -107,6 +114,7 @@ import {
   type WorkspaceAction,
   type WorkspaceState,
 } from './components/tabs/workspace-state';
+import { sanitizeRestoredWorkspace } from './components/tabs/workspace-session-sanitize';
 import { initializeRendererI18n } from './i18n';
 import {
   FlyoffPreferencesProvider,
@@ -138,8 +146,12 @@ import {
   ProjectOverview,
   ProjectPagePropertiesDialog,
   ProjectSidebar,
+  MediaGalleryPanel,
+  ImageDragOverlay,
+  type MediaGalleryPanelHandle,
   getProjectPageTypeDefinition,
   type ProjectSidebarHandle,
+  type ProjectPageRuntime,
   type MarkdownLinkNavigation,
   createProjectGraphPageState,
   projectNodeDisplayName,
@@ -154,6 +166,7 @@ import {
   type EditorMode,
 } from './projects/editor-mode';
 import { DiagramController } from './projects/diagram/diagram-controller';
+import { serializeImageDirective } from '../shared/markdown';
 
 function translateCatalog(
   catalog: TranslationCatalog,
@@ -483,6 +496,8 @@ export function App() {
   const [activityNoteTargets, setActivityNoteTargets] = useState<
     ReadonlyMap<string, ProjectLinkTarget>
   >(() => new Map());
+  const [projectAppearance, setProjectAppearance] =
+    useState<ProjectAppearanceSnapshot>(emptyProjectAppearanceSnapshot);
   const [graphDocumentRevision, setGraphDocumentRevision] = useState(0);
   const { dismissToast, pushToast, toasts } = useToastQueue();
   const notifyProjectError = useCallback(
@@ -527,6 +542,7 @@ export function App() {
   const documentControllerRef = useRef(documentController);
   const diagramControllerRef = useRef(diagramController);
   const projectSidebarRef = useRef<ProjectSidebarHandle>(null);
+  const mediaSidebarRef = useRef<MediaGalleryPanelHandle>(null);
   const workspacePaneHostRef = useRef<WorkspacePaneHostHandle>(null);
   const pendingWorkspaceExitRef = useRef(
     new Map<string, Promise<boolean>>(),
@@ -537,6 +553,7 @@ export function App() {
   const closeResponsePendingIdRef = useRef<string | null>(null);
   const userInteractedRef = useRef(false);
   const restoreRequestStartedRef = useRef(false);
+  const restoreSequenceRef = useRef(0);
   const workspaceTransitionRef = useRef<Promise<void>>(Promise.resolve());
   const linkNavigationSequenceRef = useRef(0);
   const workspaceRef = useRef<HTMLDivElement>(null);
@@ -754,13 +771,17 @@ export function App() {
   }, [handleMarkdownSaveError]);
 
   const setActiveProject = useCallback(
-    (summary: ProjectSummary | null): void => {
+    (
+      summary: ProjectSummary | null,
+      appearance = emptyProjectAppearanceSnapshot(),
+    ): void => {
       projectRef.current = summary;
       setProject(summary);
       projectNodesRef.current = new Map();
       setProjectNodes(new Map());
       setProjectNoteActivity([]);
       setActivityNoteTargets(new Map());
+      setProjectAppearance(appearance);
       resetPageProperties();
       replaceDocumentController();
     },
@@ -1221,8 +1242,16 @@ export function App() {
           return false;
         }
 
+        const appearanceResult = await getApi()
+          .getProjectAppearance?.()
+          .catch(() => undefined);
         setRailViewId(RAIL_VIEW_IDS.project);
-        setActiveProject(summary);
+        setActiveProject(
+          summary,
+          appearanceResult?.ok
+            ? appearanceResult.value
+            : emptyProjectAppearanceSnapshot(),
+        );
         dispatchUserAction({
           type: 'open-project-workspace',
           projectId: summary.projectId,
@@ -1866,6 +1895,90 @@ export function App() {
     void loadProjectNoteActivity();
   }, [loadProjectNoteActivity, project]);
 
+  const loadProjectAppearance = useCallback(async (): Promise<void> => {
+    const expectedProjectId = projectRef.current?.projectId;
+    const getAppearance = getApi().getProjectAppearance;
+    if (!expectedProjectId || !getAppearance) {
+      setProjectAppearance(emptyProjectAppearanceSnapshot());
+      return;
+    }
+    const result = await getAppearance().catch(() => undefined);
+    if (projectRef.current?.projectId !== expectedProjectId) {
+      return;
+    }
+    setProjectAppearance(
+      result?.ok ? result.value : emptyProjectAppearanceSnapshot(),
+    );
+  }, []);
+
+  useEffect(() => {
+    if (!project) {
+      return;
+    }
+    void loadProjectAppearance();
+  }, [loadProjectAppearance, project]);
+
+  const setProjectNoteSeed = useCallback(
+    async (nodeId: string, seed: string | null): Promise<void> => {
+      const operation = getApi().setProjectNoteAppearance;
+      if (!operation) {
+        return;
+      }
+      const previous = projectAppearance;
+      setProjectAppearance({
+        ...previous,
+        noteSeeds: {
+          ...previous.noteSeeds,
+          ...(seed ? { [nodeId]: seed } : {}),
+        },
+      });
+      if (!seed) {
+        setProjectAppearance((current) => {
+          const noteSeeds = { ...current.noteSeeds };
+          delete noteSeeds[nodeId];
+          return { ...current, noteSeeds };
+        });
+      }
+      const result = await operation({ nodeId, seed }).catch(() => undefined);
+      if (!result) {
+        setProjectAppearance(previous);
+        notifyProjectError(translate('projects.operationFailed'));
+        return;
+      }
+      if (result.ok) {
+        setProjectAppearance(result.value);
+        return;
+      }
+      setProjectAppearance(previous);
+      notifyProjectError(result.error.message);
+    },
+    [notifyProjectError, projectAppearance, translate],
+  );
+
+  const setProjectSeed = useCallback(
+    async (seed: string | null): Promise<void> => {
+      const operation = getApi().setProjectAppearance;
+      if (!operation) {
+        return;
+      }
+      const previous = projectAppearance;
+      setProjectAppearance({ ...previous, projectSeed: seed });
+      const result = await operation({ seed }).catch(() => undefined);
+      if (!result) {
+        setProjectAppearance(previous);
+        notifyProjectError(translate('projects.operationFailed'));
+        return;
+      }
+      if (result.ok) {
+        setProjectAppearance(result.value);
+        return;
+      }
+      setProjectAppearance(previous);
+      notifyProjectError(result.error.message);
+    },
+    [notifyProjectError, projectAppearance, translate],
+  );
+
   const loadProjectGraph = useCallback(() => {
     const operation = getApi().getProjectGraph;
     return operation
@@ -2060,16 +2173,151 @@ export function App() {
     [cacheProjectNodes, openProjectNodes, setRailViewId],
   );
 
-  const projectPageRuntime = useMemo(
+  const importProjectMediaFiles = useCallback(
+    async (files: readonly File[], parentId: string | null) => {
+      const operation = getApi().importDroppedProjectMedia;
+      const result = operation
+        ? await operation(files, { parentId })
+        : unavailableProjectResult<ImportProjectMediaOutcome>(
+            translate('projects.operationFailed'),
+          );
+      if (result.ok) {
+        cacheProjectNodes(result.value.nodes);
+        await Promise.all([
+          projectSidebarRef.current?.refresh(),
+          mediaSidebarRef.current?.refresh(),
+        ]);
+      }
+      return result;
+    },
+    [cacheProjectNodes, translate],
+  );
+
+  const getProjectMediaAsset = useCallback(
+    (nodeId: string) => {
+      const operation = getApi().getProjectMediaAsset;
+      return operation
+        ? operation({ nodeId })
+        : Promise.resolve(
+            unavailableProjectResult<ProjectMediaAsset>(
+              translate('projects.operationFailed'),
+            ),
+          );
+    },
+    [translate],
+  );
+
+  const revealProjectMediaAsset = useCallback((assetId: string): void => {
+    setRailViewId(RAIL_VIEW_IDS.media);
+    requestAnimationFrame(() => {
+      void mediaSidebarRef.current?.reveal(assetId);
+    });
+  }, [setRailViewId]);
+
+  const listProjectMediaUsages = useCallback(
+    (nodeId: string) => {
+      const operation = getApi().listProjectMediaUsages;
+      return operation
+        ? operation({ nodeId })
+        : Promise.resolve(
+            unavailableProjectResult<readonly ProjectMediaUsage[]>(
+              translate('projects.operationFailed'),
+            ),
+          );
+    },
+    [translate],
+  );
+
+  const insertMediaIntoActiveNote = useCallback(
+    async (asset: MediaAsset): Promise<void> => {
+      const tabs = selectActiveTabs(workspaceStateRef.current);
+      const activeTab = tabs.tabs.find(
+        ({ tabId }) => tabId === tabs.activeTabId,
+      );
+      const target = activeTab?.target;
+      if (
+        target?.type !== 'project-content' ||
+        target.pageType !== 'markdown'
+      ) {
+        notifyProjectInfo('Abra uma nota para inserir esta mídia.');
+        return;
+      }
+      const snapshot = documentController.getSnapshot(target.nodeId);
+      if (!snapshot || snapshot.readOnly) {
+        notifyProjectInfo('A nota ativa não pode ser editada.');
+        return;
+      }
+      const naturalWidth = asset.pixelWidth ?? 640;
+      const naturalHeight = asset.pixelHeight ?? 360;
+      const width = Math.min(640, Math.max(96, naturalWidth));
+      const height = Math.max(
+        24,
+        Math.round(width * naturalHeight / naturalWidth),
+      );
+      const directive = serializeImageDirective({
+        version: 2,
+        instanceId: crypto.randomUUID(),
+        assetId: asset.assetId,
+        path: asset.relativePath,
+        alt: asset.name,
+        mode: 'wrap',
+        align: 'left',
+        width,
+        height,
+        minWidth: 96,
+        maxWidth: 1_200,
+        margin: 12,
+        ratioLock: true,
+        positionLock: false,
+        caption: '',
+      });
+      const offset = snapshot.selection.end;
+      const prefix =
+        offset > 0 && snapshot.content[offset - 1] !== '\n' ? '\n' : '';
+      const suffix =
+        offset < snapshot.content.length &&
+        snapshot.content[offset] !== '\n'
+          ? '\n'
+          : '';
+      const inserted = `${prefix}${directive}${suffix}`;
+      const content =
+        snapshot.content.slice(0, offset) +
+        inserted +
+        snapshot.content.slice(offset);
+      const caret = offset + inserted.length;
+      documentController.commitEditorTransaction(target.nodeId, {
+        before: {
+          content: snapshot.content,
+          selection: snapshot.selection,
+        },
+        after: {
+          content,
+          selection: { start: caret, end: caret, direction: 'none' },
+        },
+        inputType: 'insertImage',
+        timestamp: Date.now(),
+      });
+    },
+    [
+      documentController,
+      notifyProjectInfo,
+    ],
+  );
+
+  /* eslint-disable react-hooks/refs */
+  const projectPageRuntime: ProjectPageRuntime = useMemo(
     () => ({
+      projectId: project?.projectId ?? '',
       markdown: {
         controller: documentController,
         links: {
           listBacklinks: ({ targetNodeId }: { targetNodeId: string }) =>
             listProjectBacklinks(targetNodeId),
           listTargets: listProjectLinkTargets,
-          openTarget: openProjectLinkTarget,
-          renameTarget: renameProjectLinkTarget,
+          openTarget: (target, navigation) =>
+            openProjectLinkTarget(target, navigation),
+          renameTarget: (nodeId, name) =>
+            renameProjectLinkTarget(nodeId, name),
           resolve: resolveProjectInternalLink,
         },
         lockedNodeIds,
@@ -2078,21 +2326,34 @@ export function App() {
         readDocument: readMarkdownDocument,
         unlockDocument,
       },
+      appearance: {
+        seeds: projectAppearance.noteSeeds,
+        setNodeSeed: setProjectNoteSeed,
+      },
       diagram: {
         controller: diagramController,
         readDocument: readDiagramDocument,
         selectImport: selectDiagramImport,
         commitImport: commitDiagramImport,
         exportDocument: exportDiagram,
-        onImported: handleImportedDiagramNodes,
+        onImported: (nodes) => handleImportedDiagramNodes(nodes),
+      },
+      media: {
+        getAsset: (nodeId) => getProjectMediaAsset(nodeId),
+        importFiles: (files, parentId) =>
+          importProjectMediaFiles(files, parentId),
+        revealAsset: (assetId) => revealProjectMediaAsset(assetId),
       },
       onError: notifyProjectError,
     }),
     [
-      documentController,
-      diagramController,
       commitDiagramImport,
+      diagramController,
+      documentController,
       exportDiagram,
+      getProjectMediaAsset,
+      handleImportedDiagramNodes,
+      importProjectMediaFiles,
       linkNavigation,
       listProjectBacklinks,
       listProjectLinkTargets,
@@ -2100,15 +2361,19 @@ export function App() {
       markPasswordRequired,
       notifyProjectError,
       openProjectLinkTarget,
-      readMarkdownDocument,
+      project?.projectId,
+      projectAppearance.noteSeeds,
       readDiagramDocument,
-      selectDiagramImport,
+      readMarkdownDocument,
       renameProjectLinkTarget,
       resolveProjectInternalLink,
+      revealProjectMediaAsset,
+      selectDiagramImport,
+      setProjectNoteSeed,
       unlockDocument,
-      handleImportedDiagramNodes,
     ],
   );
+  /* eslint-enable react-hooks/refs */
 
   useEffect(() => {
     if (!project) {
@@ -2348,83 +2613,127 @@ export function App() {
       return;
     }
 
+    const sequence = ++restoreSequenceRef.current;
     restoreCandidateRef.current = null;
     setRestoreCandidate(null);
     restorePendingRef.current = true;
     setRestorePending(true);
-
-    const projectSnapshot = candidate.project;
-
-    if (!projectSnapshot) {
-      completeConsumedRestore(candidate);
-      return;
-    }
-
-    const restore = getApi().restoreProject;
-    if (!restore) {
-      notifyProjectError(translate('projects.projectUnavailable'));
-      completeConsumedRestore({ ...candidate, project: null });
-      return;
-    }
-
-    let result: Awaited<ReturnType<FlyoffApi['restoreProject']>>;
+    let resolved = candidate;
     try {
-      result = await restore({ projectId: projectSnapshot.projectId });
-    } catch {
-      notifyProjectError(translate('projects.projectUnavailable'));
-      completeConsumedRestore({ ...candidate, project: null });
-      return;
-    }
-
-    if (!result.ok) {
-      notifyProjectError(translate('projects.projectUnavailable'));
-      completeConsumedRestore({ ...candidate, project: null });
-      return;
-    }
-
-    setActiveProject(result.value);
-
-    const getNode = getApi().getProjectNode;
-    if (getNode) {
-      const pendingNodeIds = [
-        ...new Set(
-          collectPanes(projectSnapshot.root).flatMap(({ tabs }) =>
-            tabs.flatMap(({ target }) =>
-              target.type === 'project-content' ? [target.nodeId] : [],
-            ),
-          ),
-        ),
-      ];
-      const requestedNodeIds = new Set<string>();
-      const restoredNodes: ProjectTreeNode[] = [];
-
-      while (pendingNodeIds.length > 0) {
-        const batch = pendingNodeIds.splice(0).filter((nodeId) => {
-          if (requestedNodeIds.has(nodeId)) {
-            return false;
-          }
-          requestedNodeIds.add(nodeId);
-          return true;
-        });
-        const results = await Promise.all(
-          batch.map((nodeId) => getNode({ nodeId }).catch(() => undefined)),
-        );
-
-        for (const nodeResult of results) {
-          if (!nodeResult?.ok) {
-            continue;
-          }
-          restoredNodes.push(nodeResult.value);
-          if (nodeResult.value.parentId) {
-            pendingNodeIds.push(nodeResult.value.parentId);
-          }
-        }
+      const projectSnapshot = candidate.project;
+      if (!projectSnapshot) {
+        return;
+      }
+      const restore = getApi().restoreProject;
+      if (!restore) {
+        notifyProjectError(translate('projects.projectUnavailable'));
+        resolved = { ...candidate, project: null };
+        return;
+      }
+      const result = await restore({
+        projectId: projectSnapshot.projectId,
+      }).catch(() => undefined);
+      if (!result?.ok) {
+        notifyProjectError(translate('projects.projectUnavailable'));
+        resolved = { ...candidate, project: null };
+        return;
+      }
+      if (sequence !== restoreSequenceRef.current) {
+        return;
       }
 
-      cacheProjectNodes(restoredNodes);
-    }
+      const appearanceResult = await getApi()
+        .getProjectAppearance?.()
+        .catch(() => undefined);
+      setActiveProject(
+        result.value,
+        appearanceResult?.ok
+          ? appearanceResult.value
+          : emptyProjectAppearanceSnapshot(),
+      );
 
-    completeConsumedRestore(candidate);
+      const targets = [
+        ...new Map(
+          collectPanes(projectSnapshot.root)
+            .flatMap(({ tabs }) =>
+              tabs.flatMap(({ target }) =>
+                target.type === 'project-content' ? [target] : [],
+              ),
+            )
+            .map((target) => [target.nodeId, target]),
+        ).values(),
+      ];
+      const validContent = new Map<string, string>();
+      const restoredNodes: ProjectTreeNode[] = [];
+      const getNode = getApi().getProjectNode;
+      const getMediaAsset = getApi().getProjectMediaAsset;
+      await Promise.all(
+        targets.map(async (target) => {
+          if (target.pageType.startsWith('media:')) {
+            const media = await getMediaAsset?.({
+              nodeId: target.nodeId,
+            }).catch(() => undefined);
+            if (
+              media?.ok &&
+              `media:${media.value.kind}` === target.pageType
+            ) {
+              validContent.set(target.nodeId, target.pageType);
+            }
+            return;
+          }
+          const node = await getNode?.({
+            nodeId: target.nodeId,
+          }).catch(() => undefined);
+          if (
+            node?.ok &&
+            node.value.kind === 'page' &&
+            node.value.pageType === target.pageType
+          ) {
+            validContent.set(target.nodeId, target.pageType);
+            restoredNodes.push(node.value);
+          }
+        }),
+      );
+
+      if (getNode) {
+        const pendingNodeIds = restoredNodes.flatMap(({ parentId }) =>
+          parentId ? [parentId] : [],
+        );
+        const requestedNodeIds = new Set(restoredNodes.map(({ nodeId }) => nodeId));
+        while (pendingNodeIds.length > 0) {
+          const batch = pendingNodeIds.splice(0).filter((nodeId) => {
+            if (requestedNodeIds.has(nodeId)) {
+              return false;
+            }
+            requestedNodeIds.add(nodeId);
+            return true;
+          });
+          const results = await Promise.all(
+            batch.map((nodeId) =>
+              getNode({ nodeId }).catch(() => undefined),
+            ),
+          );
+          for (const nodeResult of results) {
+            if (!nodeResult?.ok) {
+              continue;
+            }
+            restoredNodes.push(nodeResult.value);
+            if (nodeResult.value.parentId) {
+              pendingNodeIds.push(nodeResult.value.parentId);
+            }
+          }
+        }
+        cacheProjectNodes(restoredNodes);
+      }
+      resolved = sanitizeRestoredWorkspace(candidate, validContent);
+    } catch {
+      resolved = { ...candidate, project: null };
+      notifyProjectError(translate('projects.projectUnavailable'));
+    } finally {
+      if (sequence === restoreSequenceRef.current) {
+        completeConsumedRestore(resolved);
+      }
+    }
   }, [
     cacheProjectNodes,
     completeConsumedRestore,
@@ -2596,11 +2905,15 @@ export function App() {
     const api = getApi();
     const removeCloseListener = api.onCloseRequested?.((request) => {
       if (restorePendingRef.current) {
-        void respondToClose({
-          requestId: request.requestId,
-          decision: 'cancel',
-        }).catch(() => undefined);
-        return;
+        restoreSequenceRef.current += 1;
+        restorePendingRef.current = false;
+        setRestorePending(false);
+        void api
+          .resolveRestorableTabSession?.(
+            'ignore',
+            serializeCurrentWorkspace(),
+          )
+          .catch(() => undefined);
       }
 
       resolveRestoreCandidate('ignore', serializeCurrentWorkspace());
@@ -3060,12 +3373,14 @@ export function App() {
         className="workspace"
         data-collapsed={layout.collapsed || undefined}
         data-context={workspaceContext}
+        data-project-accent={projectAppearance.projectSeed ? '' : undefined}
         ref={workspaceRef}
         style={
           {
             '--sidebar-width': `${layout.sidebarWidth}px`,
             '--rail-width': `${layout.railWidth}px`,
             '--md-scale': String(layout.noteFontScale),
+            ...accentSeedStyle(projectAppearance.projectSeed),
           } as CSSProperties
         }
       >
@@ -3096,6 +3411,11 @@ export function App() {
                 : undefined
             }
             activeNodePath={activeProjectNodePath}
+            appearance={{
+              snapshot: projectAppearance,
+              setNoteSeed: setProjectNoteSeed,
+              setProjectSeed,
+            }}
             hidden={layout.railViewId !== RAIL_VIEW_IDS.project}
             loadChildren={listProjectChildren}
             onBeforeNodeChange={() => flushProjectDocumentsForTreeMutation()}
@@ -3142,6 +3462,7 @@ export function App() {
             onRevealPath={revealProjectPath}
             onRenameNode={renameProjectNode}
             onSearch={searchProject}
+            onListMediaUsages={listProjectMediaUsages}
             onTrashNode={trashProjectNode}
             onTrashNodes={trashProjectNodes}
             overviewActive={
@@ -3153,6 +3474,33 @@ export function App() {
             settingsActive={
               activePageId === INTERNAL_PAGE_IDS.settings
             }
+            translate={translate}
+          />
+        ) : null}
+        {project && layout.railViewId === RAIL_VIEW_IDS.media ? (
+          <MediaGalleryPanel
+            key={`${project.projectId}:media`}
+            onAssetsRemoved={(assetIds) =>
+              void commitProjectNodeTrashed(assetIds)
+            }
+            onError={notifyProjectError}
+            onInsertAsset={(asset) => void insertMediaIntoActiveNote(asset)}
+            onOpenAsset={(asset) => {
+              const node: ProjectPageNode = {
+                canContainChildren: false,
+                extension: asset.extension,
+                hasChildren: false,
+                kind: 'page',
+                name: asset.name,
+                nodeId: asset.assetId,
+                pageType: `media:${asset.kind}`,
+                parentId: asset.folderId,
+              };
+              cacheProjectNodes([node]);
+              openProjectNode(node);
+            }}
+            projectId={project.projectId}
+            ref={mediaSidebarRef}
             translate={translate}
           />
         ) : null}
@@ -3183,7 +3531,8 @@ export function App() {
         ) : null}
         {workspaceContext === 'project' &&
         layout.railViewId !== RAIL_VIEW_IDS.project &&
-        layout.railViewId !== RAIL_VIEW_IDS.graph ? (
+        layout.railViewId !== RAIL_VIEW_IDS.graph &&
+        layout.railViewId !== RAIL_VIEW_IDS.media ? (
           <PlaceholderPanel
             hint={translate('rail.comingSoon')}
             icon={resolveRailView(layout.railViewId, graphLayoutMode).icon}
@@ -3436,6 +3785,7 @@ export function App() {
         toasts={toasts}
       />
       <TooltipHost />
+      <ImageDragOverlay />
       {closeRequest ? (
         <CloseConfirmationDialog
           intent={closeRequest.intent}

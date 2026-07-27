@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import type {
   KeyboardEvent as ReactKeyboardEvent,
   PointerEvent as ReactPointerEvent,
@@ -40,6 +40,7 @@ export function usePanelResize({
   step = 24,
   target,
 }: PanelResizeOptions): PanelResizeHandlers {
+  const cleanupRef = useRef<() => void>(() => undefined);
   const write = useCallback(
     (size: number) => {
       target.current?.style.setProperty(cssVar, `${size}px`);
@@ -54,14 +55,20 @@ export function usePanelResize({
       }
 
       event.preventDefault();
+      cleanupRef.current();
       const handle = event.currentTarget;
+      const pointerId = event.pointerId;
       const startX = event.clientX;
       const startSize = getSize();
       let latest = startSize;
       document.documentElement.classList.add(RESIZING_CLASS);
       handle.dataset.resizing = 'true';
+      handle.setPointerCapture?.(pointerId);
 
       const move = (moveEvent: PointerEvent) => {
+        if (moveEvent.pointerId !== pointerId) {
+          return;
+        }
         latest = clamp(
           startSize + (moveEvent.clientX - startX) * direction,
           min,
@@ -69,20 +76,52 @@ export function usePanelResize({
         );
         write(latest);
       };
-      const end = () => {
+      const cleanup = () => {
+        handle.removeEventListener('pointermove', move);
+        handle.removeEventListener('pointerup', end);
+        handle.removeEventListener('pointercancel', cancel);
+        handle.removeEventListener('lostpointercapture', cancel);
         window.removeEventListener('pointermove', move);
         window.removeEventListener('pointerup', end);
-        window.removeEventListener('pointercancel', end);
+        window.removeEventListener('pointercancel', cancel);
+        window.removeEventListener('blur', cancel);
         document.documentElement.classList.remove(RESIZING_CLASS);
         delete handle.dataset.resizing;
+        if (handle.hasPointerCapture?.(pointerId)) {
+          handle.releasePointerCapture?.(pointerId);
+        }
+        cleanupRef.current = () => undefined;
+      };
+      const end = (endEvent: PointerEvent) => {
+        if (endEvent.pointerId !== pointerId) {
+          return;
+        }
+        cleanup();
         onCommit(latest);
       };
+      const cancel = () => {
+        cleanup();
+        write(startSize);
+      };
 
+      handle.addEventListener('pointermove', move);
+      handle.addEventListener('pointerup', end);
+      handle.addEventListener('pointercancel', cancel);
+      handle.addEventListener('lostpointercapture', cancel);
       window.addEventListener('pointermove', move);
       window.addEventListener('pointerup', end);
-      window.addEventListener('pointercancel', end);
+      window.addEventListener('pointercancel', cancel);
+      window.addEventListener('blur', cancel);
+      cleanupRef.current = cancel;
     },
     [direction, getSize, max, min, onCommit, write],
+  );
+
+  useEffect(
+    () => () => {
+      cleanupRef.current();
+    },
+    [],
   );
 
   const onKeyDown = useCallback(

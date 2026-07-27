@@ -85,6 +85,13 @@ describe('Twine chat page', () => {
                 status: 'complete',
                 text: 'Persisted prompt',
               },
+              {
+                attachments: [],
+                id: 'message-2',
+                kind: 'assistant',
+                status: 'complete',
+                text: 'Persisted answer',
+              },
             ],
           },
         },
@@ -135,6 +142,9 @@ describe('Twine chat page', () => {
     const { onStateChange } = renderTwine();
 
     expect(await screen.findByText('Persisted prompt')).toBeTruthy();
+    expect(screen.getByText('Persisted answer')).toBeTruthy();
+    expect(screen.getByText('Twine')).toBeTruthy();
+    expect(screen.queryByText('Thinking…')).toBeNull();
     expect(loadTwineConversation).toHaveBeenCalledWith('twine-conversation-1');
     expect(onStateChange).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -332,12 +342,14 @@ describe('Twine chat page', () => {
   it('uses the Flyoff tools menu for thinking, research, files, and audio status', () => {
     const { container, onStateChange } = renderTwine();
     const tools = screen.getByRole('button', { name: 'Add and configure' });
+    const composer = container.querySelector('.twine-composer')!;
     const fileInput = container.querySelector<HTMLInputElement>('input[type="file"]');
     const clickFileInput = vi.spyOn(fileInput!, 'click');
 
     expect(
       screen.getByRole('button', { name: /Audio/ }).getAttribute('aria-disabled'),
     ).toBe('true');
+    expect(composer.getAttribute('data-thinking-level')).toBe('low');
     fireEvent.click(tools);
     fireEvent.click(screen.getByRole('menuitem', { name: 'Attach file' }));
     expect(clickFileInput).toHaveBeenCalledOnce();
@@ -359,6 +371,7 @@ describe('Twine chat page', () => {
     expect(
       screen.getByRole('button', { name: 'Thinking level: High' }),
     ).toBeTruthy();
+    expect(composer.getAttribute('data-thinking-level')).toBe('high');
 
     fireEvent.click(tools);
     fireEvent.click(
@@ -418,7 +431,7 @@ describe('Twine chat page', () => {
       },
       startTwineGeneration,
     });
-    renderTwine();
+    const firstView = renderTwine();
     await waitFor(() =>
       expect(screen.queryByRole('dialog', { name: 'Connect Gemini' })).toBeNull(),
     );
@@ -437,6 +450,61 @@ describe('Twine chat page', () => {
         thinkingLevel: 'low',
       }),
     );
+    const assistantMessage = document.querySelector<HTMLElement>(
+      '.twine-message--assistant',
+    )!;
+    expect(within(assistantMessage).getByText('Twine')).toBeTruthy();
+    expect(within(assistantMessage).getByText('Thinking…')).toBeTruthy();
+    expect(
+      assistantMessage.querySelector('.twine-message__identity img'),
+    ).toBeTruthy();
+    expect(
+      assistantMessage.querySelector('.twine-message__stream-caret'),
+    ).toBeNull();
+    expect(
+      assistantMessage.querySelector(
+        ".twine-thinking-indicator[data-activity='thinking']",
+      ),
+    ).toBeTruthy();
+    expect(
+      firstView.container
+        .querySelector('.twine-composer')
+        ?.getAttribute('data-generating'),
+    ).toBe('true');
+
+    act(() => {
+      listener?.({
+        phase: 'start',
+        requestId: request.requestId,
+        text: 'print("hello")',
+        tool: 'code',
+        type: 'tool',
+      });
+    });
+    expect(within(assistantMessage).getByText('Thinking…')).toBeTruthy();
+
+    act(() => {
+      listener?.({
+        activity: 'searching',
+        requestId: request.requestId,
+        type: 'started',
+      });
+    });
+    expect(within(assistantMessage).getByText('Searching…')).toBeTruthy();
+    expect(
+      assistantMessage.querySelector(
+        ".twine-thinking-indicator[data-activity='searching']",
+      ),
+    ).toBeTruthy();
+
+    act(() => {
+      listener?.({
+        requestId: request.requestId,
+        sources: [{ title: 'Gemini source', url: 'https://example.com/source' }],
+        type: 'sources',
+      });
+    });
+    expect(screen.queryByRole('button', { name: 'Gemini source' })).toBeNull();
 
     act(() => {
       listener?.({
@@ -452,6 +520,72 @@ describe('Twine chat page', () => {
 
     expect(screen.getByText('Oi Twine')).toBeTruthy();
     await waitFor(() => expect(screen.getByText('Olá, Gabriel.')).toBeTruthy());
+    expect(within(assistantMessage).queryByText('Searching…')).toBeNull();
+    expect(
+      assistantMessage.querySelector('.twine-thinking-indicator'),
+    ).toBeNull();
+    expect(within(assistantMessage).getByText('Twine')).toBeTruthy();
+    const source = await screen.findByRole('button', { name: 'Gemini source' });
+    expect(
+      source
+        .closest('.twine-message__sources')
+        ?.getAttribute('data-animate'),
+    ).toBe('true');
+    expect(
+      firstView.container
+        .querySelector('.twine-composer')
+        ?.hasAttribute('data-generating'),
+    ).toBe(false);
+
+    firstView.unmount();
+    const restoredView = renderTwine();
+    await screen.findByRole('button', { name: 'Gemini source' });
+    expect(
+      restoredView.container
+        .querySelector('.twine-message__sources')
+        ?.hasAttribute('data-animate'),
+    ).toBe(false);
+  });
+
+  it('shows a localized message instead of a raw provider error', async () => {
+    let listener: ((event: TwineGenerationEvent) => void) | undefined;
+    const startTwineGeneration = vi.fn().mockResolvedValue(undefined);
+    mockFlyoffApi({
+      getTwineCredentialStatus: vi.fn().mockResolvedValue({
+        encryptionAvailable: true,
+        hasApiKey: true,
+      }),
+      onTwineGenerationEvent: (nextListener) => {
+        listener = nextListener;
+        return vi.fn();
+      },
+      startTwineGeneration,
+    });
+    renderTwine();
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Connect Gemini' })).toBeNull(),
+    );
+
+    const textbox = screen.getByRole('textbox', { name: 'Message Twine' });
+    fireEvent.change(textbox, { target: { value: 'Tell me about space.' } });
+    fireEvent.keyDown(textbox, { key: 'Enter' });
+    await waitFor(() => expect(startTwineGeneration).toHaveBeenCalledOnce());
+    const request = startTwineGeneration.mock.calls[0]?.[0];
+
+    act(() => {
+      listener?.({
+        code: 'overloaded',
+        requestId: request.requestId,
+        type: 'error',
+      });
+    });
+
+    expect(
+      await screen.findByText(
+        'Gemini is temporarily overloaded. Try again in a moment.',
+      ),
+    ).toBeTruthy();
+    expect(screen.queryByText(/UNAVAILABLE|503|high demand/)).toBeNull();
   });
 
   it('switches approval mode from the composer dropdown', () => {

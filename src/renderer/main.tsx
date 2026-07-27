@@ -10,6 +10,7 @@ import { App } from './App';
 import './components/form/form.css';
 import './components/layout/layout.css';
 import './components/feedback/feedback.css';
+import './components/color/color-swatch-picker.css';
 import './components/menu/menu.css';
 import './components/tooltip/tooltip.css';
 import './components/twemoji/twemoji.css';

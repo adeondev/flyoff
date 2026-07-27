@@ -4,6 +4,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  writeFileSync,
 } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import os from 'node:os';
@@ -296,14 +297,12 @@ describe('ProjectService', () => {
         rm(absolutePath, { recursive: true, force: true }),
     });
     let finishOpen: ((value: ProjectRepository) => void) | undefined;
-    const openSpy = vi
-      .spyOn(ProjectRepository, 'open')
-      .mockImplementation(
-        () =>
-          new Promise<ProjectRepository>((resolve) => {
-            finishOpen = resolve;
-          }),
-      );
+    const openSpy = vi.spyOn(ProjectRepository, 'open').mockImplementation(
+      () =>
+        new Promise<ProjectRepository>((resolve) => {
+          finishOpen = resolve;
+        }),
+    );
 
     const opening = service.openProject(1, created.value.location);
     await vi.waitFor(() => expect(openSpy).toHaveBeenCalledOnce());
@@ -536,6 +535,7 @@ describe('ProjectService', () => {
       name: 'Protegido',
       selectionToken: selection.value.token,
     });
+
     if (!project.ok) {
       throw new Error('Expected project creation to succeed.');
     }
@@ -676,4 +676,74 @@ describe('ProjectService', () => {
     });
     expect(existsSync(maintenancePath)).toBe(false);
   }, 10_000);
+
+  it('deletes confirmed media without requiring unrelated locked notes', async () => {
+    const parent = createTemporaryDirectory();
+    const service = createService(parent);
+    const selection = await service.selectCreateLocation(1, parent);
+    if (!selection.ok) {
+      throw new Error('Expected a valid project location.');
+    }
+    const project = await service.createProject(1, {
+      name: 'Media locked note',
+      selectionToken: selection.value.token,
+    });
+    if (!project.ok) {
+      throw new Error('Expected project creation to succeed.');
+    }
+    const secret = await service.createNode(1, {
+      kind: 'page',
+      name: 'Secret',
+      pageType: 'markdown',
+      parentId: null,
+    });
+    if (!secret.ok) {
+      throw new Error('Expected a Markdown note.');
+    }
+    const document = await service.readMarkdown(1, {
+      nodeId: secret.value.nodeId,
+    });
+    if (!document.ok) {
+      throw new Error('Expected the note to be readable.');
+    }
+    const protectedNote = await service.protectPage(1, {
+      expectedRevision: document.value.revision,
+      nodeId: secret.value.nodeId,
+      password: 'test password',
+    });
+    if (!protectedNote.ok) {
+      throw new Error('Expected the note to be protected.');
+    }
+
+    const source = path.join(parent, 'Delete.png');
+    writeFileSync(
+      source,
+      Buffer.from([
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0,
+        64, 0, 0, 0, 64,
+      ]),
+    );
+    const imported = await service.importMedia(1, {
+      folderId: null,
+      parentId: null,
+      paths: [source],
+    });
+    if (!imported.ok) {
+      throw new Error('Expected media import to succeed.');
+    }
+    const assetId = imported.value.assets[0]!.nodeId;
+
+    await service.closeProject(1);
+    await service.openProject(2, project.value.location);
+
+    await expect(
+      service.trashMediaEntries(2, {
+        confirmed: true,
+        entries: [{ entryId: assetId, kind: 'asset' }],
+      }),
+    ).resolves.toMatchObject({
+      ok: true,
+      value: { assets: [] },
+    });
+  });
 });

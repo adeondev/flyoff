@@ -216,6 +216,127 @@
   color: var(--color-text);
 }
 
+.twine-message__identity {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 5px;
+}
+
+.twine-message__identity > img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+
+.twine-message__identity-copy {
+  display: grid;
+  min-width: 0;
+  align-content: center;
+  line-height: 1.2;
+}
+
+.twine-message__identity-copy > strong {
+  color: var(--color-accent-bright);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.twine-message__generation {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 5px;
+}
+
+.twine-thinking-indicator {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  overflow: visible;
+  color: var(--color-accent-bright);
+}
+
+.twine-thinking-indicator__thread {
+  fill: none;
+  stroke: currentColor;
+  stroke-dasharray: 0.3 0.7;
+  stroke-linecap: round;
+  stroke-width: 1.65;
+  animation: twine-thread-flow 1.4s linear infinite;
+}
+
+.twine-thinking-indicator__thread--second {
+  animation-delay: -700ms;
+}
+
+.twine-thinking-indicator[data-activity='searching']
+  .twine-thinking-indicator__thread {
+  animation-duration: 1.8s;
+}
+
+.twine-thinking-indicator__orbit {
+  fill: currentColor;
+  transform-box: view-box;
+  transform-origin: center;
+  animation: twine-search-orbit 1.8s linear infinite;
+}
+
+.twine-message__generation-status {
+  width: fit-content;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-weight: 550;
+}
+
+@supports ((background-clip: text) or (-webkit-background-clip: text)) {
+  .twine-message__generation-status {
+    background: linear-gradient(
+      100deg,
+      var(--color-text-muted) 15%,
+      var(--color-accent-bright) 42%,
+      var(--color-accent) 50%,
+      var(--color-accent-bright) 58%,
+      var(--color-text-muted) 85%
+    );
+    background-position: 100% 50%;
+    background-size: 240% 100%;
+    background-clip: text;
+    color: transparent;
+    -webkit-background-clip: text;
+    animation: twine-generation-status 1.4s linear infinite;
+  }
+
+  .twine-message__generation[data-activity='searching']
+    .twine-message__generation-status {
+    animation-duration: 1.8s;
+  }
+}
+
+@keyframes twine-thread-flow {
+  to {
+    stroke-dashoffset: -1;
+  }
+}
+
+@keyframes twine-search-orbit {
+  to {
+    transform: rotate(1turn);
+  }
+}
+
+@keyframes twine-generation-status {
+  from {
+    background-position: 100% 50%;
+  }
+
+  to {
+    background-position: -100% 50%;
+  }
+}
+
 .twine-message--system {
   align-self: flex-start;
   color: var(--color-text-muted);
@@ -224,6 +345,11 @@
 
 .twine-message__body {
   min-width: 0;
+}
+
+.twine-message--assistant .twine-message__body,
+.twine-message--assistant .twine-message__footer {
+  margin-left: 33px;
 }
 
 .twine-message--user .twine-message__body {
@@ -345,18 +471,31 @@
   padding: 6px 8px;
 }
 
-.twine-message__stream-caret {
-  display: block;
-  width: 7px;
-  height: 18px;
-  border-radius: 2px;
-  background: var(--color-accent);
-}
-
 .twine-thought {
   margin: 0 0 10px;
   border-left: 2px solid var(--color-border);
   color: var(--color-text-muted);
+}
+
+.twine-thought--active {
+  padding-top: 1px;
+}
+
+.twine-thought__reveal {
+  display: grid;
+  grid-template-rows: 1fr;
+}
+
+.twine-thought[open] > .twine-thought__reveal {
+  animation: twine-disclosure-open 120ms var(--ease-out);
+}
+
+.twine-thought:not([open]) > .twine-thought__reveal {
+  display: none;
+}
+
+.twine-thought__reveal > .twine-thought__content {
+  min-height: 0;
 }
 
 .twine-thought > summary {
@@ -371,6 +510,9 @@
   font-size: 12px;
   font-weight: 600;
   list-style: none;
+  transition:
+    background-color 100ms ease,
+    color 100ms ease;
 }
 
 .twine-thought > summary::-webkit-details-marker {
@@ -386,6 +528,7 @@
   width: 11px;
   height: 11px;
   transform: rotate(90deg);
+  transition: transform 100ms ease;
 }
 
 .twine-thought[open] > summary .home__icon {
@@ -400,6 +543,12 @@
 
 .twine-thought__content > .twine-markdown {
   font-size: 12px;
+}
+
+@keyframes twine-disclosure-open {
+  from {
+    grid-template-rows: 0fr;
+  }
 }
 
 .twine-message__tools {
@@ -433,12 +582,23 @@
 }
 
 .twine-message__sources {
+  display: grid;
+  grid-template-rows: 1fr;
   margin-top: 12px;
+}
+
+.twine-message__sources[data-animate='true'] {
+  animation: twine-sources-reveal 120ms var(--ease-out);
+}
+
+.twine-message__sources-content {
+  min-height: 0;
+  overflow: hidden;
   color: var(--color-text-muted);
   font-size: 12px;
 }
 
-.twine-message__sources > strong {
+.twine-message__sources-content > strong {
   color: var(--color-text);
 }
 
@@ -460,6 +620,12 @@
   text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+@keyframes twine-sources-reveal {
+  from {
+    grid-template-rows: 0fr;
+  }
 }
 
 .twine-message__actions,
@@ -510,6 +676,9 @@
   background: transparent;
   color: var(--color-text-muted);
   place-items: center;
+  transition:
+    background-color 100ms ease,
+    color 100ms ease;
 }
 
 .twine-message__actions button:hover,
@@ -635,6 +804,7 @@
 }
 
 .twine-composer__input-shell {
+  position: relative;
   display: grid;
   min-width: 0;
   min-height: 112px;
@@ -642,10 +812,78 @@
   padding: 0 8px 8px;
   border-radius: 22px;
   background: var(--color-surface);
+  isolation: isolate;
+}
+
+.twine-composer__input-shell > * {
+  position: relative;
+  z-index: 1;
+}
+
+.twine-composer__input-shell:has(textarea:focus-visible) {
+  box-shadow: inset 0 0 0 2px var(--color-focus-ring);
+}
+
+@property --twine-composer-ring-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+
+.twine-composer[data-thinking-level='high']:not([data-edit-mode])
+  .twine-composer__input-shell::before {
+  position: absolute;
+  z-index: 0;
+  padding: 1px;
+  border-radius: inherit;
+  background:
+    conic-gradient(
+      from var(--twine-composer-ring-angle),
+      transparent 0 74%,
+      var(--color-accent) 82%,
+      var(--color-accent-bright) 87%,
+      transparent 95%
+    ),
+    linear-gradient(
+      color-mix(in srgb, var(--color-accent) 38%, transparent),
+      color-mix(in srgb, var(--color-accent) 38%, transparent)
+    );
+  content: '';
+  inset: 0;
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  pointer-events: none;
+  animation: twine-composer-ring 4.2s linear infinite;
+}
+
+.twine-composer[data-thinking-level='high'][data-generating='true']
+  .twine-composer__input-shell::before {
+  animation-duration: 2.6s;
+}
+
+.twine-composer[data-drag-active]
+  .twine-composer__input-shell::before {
+  display: none;
+}
+
+.twine-composer[data-drag-active] .twine-composer__input-shell {
+  box-shadow: inset 0 0 0 1px var(--color-accent);
 }
 
 .twine-composer[data-drag-active] .twine-composer__input-shell {
   background: var(--color-surface-hover);
+}
+
+@keyframes twine-composer-ring {
+  to {
+    --twine-composer-ring-angle: 360deg;
+  }
 }
 
 .twine-composer__file-input {
@@ -1370,6 +1608,25 @@
     transition: none;
   }
 
+  .twine-message__generation-status {
+    animation: none;
+    background: none;
+    color: var(--color-accent-bright);
+    -webkit-text-fill-color: currentColor;
+  }
+
+  .twine-thinking-indicator__thread,
+  .twine-thinking-indicator__orbit,
+  .twine-thought[open] > .twine-thought__reveal,
+  .twine-message__sources[data-animate='true'],
+  .twine-composer[data-thinking-level='high']
+    .twine-composer__input-shell::before {
+    animation: none;
+  }
+
+  .twine-thinking-indicator__thread {
+    stroke-dasharray: none;
+  }
 }
 
 .twine-composer__footer--editing {

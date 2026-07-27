@@ -1,4 +1,5 @@
 import type {
+  TwineGenerationActivity,
   TwineGenerationUsage,
   TwineSource,
   TwineToolPhase,
@@ -19,6 +20,8 @@ export interface TwineMessageAttachment {
 }
 
 export interface TwineMessage {
+  activity?: TwineGenerationActivity;
+  answerRevealed?: boolean;
   attachments: readonly TwineMessageAttachment[];
   id: string;
   kind: 'assistant' | 'system' | 'user';

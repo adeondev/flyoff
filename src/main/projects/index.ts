@@ -9,3 +9,5 @@ export * from './project-note-activity-store';
 export * from './project-repository';
 export * from './project-service';
 export * from './project-storage-adapters';
+export * from './media-store';
+export * from './media-metadata';

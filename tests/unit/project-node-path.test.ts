@@ -30,6 +30,7 @@ const notes: ProjectTreeNode = {
 };
 const doll: ProjectTreeNode = {
   canContainChildren: true,
+  extension: '.md',
   hasChildren: false,
   kind: 'page',
   name: 'doll',

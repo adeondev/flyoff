@@ -4,8 +4,10 @@ import {
   isSpellcheckCapabilities,
   type SpellcheckCapabilities,
 } from './spellcheck';
+import { isProjectIdentifier } from './projects';
+import type { MediaGalleryViewState } from './media';
 
-export const PREFERENCES_VERSION = 7 as const;
+export const PREFERENCES_VERSION = 8 as const;
 export const PREFERENCES_MAX_BYTES = 64 * 1_024;
 
 export const GET_PREFERENCES_CHANNEL = 'flyoff:preferences:get' as const;
@@ -51,6 +53,18 @@ export const TAB_SIZES = [2, 4, 8] as const;
 export const AUTOSAVE_DELAYS = [0, 300, 500, 1_000, 2_000] as const;
 export const TAB_CLOSE_VISIBILITIES = ['hover', 'always'] as const;
 export const TREE_DENSITIES = ['compact', 'comfortable'] as const;
+export const MEDIA_GALLERY_VIEWS = ['grid', 'list', 'details'] as const;
+export const MEDIA_GALLERY_DENSITIES = ['compact', 'normal', 'large'] as const;
+export const MEDIA_GALLERY_SEARCH_SCOPES = ['all', 'folder'] as const;
+export const MEDIA_GALLERY_SORTS = [
+  'name-ascending',
+  'name-descending',
+  'date-newest',
+  'date-oldest',
+  'size-largest',
+  'size-smallest',
+  'type',
+] as const;
 export const PROPERTIES_DENSITIES = ['compact', 'full'] as const;
 export const ACTIVE_PANE_INDICATORS = ['off', 'subtle', 'strong'] as const;
 export const FOCUS_INDICATORS = ['standard', 'strong'] as const;
@@ -63,6 +77,8 @@ export const NOTE_FONT_SIZE_MAX = 24;
 export const NOTE_LINE_HEIGHT_MIN = 1.3;
 export const NOTE_LINE_HEIGHT_MAX = 2;
 export const PREFERENCE_LANGUAGE_LIMIT = 16;
+export const MEDIA_GALLERY_PROJECT_STATE_LIMIT = 24;
+export const MEDIA_GALLERY_HISTORY_LIMIT = 12;
 
 export type StartupBehavior = (typeof STARTUP_BEHAVIORS)[number];
 export type FlyoffTheme = (typeof FLYOFF_THEMES)[number];
@@ -83,6 +99,14 @@ export type EditorTabSize = (typeof TAB_SIZES)[number];
 export type AutosaveDelay = (typeof AUTOSAVE_DELAYS)[number];
 export type TabCloseVisibility = (typeof TAB_CLOSE_VISIBILITIES)[number];
 export type TreeDensity = (typeof TREE_DENSITIES)[number];
+export type PreferredMediaGalleryView =
+  (typeof MEDIA_GALLERY_VIEWS)[number];
+export type PreferredMediaGalleryDensity =
+  (typeof MEDIA_GALLERY_DENSITIES)[number];
+export type PreferredMediaGallerySearchScope =
+  (typeof MEDIA_GALLERY_SEARCH_SCOPES)[number];
+export type PreferredMediaGallerySort =
+  (typeof MEDIA_GALLERY_SORTS)[number];
 export type PropertiesDensity = (typeof PROPERTIES_DENSITIES)[number];
 export type ActivePaneIndicator = (typeof ACTIVE_PANE_INDICATORS)[number];
 export type FocusIndicator = (typeof FOCUS_INDICATORS)[number];
@@ -138,6 +162,11 @@ export interface FlyoffPreferences {
     treeDensity: TreeDensity;
     showSearchTips: boolean;
     showPaneDropLabels: boolean;
+    mediaGalleryView: PreferredMediaGalleryView;
+    mediaGalleryDensity: PreferredMediaGalleryDensity;
+    mediaGallerySearchScope: PreferredMediaGallerySearchScope;
+    mediaGallerySort: PreferredMediaGallerySort;
+    mediaGalleryProjects: Readonly<Record<string, MediaGalleryViewState>>;
   };
   documents: {
     showPath: boolean;
@@ -182,6 +211,62 @@ function includes<T extends string | number>(
   value: unknown,
 ): value is T {
   return values.includes(value as T);
+}
+
+function normalizeMediaGalleryFolderId(value: unknown): string | null {
+  return value === null || isProjectIdentifier(value) ? value : null;
+}
+
+function normalizeMediaGalleryProjects(
+  value: unknown,
+): Readonly<Record<string, MediaGalleryViewState>> {
+  if (!isRecord(value)) {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([projectId, state]) => {
+        return isProjectIdentifier(projectId) && isRecord(state);
+      })
+      .slice(-MEDIA_GALLERY_PROJECT_STATE_LIMIT)
+      .map(([projectId, rawState]) => {
+        const state = rawState as Record<string, unknown>;
+        const history = Array.isArray(state.history)
+          ? state.history
+              .flatMap((folderId) =>
+                folderId === null || isProjectIdentifier(folderId)
+                  ? [folderId]
+                  : [],
+              )
+              .slice(-MEDIA_GALLERY_HISTORY_LIMIT)
+          : [];
+
+        return [
+          projectId,
+          {
+            version: 1,
+            viewMode: includes(MEDIA_GALLERY_VIEWS, state.viewMode)
+              ? state.viewMode
+              : 'grid',
+            density: includes(MEDIA_GALLERY_DENSITIES, state.density)
+              ? state.density
+              : 'normal',
+            searchScope: includes(
+              MEDIA_GALLERY_SEARCH_SCOPES,
+              state.searchScope,
+            )
+              ? state.searchScope
+              : 'all',
+            sort: includes(MEDIA_GALLERY_SORTS, state.sort)
+              ? state.sort
+              : 'name-ascending',
+            folderId: normalizeMediaGalleryFolderId(state.folderId),
+            history,
+          } satisfies MediaGalleryViewState,
+        ];
+      }),
+  );
 }
 
 export function isFlyoffTheme(value: unknown): value is FlyoffTheme {
@@ -294,6 +379,11 @@ export function createDefaultFlyoffPreferences(): FlyoffPreferences {
       treeDensity: 'comfortable',
       showSearchTips: true,
       showPaneDropLabels: true,
+      mediaGalleryView: 'grid',
+      mediaGalleryDensity: 'normal',
+      mediaGallerySearchScope: 'all',
+      mediaGallerySort: 'name-ascending',
+      mediaGalleryProjects: {},
     },
     documents: {
       showPath: true,
@@ -509,6 +599,33 @@ export function normalizeFlyoffPreferences(value: unknown): FlyoffPreferences {
         typeof workspace.showPaneDropLabels === 'boolean'
           ? workspace.showPaneDropLabels
           : defaults.workspace.showPaneDropLabels,
+      mediaGalleryView: includes(
+        MEDIA_GALLERY_VIEWS,
+        workspace.mediaGalleryView,
+      )
+        ? workspace.mediaGalleryView
+        : defaults.workspace.mediaGalleryView,
+      mediaGalleryDensity: includes(
+        MEDIA_GALLERY_DENSITIES,
+        workspace.mediaGalleryDensity,
+      )
+        ? workspace.mediaGalleryDensity
+        : defaults.workspace.mediaGalleryDensity,
+      mediaGallerySearchScope: includes(
+        MEDIA_GALLERY_SEARCH_SCOPES,
+        workspace.mediaGallerySearchScope,
+      )
+        ? workspace.mediaGallerySearchScope
+        : defaults.workspace.mediaGallerySearchScope,
+      mediaGallerySort: includes(
+        MEDIA_GALLERY_SORTS,
+        workspace.mediaGallerySort,
+      )
+        ? workspace.mediaGallerySort
+        : defaults.workspace.mediaGallerySort,
+      mediaGalleryProjects: normalizeMediaGalleryProjects(
+        workspace.mediaGalleryProjects,
+      ),
     },
     documents: {
       showPath:

@@ -191,7 +191,14 @@ export function TwineChat({
   useEffect(() => {
     const api = getFlyoffApi();
     runtime.connect(api);
-    runtime.configure(translate('twine.untitledConversation'));
+    runtime.configure(translate('twine.untitledConversation'), {
+      authentication: translate('twine.generationErrorAuthentication'),
+      network: translate('twine.generationErrorNetwork'),
+      overloaded: translate('twine.generationErrorOverloaded'),
+      'rate-limited': translate('twine.generationErrorRateLimited'),
+      'tool-requirements': translate('twine.generationErrorTools'),
+      unknown: translate('twine.generationFailed'),
+    });
     void runtime.loadHistory(
       initialPageState.data.activeConversationId,
       translate('twine.untitledConversation'),
@@ -367,13 +374,14 @@ export function TwineChat({
         thinkingLevel: pageState.data.thinkingLevel,
       });
     } catch (error) {
+      const missingApiKey = String(error).toLowerCase().includes('api key');
       runtime.failGeneration(
         requestId,
-        error instanceof Error
-          ? error.message
+        missingApiKey
+          ? translate('twine.apiKeyMissing')
           : translate('twine.generationFailed'),
       );
-      if (String(error).toLowerCase().includes('api key')) {
+      if (missingApiKey) {
         setShowApiKeyDialog(true);
       }
     }
@@ -381,6 +389,8 @@ export function TwineChat({
 
   function createAssistantMessage(id: string, requestId: string): TwineMessage {
     return {
+      activity: 'thinking',
+      answerRevealed: false,
       attachments: [],
       id,
       kind: 'assistant',
@@ -673,6 +683,9 @@ export function TwineChat({
             onDelete={setDeleteMessageId}
             onEditRequest={beginEditingMessage}
             onRegenerate={regenerateMessage}
+            onRevealComplete={(messageId) =>
+              runtime.markAnswerRevealed(messageId)
+            }
             onRewind={rewindToMessage}
             onScrollStateChange={handleScrollStateChange}
             onVariantChange={(offset) => {

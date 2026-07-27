@@ -18,6 +18,10 @@ import {
   SPLIT_PREVIEW_MAX_LAG_MS,
 } from './editor-performance';
 import { renderMarkdownInto } from './markdown-render';
+import {
+  MEDIA_LIBRARY_CHANGED_EVENT,
+  removedMediaAssetIds,
+} from './media-transfer';
 
 export type MarkdownReadingUpdatePolicy = 'immediate' | 'split';
 
@@ -43,6 +47,7 @@ function cancelScheduledRender(
 export interface MarkdownReadingViewProps {
   ariaLabel: string;
   content: string;
+  projectId?: string;
   translate: Translate;
   updatePolicy?: MarkdownReadingUpdatePolicy;
   onError?: (message: string) => void;
@@ -65,6 +70,7 @@ export function MarkdownReadingView({
   onError,
   onInternalLink,
   onScrollIntent,
+  projectId,
   translate,
   updatePolicy = 'immediate',
   viewRef,
@@ -91,7 +97,7 @@ export function MarkdownReadingView({
       if (!container || renderedContentRef.current === latest) {
         return;
       }
-      renderMarkdownInto(container, latest);
+      renderMarkdownInto(container, latest, { projectId });
       renderedContentRef.current = latest;
       setPendingLink(undefined);
     };
@@ -127,13 +133,44 @@ export function MarkdownReadingView({
         SPLIT_PREVIEW_MAX_LAG_MS,
       );
     }
-  }, [containerRef, content, updatePolicy]);
+  }, [containerRef, content, projectId, updatePolicy]);
 
   useEffect(
-    () => () =>
-      cancelScheduledRender(frameRef, idleTimerRef, maxTimerRef),
+    () => () => cancelScheduledRender(frameRef, idleTimerRef, maxTimerRef),
     [],
   );
+
+  useEffect(() => {
+    const mediaChanged = (event: Event): void => {
+      const removed = removedMediaAssetIds(event);
+      const container = containerRef.current;
+      if (!container || removed.size === 0) {
+        return;
+      }
+      for (const figure of container.querySelectorAll<HTMLElement>(
+        '.markdown-image, .markdown-media',
+      )) {
+        const assetId =
+          figure.dataset.imageAssetId ?? figure.dataset.mediaNodeId ?? '';
+        if (!removed.has(assetId)) {
+          continue;
+        }
+        figure.classList.add(
+          figure.classList.contains('markdown-image')
+            ? 'markdown-image--missing'
+            : 'markdown-media--missing',
+        );
+        figure
+          .querySelector<HTMLImageElement | HTMLMediaElement>(
+            '.markdown-image__content, .markdown-media__content',
+          )
+          ?.removeAttribute('src');
+      }
+    };
+    window.addEventListener(MEDIA_LIBRARY_CHANGED_EVENT, mediaChanged);
+    return () =>
+      window.removeEventListener(MEDIA_LIBRARY_CHANGED_EVENT, mediaChanged);
+  }, [containerRef]);
 
   const closeLink = useCallback(() => setPendingLink(undefined), []);
 
@@ -204,7 +241,10 @@ export function MarkdownReadingView({
   }
 
   function handlePointerOver(event: PointerEvent<HTMLDivElement>): void {
-    if ((event.ctrlKey || event.metaKey) && requestInternalLink(event.target, 'peek')) {
+    if (
+      (event.ctrlKey || event.metaKey) &&
+      requestInternalLink(event.target, 'peek')
+    ) {
       event.preventDefault();
     }
   }
@@ -225,8 +265,7 @@ export function MarkdownReadingView({
     }
     if (
       (event.key === 'Enter' || event.key === ' ') &&
-      (requestInternalLink(event.target, 'open') ||
-        requestLink(event.target))
+      (requestInternalLink(event.target, 'open') || requestLink(event.target))
     ) {
       event.preventDefault();
     }

@@ -13,6 +13,7 @@ interface TwineMarkdownProps {
   cacheKey?: string;
   className?: string;
   onFirstVisibleGrapheme?: () => void;
+  onRevealComplete?: () => void;
   source: string;
   streaming?: boolean;
 }
@@ -70,6 +71,7 @@ export function TwineMarkdown({
   cacheKey,
   className,
   onFirstVisibleGrapheme,
+  onRevealComplete,
   source,
   streaming = false,
 }: TwineMarkdownProps) {
@@ -92,11 +94,18 @@ export function TwineMarkdown({
   const lastFrameAtRef = useRef<number | undefined>(undefined);
   const revealBudgetRef = useRef(0);
   const firstVisibleReportedRef = useRef(false);
+  const revealCompleteReportedRef = useRef(false);
   const onFirstVisibleGraphemeRef = useRef(onFirstVisibleGrapheme);
+  const onRevealCompleteRef = useRef(onRevealComplete);
 
   useLayoutEffect(() => {
     onFirstVisibleGraphemeRef.current = onFirstVisibleGrapheme;
-  }, [onFirstVisibleGrapheme]);
+    onRevealCompleteRef.current = onRevealComplete;
+  }, [onFirstVisibleGrapheme, onRevealComplete]);
+
+  useLayoutEffect(() => {
+    revealCompleteReportedRef.current = false;
+  }, [cacheKey]);
 
   useLayoutEffect(() => {
     const container = containerRef.current;
@@ -110,14 +119,29 @@ export function TwineMarkdown({
         onFirstVisibleGraphemeRef.current?.();
       }
     };
+    const reportRevealComplete = (visibleSource: string): void => {
+      if (
+        !streamingRef.current &&
+        visibleSource === targetSourceRef.current &&
+        !revealCompleteReportedRef.current
+      ) {
+        revealCompleteReportedRef.current = true;
+        onRevealCompleteRef.current?.();
+      }
+    };
     targetSourceRef.current = source;
     streamingRef.current = streaming;
+    if (frameRef.current !== undefined) {
+      cancelAnimationFrame(frameRef.current);
+      frameRef.current = undefined;
+    }
     if (lastArrivalAtRef.current < 0) {
       lastArrivalAtRef.current = performance.now();
     }
     if (displaySourceRef.current && !container.hasChildNodes()) {
       renderMarkdownInto(container, displaySourceRef.current);
       reportFirstVisibleGrapheme(displaySourceRef.current);
+      reportRevealComplete(displaySourceRef.current);
     }
 
     if (prefersReducedMotion()) {
@@ -129,6 +153,7 @@ export function TwineMarkdown({
       displaySourceRef.current = source;
       renderMarkdownInto(container, source);
       reportFirstVisibleGrapheme(source);
+      reportRevealComplete(source);
       if (cacheKey) {
         typewriterCache.delete(cacheKey);
       }
@@ -140,6 +165,7 @@ export function TwineMarkdown({
       displaySourceRef.current = source;
       renderMarkdownInto(container, source);
       reportFirstVisibleGrapheme(source);
+      reportRevealComplete(source);
       if (cacheKey) {
         typewriterCache.delete(cacheKey);
       }
@@ -160,10 +186,18 @@ export function TwineMarkdown({
 
     if (streaming) {
       typewritingRef.current = true;
+    } else if (displaySourceRef.current === source) {
+      typewritingRef.current = false;
+      reportRevealComplete(source);
+      if (cacheKey) {
+        typewriterCache.delete(cacheKey);
+      }
+      return;
     } else if (!typewritingRef.current) {
-        displaySourceRef.current = source;
-        renderMarkdownInto(container, source);
-        reportFirstVisibleGrapheme(source);
+      displaySourceRef.current = source;
+      renderMarkdownInto(container, source);
+      reportFirstVisibleGrapheme(source);
+      reportRevealComplete(source);
       if (cacheKey) {
         typewriterCache.delete(cacheKey);
       }
@@ -180,6 +214,7 @@ export function TwineMarkdown({
         displaySourceRef.current = target;
         renderMarkdownInto(container, target);
         reportFirstVisibleGrapheme(target);
+        reportRevealComplete(target);
         if (cacheKey) {
           typewriterCache.delete(cacheKey);
         }
@@ -191,6 +226,7 @@ export function TwineMarkdown({
         lastFrameAtRef.current = undefined;
         if (!streamingRef.current) {
           typewritingRef.current = false;
+          reportRevealComplete(current);
           if (cacheKey) {
             typewriterCache.delete(cacheKey);
           }
@@ -235,6 +271,7 @@ export function TwineMarkdown({
         frameRef.current = requestAnimationFrame(advance);
       } else if (!streamingRef.current) {
         typewritingRef.current = false;
+        reportRevealComplete(next);
         if (cacheKey) {
           typewriterCache.delete(cacheKey);
         }

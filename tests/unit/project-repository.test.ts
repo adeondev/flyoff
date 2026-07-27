@@ -94,6 +94,42 @@ describe('ProjectRepository', () => {
     ).toBe(true);
   });
 
+  it('imports binary media and preserves its real extension on rename', async () => {
+    const repository = await createRepository();
+    const sourceDirectory = createTemporaryDirectory();
+    const source = path.join(sourceDirectory, 'Lua.png');
+    writeFileSync(
+      source,
+      Buffer.from([
+        137, 80, 78, 71, 13, 10, 26, 10,
+        0, 0, 0, 13, 73, 72, 68, 82,
+        0, 0, 2, 128, 0, 0, 1, 104,
+      ]),
+    );
+    const imported = await repository.importMedia(null, source);
+    const renamed = await repository.renameNode(
+      imported.node.nodeId,
+      'Apollo',
+    );
+    const asset = await repository.getMediaAsset(imported.node.nodeId);
+
+    expect(imported.node).toMatchObject({
+      kind: 'page',
+      pageType: 'media:image',
+      extension: '.png',
+    });
+    expect(renamed).toMatchObject({ name: 'Apollo', extension: '.png' });
+    expect(asset).toMatchObject({
+      name: 'Apollo',
+      extension: '.png',
+      kind: 'image',
+      mimeType: 'image/png',
+    });
+    expect(
+      existsSync(path.join(repository.rootPath, 'Media', 'Apollo.png')),
+    ).toBe(true);
+  });
+
   it('uses alphabetical order until a branch is manually reordered', async () => {
     const repository = await createRepository();
     const alpha = await repository.createMarkdownPage(null, 'Alpha');
@@ -400,6 +436,7 @@ describe('ProjectRepository', () => {
     const reopened = await ProjectRepository.open(repository.rootPath);
     expect(await reopened.listChildren(null)).toContainEqual({
       canContainChildren: false,
+      extension: '.canvas',
       hasChildren: false,
       nodeId: note.nodeId,
       parentId: null,

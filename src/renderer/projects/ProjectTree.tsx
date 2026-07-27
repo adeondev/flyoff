@@ -26,6 +26,7 @@ import {
 } from '../../shared/project-search';
 import { MaskedIcon } from '../components/MaskedIcon';
 import { ContextMenu, DropdownMenu, type MenuItem } from '../components/menu';
+import { getTooltipTargetProps } from '../components/tooltip';
 import { TwemojiText } from '../components/twemoji';
 import {
   beginWorkspaceProjectNodePointerDrag,
@@ -75,6 +76,11 @@ export interface ProjectTreeProps {
   onCancelEdit: () => void;
   onOpenNode: (node: ProjectTreeNode) => void;
   onOpenNodes: (nodes: readonly ProjectPageNode[]) => void;
+  onImportFiles?: (
+    files: readonly File[],
+    parentId: string | null,
+  ) => void;
+  onRequestInsertMedia?: (node: ProjectPageNode) => void;
   onRequestAddInstance: (
     parentId: string | null,
     position: { x: number; y: number },
@@ -88,8 +94,14 @@ export interface ProjectTreeProps {
   onRequestCopySelection: (nodes: readonly ProjectTreeNode[]) => void;
   onRequestMove: (node: ProjectTreeNode) => void;
   onRequestMoveSelection: (nodes: readonly ProjectTreeNode[]) => void;
+  onRequestColor?: (
+    node: ProjectTreeNode,
+    position: { x: number; y: number },
+    restoreFocus?: HTMLElement | null,
+  ) => void;
   onRequestProperties?: (node: ProjectPageNode) => void;
   onRequestRename: (node: ProjectTreeNode) => void;
+  nodeSeeds?: Readonly<Record<string, string>>;
   onRequestTrash: (node: ProjectTreeNode) => void;
   onRequestTrashSelection: (nodes: readonly ProjectTreeNode[]) => void;
   onSelectionChange: (selection: ProjectTreeSelection) => void;
@@ -314,6 +326,8 @@ function nodeMenuItems(
   node: ProjectTreeNode,
   translate: Translate,
   propertiesAvailable: boolean,
+  colorAvailable: boolean,
+  insertMediaAvailable: boolean,
 ): readonly MenuItem[] {
   return [
     ...(node.canContainChildren
@@ -337,6 +351,23 @@ function nodeMenuItems(
       kind: 'action',
       label: translate('projects.moveTo'),
     },
+    ...(colorAvailable
+      ? ([
+          {
+            id: 'color',
+            kind: 'action',
+            label: translate('projects.nodeColor'),
+          },
+        ] satisfies MenuItem[])
+      : []),
+    ...(node.kind === 'page' && node.pageType.startsWith('media:')
+      ? ([{
+          id: 'insert-media',
+          kind: 'action',
+          label: translate('projects.insertInActiveNote'),
+          disabled: !insertMediaAvailable,
+        }] satisfies MenuItem[])
+      : []),
     { id: 'trash-separator', kind: 'separator' },
     {
       id: 'trash',
@@ -344,7 +375,7 @@ function nodeMenuItems(
       label: translate('projects.trash'),
       tone: 'danger',
     },
-    ...(node.kind === 'page' && node.pageType === 'markdown'
+    ...(node.kind === 'page'
       ? ([
           { id: 'properties-separator', kind: 'separator' },
           {
@@ -450,6 +481,7 @@ function ProjectTreeKindIcon({
 }
 
 interface InlineEditorProps {
+  extension?: string;
   kind: ProjectTreeNode['kind'];
   initialValue?: string;
   pending: boolean;
@@ -459,6 +491,7 @@ interface InlineEditorProps {
 }
 
 function InlineEditor({
+  extension,
   initialValue = '',
   kind,
   onCancel,
@@ -514,8 +547,8 @@ function InlineEditor({
         }}
         value={value}
       />
-      {kind === 'page' ? (
-        <span aria-label={translate('projects.markdownExtension')}>.md</span>
+      {kind === 'page' && extension ? (
+        <span aria-label={translate('projects.fileExtension')}>{extension}</span>
       ) : null}
     </form>
   );
@@ -528,6 +561,8 @@ export function ProjectTree({
   onCancelEdit,
   onMoveNode,
   onMoveNodes,
+  onImportFiles,
+  onRequestInsertMedia,
   onOpenNode,
   onOpenNodes,
   onRequestAddInstance,
@@ -535,9 +570,11 @@ export function ProjectTree({
   onRequestCopySelection,
   onRequestMove,
   onRequestMoveSelection,
+  onRequestColor,
   onRequestProperties,
   onRequestRename,
   onRequestTrash,
+  nodeSeeds,
   onRequestTrashSelection,
   onSelectionChange,
   onSelectionLimitReached,
@@ -568,7 +605,7 @@ export function ProjectTree({
   const displayNodeName = (node: ProjectTreeNode): string =>
     `${projectNodeDisplayName(node)}${
       preferences.documents.showFileExtensions && node.kind === 'page'
-        ? '.md'
+        ? node.extension
         : ''
     }`;
 
@@ -747,7 +784,6 @@ export function ProjectTree({
       event.altKey &&
       event.key === 'Enter' &&
       visible.node.kind === 'page' &&
-      visible.node.pageType === 'markdown' &&
       onRequestProperties
     ) {
       event.preventDefault();
@@ -922,9 +958,25 @@ export function ProjectTree({
       case 'trash':
         onRequestTrash(node);
         return;
+      case 'color': {
+        const trigger = menuRefs.current.get(node.nodeId);
+        const bounds = trigger?.getBoundingClientRect();
+        onRequestColor?.(
+          node,
+          position ??
+            (bounds ? { x: bounds.left, y: bounds.bottom + 4 } : { x: 16, y: 16 }),
+          trigger,
+        );
+        return;
+      }
       case 'properties':
-        if (node.kind === 'page' && node.pageType === 'markdown') {
+        if (node.kind === 'page') {
           onRequestProperties?.(node);
+        }
+        return;
+      case 'insert-media':
+        if (node.kind === 'page' && node.pageType.startsWith('media:')) {
+          onRequestInsertMedia?.(node);
         }
         return;
       default:
@@ -1058,15 +1110,19 @@ export function ProjectTree({
                 }
                 onDragEnd={() => finishDrag()}
                 onDragOver={(event) => {
+                  const importing =
+                    Array.from(event.dataTransfer.types ?? []).includes('Files') &&
+                    Boolean(onImportFiles);
                   if (
-                    draggedNodeIds.length === 0 ||
-                    draggedNodeIds.includes(node.nodeId)
+                    !importing &&
+                    (draggedNodeIds.length === 0 ||
+                      draggedNodeIds.includes(node.nodeId))
                   ) {
                     return;
                   }
                   event.preventDefault();
                   event.stopPropagation();
-                  event.dataTransfer.dropEffect = 'move';
+                  event.dataTransfer.dropEffect = importing ? 'copy' : 'move';
                   const bounds = event.currentTarget.getBoundingClientRect();
                   const ratio = bounds.height > 0
                     ? (event.clientY - bounds.top) / bounds.height
@@ -1151,6 +1207,16 @@ export function ProjectTree({
                   );
                 }}
                 onDrop={(event) => {
+                  if ((event.dataTransfer.files?.length ?? 0) > 0 && onImportFiles) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    onImportFiles(
+                      Array.from(event.dataTransfer.files),
+                      node.canContainChildren ? node.nodeId : parentId,
+                    );
+                    finishDrag();
+                    return;
+                  }
                   if (!dropTarget || dropTarget.nodeId !== node.nodeId) {
                     return;
                   }
@@ -1203,7 +1269,11 @@ export function ProjectTree({
                   }
                 }}
                 role="treeitem"
-                style={{ '--project-tree-depth': depth } as React.CSSProperties}
+                style={
+                  {
+                    '--project-tree-depth': depth,
+                  } as React.CSSProperties
+                }
                 tabIndex={effectiveFocusId === node.nodeId ? 0 : -1}
               >
                 {renameEdit ? (
@@ -1215,6 +1285,9 @@ export function ProjectTree({
                       pageType={node.kind === 'page' ? node.pageType : undefined}
                     />
                     <InlineEditor
+                      extension={
+                        node.kind === 'page' ? node.extension : undefined
+                      }
                       initialValue={projectNodeDisplayName(node)}
                       kind={node.kind}
                       onCancel={onCancelEdit}
@@ -1310,6 +1383,37 @@ export function ProjectTree({
                   </>
                 )}
                 {!renameEdit ? (
+                  <>
+                  {node.kind === 'page' &&
+                  node.pageType === 'markdown' &&
+                  nodeSeeds?.[node.nodeId] &&
+                  onRequestColor ? (
+                    <button
+                      aria-label={`${translate('projects.nodeColor')}: ${displayNodeName(node)}`}
+                      className="project-tree__color-trigger"
+                      onClick={(event) => {
+                        const bounds =
+                          event.currentTarget.getBoundingClientRect();
+                        onRequestColor(
+                          node,
+                          { x: bounds.left, y: bounds.bottom + 4 },
+                          event.currentTarget,
+                        );
+                      }}
+                      style={
+                        {
+                          '--note-seed': nodeSeeds[node.nodeId],
+                        } as React.CSSProperties
+                      }
+                      type="button"
+                      {...getTooltipTargetProps(
+                        translate('projects.nodeColor'),
+                        'left',
+                      )}
+                    >
+                      <span aria-hidden="true" />
+                    </button>
+                  ) : null}
                   <DropdownMenu
                     items={
                       selection.selectedIds.has(node.nodeId) &&
@@ -1322,6 +1426,10 @@ export function ProjectTree({
                             node,
                             translate,
                             Boolean(onRequestProperties),
+                            Boolean(onRequestColor) &&
+                              node.kind === 'page' &&
+                              node.pageType === 'markdown',
+                            Boolean(onRequestInsertMedia),
                           )
                     }
                     onAction={(action) => {
@@ -1357,6 +1465,7 @@ export function ProjectTree({
                       </button>
                     )}
                   />
+                  </>
                 ) : null}
               </div>
               {node.canContainChildren && node.hasChildren && expanded ? (
@@ -1370,7 +1479,9 @@ export function ProjectTree({
                   onDragOver={(event) => {
                     if (
                       event.target === event.currentTarget &&
-                      draggedNodeIds.length > 0
+                      (draggedNodeIds.length > 0 ||
+                        (Array.from(event.dataTransfer.types ?? []).includes('Files') &&
+                          Boolean(onImportFiles)))
                     ) {
                       event.preventDefault();
                       event.stopPropagation();
@@ -1378,6 +1489,20 @@ export function ProjectTree({
                     }
                   }}
                   onDrop={(event) => {
+                    if (
+                      event.target === event.currentTarget &&
+                      (event.dataTransfer.files?.length ?? 0) > 0 &&
+                      onImportFiles
+                    ) {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      onImportFiles(
+                        Array.from(event.dataTransfer.files),
+                        node.nodeId,
+                      );
+                      finishDrag();
+                      return;
+                    }
                     if (
                       event.target === event.currentTarget &&
                       draggedNodeIds.length > 0
@@ -1407,6 +1532,11 @@ export function ProjectTree({
               pageType={createEdit.pageType}
             />
             <InlineEditor
+              extension={
+                createEdit.pageType
+                  ? getProjectPageTypeDefinition(createEdit.pageType)?.extension
+                  : undefined
+              }
               kind={createEdit.kind}
               onCancel={onCancelEdit}
               onSubmit={onSubmitEdit}
@@ -1467,7 +1597,12 @@ export function ProjectTree({
       onDrop={(event) => {
         if (event.target === event.currentTarget) {
           event.preventDefault();
-          dropOn(null, null);
+          if ((event.dataTransfer.files?.length ?? 0) > 0 && onImportFiles) {
+            onImportFiles(Array.from(event.dataTransfer.files), null);
+            finishDrag();
+          } else {
+            dropOn(null, null);
+          }
         }
       }}
       onLostPointerCapture={marquee.handleLostPointerCapture}
@@ -1517,6 +1652,10 @@ export function ProjectTree({
                   contextMenu.node,
                   translate,
                   Boolean(onRequestProperties),
+                  Boolean(onRequestColor) &&
+                    contextMenu.node.kind === 'page' &&
+                    contextMenu.node.pageType === 'markdown',
+                  Boolean(onRequestInsertMedia),
                 )
           }
           onAction={(action) => {

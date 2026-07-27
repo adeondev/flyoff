@@ -41,6 +41,15 @@ export const TWINE_APPROVAL_MODES = [
 ] as const;
 export const TWINE_TOOL_TYPES = ['code', 'search'] as const;
 export const TWINE_TOOL_PHASES = ['start', 'result'] as const;
+export const TWINE_GENERATION_ACTIVITIES = ['thinking', 'searching'] as const;
+export const TWINE_GENERATION_ERROR_CODES = [
+  'authentication',
+  'network',
+  'overloaded',
+  'rate-limited',
+  'tool-requirements',
+  'unknown',
+] as const;
 export const TWINE_CONTENT_FORMATS = ['text', 'markdown'] as const;
 export const TWINE_CONVERSATION_FILTERS = [
   'active',
@@ -59,6 +68,10 @@ export type TwineIpcThinkingLevel = (typeof TWINE_THINKING_LEVELS)[number];
 export type TwineIpcApprovalMode = (typeof TWINE_APPROVAL_MODES)[number];
 export type TwineToolType = (typeof TWINE_TOOL_TYPES)[number];
 export type TwineToolPhase = (typeof TWINE_TOOL_PHASES)[number];
+export type TwineGenerationActivity =
+  (typeof TWINE_GENERATION_ACTIVITIES)[number];
+export type TwineGenerationErrorCode =
+  (typeof TWINE_GENERATION_ERROR_CODES)[number];
 export type TwineContentFormat = (typeof TWINE_CONTENT_FORMATS)[number];
 export type TwineConversationFilter =
   (typeof TWINE_CONVERSATION_FILTERS)[number];
@@ -202,6 +215,7 @@ export type TwineConversationMutationRequest =
 
 export type TwineGenerationEvent =
   | {
+      activity: TwineGenerationActivity;
       requestId: string;
       type: 'started';
     }
@@ -233,7 +247,7 @@ export type TwineGenerationEvent =
       usage?: TwineGenerationUsage;
     }
   | {
-      message: string;
+      code: TwineGenerationErrorCode;
       requestId: string;
       type: 'error';
     };
@@ -651,7 +665,10 @@ export function isTwineGenerationEvent(
 
   switch (value.type) {
     case 'started':
-      return Object.keys(value).length === 2;
+      return (
+        Object.keys(value).length === 3 &&
+        includes(TWINE_GENERATION_ACTIVITIES, value.activity)
+      );
     case 'thought-delta':
     case 'text-delta':
       return (
@@ -680,7 +697,7 @@ export function isTwineGenerationEvent(
     case 'error':
       return (
         Object.keys(value).length === 3 &&
-        isBoundedString(value.message, 20_000)
+        includes(TWINE_GENERATION_ERROR_CODES, value.code)
       );
     default:
       return false;
