@@ -2,29 +2,38 @@ import type { ImageDirective, MediaDirective } from './media';
 
 export type HeadingDepth = 1 | 2 | 3 | 4 | 5 | 6;
 
+export interface SourceRange {
+  end: number;
+  start: number;
+}
+
+export interface PositionedBlock {
+  position: SourceRange;
+}
+
 export interface Root {
   type: 'root';
   children: BlockNode[];
 }
 
-export interface Heading {
+export interface Heading extends PositionedBlock {
   type: 'heading';
   depth: HeadingDepth;
   divided: boolean;
   children: InlineNode[];
 }
 
-export interface Paragraph {
+export interface Paragraph extends PositionedBlock {
   type: 'paragraph';
   children: InlineNode[];
 }
 
-export interface Blockquote {
+export interface Blockquote extends PositionedBlock {
   type: 'blockquote';
   children: BlockNode[];
 }
 
-export interface List {
+export interface List extends PositionedBlock {
   type: 'list';
   ordered: boolean;
   start: number | null;
@@ -37,17 +46,17 @@ export interface ListItem {
   children: BlockNode[];
 }
 
-export interface Code {
+export interface Code extends PositionedBlock {
   type: 'code';
   lang: string | null;
   value: string;
 }
 
-export interface ThematicBreak {
+export interface ThematicBreak extends PositionedBlock {
   type: 'thematicBreak';
 }
 
-export interface Table {
+export interface Table extends PositionedBlock {
   type: 'table';
   alignments: Array<'center' | 'left' | 'right' | null>;
   header: InlineNode[][];
@@ -116,12 +125,12 @@ export interface Break {
   type: 'break';
 }
 
-export interface Media {
+export interface Media extends PositionedBlock {
   type: 'media';
   directive: MediaDirective;
 }
 
-export interface ImageBlock {
+export interface ImageBlock extends PositionedBlock {
   type: 'image-block';
   directive: ImageDirective;
 }

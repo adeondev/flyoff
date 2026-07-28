@@ -110,6 +110,18 @@ export interface TranslationCatalog {
     textColor: string;
     highlightColor: string;
     applyColor: string;
+    colorNoSelection: string;
+  };
+  color: {
+    alpha: string;
+    eyedropper: string;
+    format: string;
+    hue: string;
+    loupeCancel: string;
+    loupeHint: string;
+    loupeLocked: string;
+    loupeScreen: string;
+    recent: string;
   };
   home: {
     prompt: string;
@@ -340,6 +352,8 @@ export interface TranslationCatalog {
     syncSplitScrollDescription: string;
     highlightActiveLine: string;
     highlightActiveLineDescription: string;
+    hideColorMarkup: string;
+    hideColorMarkupDescription: string;
     fontLigatures: string;
     fontLigaturesDescription: string;
     showTabIcons: string;
@@ -990,6 +1004,18 @@ export const ptBR = {
     textColor: 'Texto',
     highlightColor: 'Destaque',
     applyColor: 'Aplicar cor',
+    colorNoSelection: 'Selecione um texto para continuar.',
+  },
+  color: {
+    alpha: 'Opacidade',
+    eyedropper: 'Capturar cor da tela',
+    format: 'Formato',
+    hue: 'Matiz',
+    loupeCancel: 'Esc para cancelar',
+    loupeHint: 'Clique para confirmar a cor',
+    loupeLocked: 'Cor da nota',
+    loupeScreen: 'Tela inteira',
+    recent: 'Cores recentes',
   },
   home: {
     prompt: 'O que vai fazer hoje?',
@@ -1268,6 +1294,9 @@ export const ptBR = {
     highlightActiveLine: 'Destacar linha ativa',
     highlightActiveLineDescription:
       'Marca discretamente a linha em que voc\u00ea est\u00e1 escrevendo.',
+    hideColorMarkup: 'Esconder marca\u00e7\u00e3o de cor',
+    hideColorMarkupDescription:
+      'Oculta blocos como {color=#2DE85B} no editor, revelando-os na linha em que o cursor est\u00e1.',
     fontLigatures: 'Ligaturas tipogr\u00e1ficas',
     fontLigaturesDescription:
       'Une alguns caracteres quando a fonte escolhida permitir.',
@@ -1944,6 +1973,18 @@ export const enUS = {
     textColor: 'Text',
     highlightColor: 'Highlight',
     applyColor: 'Apply colour',
+    colorNoSelection: 'Select some text to continue.',
+  },
+  color: {
+    alpha: 'Opacity',
+    eyedropper: 'Pick a colour from the screen',
+    format: 'Format',
+    hue: 'Hue',
+    loupeCancel: 'Esc to cancel',
+    loupeHint: 'Click to confirm the colour',
+    loupeLocked: 'Note colour',
+    loupeScreen: 'Whole screen',
+    recent: 'Recent colours',
   },
   home: {
     prompt: 'What would you like to do today?',
@@ -2212,6 +2253,9 @@ export const enUS = {
     highlightActiveLine: 'Highlight active line',
     highlightActiveLineDescription:
       'Subtly marks the line where you are writing.',
+    hideColorMarkup: 'Hide colour markup',
+    hideColorMarkupDescription:
+      'Hides blocks such as {color=#2DE85B} in the editor, revealing them on the line holding the caret.',
     fontLigatures: 'Font ligatures',
     fontLigaturesDescription:
       'Joins certain characters when the selected font supports it.',

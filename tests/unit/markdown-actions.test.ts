@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import {
   applyMarkdownAction,
   applyMarkdownInlineColor,
+  collectAuthoredColors,
+  inlineColorKindAt,
 } from '../../src/renderer/projects/markdown-actions';
 
 describe('markdown toolbar actions', () => {
@@ -75,5 +77,69 @@ describe('markdown toolbar actions', () => {
       '#3B82F6',
     );
     expect(highlight.value).toBe('==important=={color=#3B82F6}');
+  });
+
+  it('replaces existing colour markup instead of nesting it', () => {
+    // Whole run selected, including its delimiters.
+    expect(
+      applyMarkdownInlineColor('highlight', '==important==', 0, 13, '#F00')
+        .value,
+    ).toBe('==important=={color=#F00}');
+    expect(
+      applyMarkdownInlineColor('text', '[x]{color=#111111}', 0, 18, '#F00')
+        .value,
+    ).toBe('[x]{color=#F00}');
+
+    // Only the inner words selected, delimiters sitting outside.
+    expect(
+      applyMarkdownInlineColor('highlight', '==important==', 2, 11, '#F00')
+        .value,
+    ).toBe('==important=={color=#F00}');
+    expect(
+      applyMarkdownInlineColor('highlight', '==x=={color=#111111}', 2, 3, '#F00')
+        .value,
+    ).toBe('==x=={color=#F00}');
+  });
+
+  it('converts between text colour and highlight without leftovers', () => {
+    expect(
+      applyMarkdownInlineColor('highlight', '[x]{color=#111111}', 0, 18, '#F00')
+        .value,
+    ).toBe('==x=={color=#F00}');
+    expect(
+      applyMarkdownInlineColor('text', '==x=={color=#111111}', 0, 20, '#F00')
+        .value,
+    ).toBe('[x]{color=#F00}');
+  });
+
+  it('keeps the marked words selected and leaves neighbours alone', () => {
+    const edit = applyMarkdownInlineColor('highlight', 'a ==b== c', 2, 7, '#F00');
+
+    expect(edit.value).toBe('a ==b=={color=#F00} c');
+    expect(edit.value.slice(edit.selectionStart, edit.selectionEnd)).toBe('b');
+  });
+
+  it('reports how the selection is already marked', () => {
+    expect(inlineColorKindAt('==x=={color=#111111}', 0, 20)).toBe('highlight');
+    expect(inlineColorKindAt('==x==', 2, 3)).toBe('highlight');
+    expect(inlineColorKindAt('[x]{color=#111111}', 0, 18)).toBe('text');
+    expect(inlineColorKindAt('plain words', 0, 5)).toBeNull();
+  });
+
+  it('collects each distinct colour already written in the note', () => {
+    const source = [
+      '[a]{color=#3B82F6}',
+      '==b=={color=#2de85b}',
+      '[[note]]{color="#3B82F6"}',
+      '[c](https://a.dev){color=#FFF}',
+      'plain text and {color=red} and {colour=#123456}',
+    ].join('\n');
+
+    expect(collectAuthoredColors(source)).toEqual([
+      '#3B82F6',
+      '#2DE85B',
+      '#FFF',
+    ]);
+    expect(collectAuthoredColors('nothing here')).toEqual([]);
   });
 });

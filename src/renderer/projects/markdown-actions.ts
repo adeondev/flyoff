@@ -143,6 +143,97 @@ export function applyMarkdownAction(
     : applyDivider(value, start, end);
 }
 
+const AUTHORED_COLOR = /\{color\s*=\s*(["']?)(#[0-9a-fA-F]{3,8})\1\s*\}/g;
+
+/**
+ * Every distinct colour already written in the note, so the eyedropper can
+ * land back on the exact value instead of an anti-aliased approximation.
+ */
+export function collectAuthoredColors(source: string): readonly string[] {
+  const seen = new Set<string>();
+
+  for (const match of source.matchAll(AUTHORED_COLOR)) {
+    seen.add(match[2]!.toUpperCase());
+  }
+
+  return [...seen];
+}
+
+const COLOR_ATTRIBUTE = String.raw`\{color\s*=\s*[^}]*\}`;
+const WHOLE_HIGHLIGHT = new RegExp(
+  String.raw`^==([\s\S]*?)==(?:${COLOR_ATTRIBUTE})?$`,
+);
+const WHOLE_TEXT = new RegExp(
+  String.raw`^\[([\s\S]*?)\](?:${COLOR_ATTRIBUTE})$`,
+);
+const TRAILING_HIGHLIGHT = new RegExp(
+  String.raw`^==(?:${COLOR_ATTRIBUTE})?`,
+);
+const TRAILING_TEXT = new RegExp(String.raw`^\](?:${COLOR_ATTRIBUTE})`);
+
+interface ColoredRun {
+  end: number;
+  kind: MarkdownInlineColorKind;
+  start: number;
+  text: string;
+}
+
+/**
+ * The coloured or highlighted run the selection sits in, whether it was
+ * selected whole or only by its inner text. Without this, recolouring wraps
+ * the old markup in the new one and the note ends up with `====word====`.
+ */
+function existingColoredRun(
+  value: string,
+  start: number,
+  end: number,
+): ColoredRun | null {
+  const selected = value.slice(start, end);
+
+  const wholeHighlight = WHOLE_HIGHLIGHT.exec(selected);
+  if (wholeHighlight) {
+    return { start, end, kind: 'highlight', text: wholeHighlight[1]! };
+  }
+  const wholeText = WHOLE_TEXT.exec(selected);
+  if (wholeText) {
+    return { start, end, kind: 'text', text: wholeText[1]! };
+  }
+
+  if (start >= 2 && value.startsWith('==', start - 2)) {
+    const trailing = TRAILING_HIGHLIGHT.exec(value.slice(end));
+    if (trailing) {
+      return {
+        start: start - 2,
+        end: end + trailing[0].length,
+        kind: 'highlight',
+        text: selected,
+      };
+    }
+  }
+  if (start >= 1 && value[start - 1] === '[') {
+    const trailing = TRAILING_TEXT.exec(value.slice(end));
+    if (trailing) {
+      return {
+        start: start - 1,
+        end: end + trailing[0].length,
+        kind: 'text',
+        text: selected,
+      };
+    }
+  }
+
+  return null;
+}
+
+/** How the selection is already marked, so recolouring will not convert it. */
+export function inlineColorKindAt(
+  value: string,
+  start: number,
+  end: number,
+): MarkdownInlineColorKind | null {
+  return existingColoredRun(value, start, end)?.kind ?? null;
+}
+
 export function applyMarkdownInlineColor(
   kind: MarkdownInlineColorKind,
   value: string,
@@ -150,13 +241,16 @@ export function applyMarkdownInlineColor(
   end: number,
   color: string,
 ): MarkdownEdit {
-  const selected = value.slice(start, end) || 'texto';
+  const run = existingColoredRun(value, start, end);
+  const from = run?.start ?? start;
+  const to = run?.end ?? end;
+  const selected = run?.text || value.slice(start, end) || 'texto';
   const prefix = kind === 'text' ? '[' : '==';
   const suffix = kind === 'text' ? `]{color=${color}}` : `=={color=${color}}`;
   const inserted = `${prefix}${selected}${suffix}`;
   return {
-    value: value.slice(0, start) + inserted + value.slice(end),
-    selectionStart: start + prefix.length,
-    selectionEnd: start + prefix.length + selected.length,
+    value: value.slice(0, from) + inserted + value.slice(to),
+    selectionStart: from + prefix.length,
+    selectionEnd: from + prefix.length + selected.length,
   };
 }

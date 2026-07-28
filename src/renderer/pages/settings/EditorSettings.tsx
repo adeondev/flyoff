@@ -301,6 +301,17 @@ export function EditorSettings({
         />
       </SettingRow>
       <SettingRow
+        description={translate('settings.hideColorMarkupDescription')}
+        query={query}
+        title={translate('settings.hideColorMarkup')}
+      >
+        <SettingsToggle
+          checked={editor.hideColorMarkup}
+          label={translate('settings.hideColorMarkup')}
+          onChange={(hideColorMarkup) => update({ hideColorMarkup })}
+        />
+      </SettingRow>
+      <SettingRow
         description={translate('settings.fontLigaturesDescription')}
         query={query}
         title={translate('settings.fontLigatures')}

@@ -22,6 +22,7 @@ import { initializeMainI18n } from './i18n';
 import {
   registerBootstrapHandler,
   createSystemTrashItem,
+  registerColorSampleHandler,
   registerExternalLinkHandler,
   registerMenuCommandHandler,
   registerProjectMediaHandlers,
@@ -208,6 +209,7 @@ function createE2eMediaImportSelector(): SelectProjectMediaFiles | undefined {
 }
 let removeBootstrapHandler: (() => void) | undefined;
 let removeExternalLinkHandler: (() => void) | undefined;
+let removeColorSampleHandler: (() => void) | undefined;
 let removeMenuCommandHandler: (() => void) | undefined;
 let removeProjectMediaHandlers: (() => void) | undefined;
 let removePreferencesHandlers: (() => void) | undefined;
@@ -253,6 +255,8 @@ function cleanupApplication(): void {
   removeBootstrapHandler = undefined;
   removeExternalLinkHandler?.();
   removeExternalLinkHandler = undefined;
+  removeColorSampleHandler?.();
+  removeColorSampleHandler = undefined;
   removeMenuCommandHandler?.();
   removeMenuCommandHandler = undefined;
   removeProjectMediaHandlers?.();
@@ -453,6 +457,7 @@ async function startApplication(): Promise<void> {
     isAllowedUrl,
   );
   removeExternalLinkHandler = registerExternalLinkHandler(isAllowedUrl);
+  removeColorSampleHandler = registerColorSampleHandler(isAllowedUrl);
 
   const applicationMenu = Menu.buildFromTemplate(
     createApplicationMenuTemplate({

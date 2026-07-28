@@ -1,3 +1,4 @@
+import type { WindowPixelSnapshot } from './color-sample';
 import { isUiLocale, type UiLocale } from './locales';
 import type { ApplicationMenuCommand } from './menu';
 import type { RendererMenuCommand } from './menu';
@@ -135,6 +136,7 @@ export interface BootstrapState {
 }
 
 export interface FlyoffApi {
+  captureWindowPixels(): Promise<WindowPixelSnapshot | null>;
   getBootstrapState(): Promise<BootstrapState>;
   getWindowState(): Promise<WindowState>;
   controlWindow(action: WindowControlAction): Promise<WindowState>;

@@ -4,13 +4,14 @@ import {
   parseInline,
   parseMarkdown,
   serializeImageDirective,
+  splitMarkdownBlocks,
 } from '../../src/shared/markdown';
 
 describe('markdown block parser', () => {
   it('parses ATX headings with their depth', () => {
     const root = parseMarkdown('# Title\n\n### Sub');
 
-    expect(root.children).toEqual([
+    expect(root.children).toMatchObject([
       {
         type: 'heading',
         depth: 1,
@@ -50,7 +51,7 @@ describe('markdown block parser', () => {
   it('parses fenced code blocks with a language', () => {
     const root = parseMarkdown('```ts\nconst a = 1;\n```');
 
-    expect(root.children).toEqual([
+    expect(root.children).toMatchObject([
       { type: 'code', lang: 'ts', value: 'const a = 1;' },
     ]);
   });
@@ -83,7 +84,64 @@ describe('markdown block parser', () => {
   });
 
   it('parses thematic breaks', () => {
-    expect(parseMarkdown('---').children).toEqual([{ type: 'thematicBreak' }]);
+    expect(parseMarkdown('---').children).toMatchObject([
+      { type: 'thematicBreak' },
+    ]);
+  });
+
+  it('tracks source offsets for every top-level block', () => {
+    const source = '# One\r\n\r\nparagraph\r\nline\r\n\r\n```\r\ncode\r\n```';
+    const root = parseMarkdown(source);
+
+    expect(root.children.map(({ position }) => position)).toEqual([
+      { start: 0, end: 5 },
+      { start: 9, end: 24 },
+      { start: 28, end: source.length },
+    ]);
+    expect(
+      root.children.map(({ position }) =>
+        source.slice(position.start, position.end),
+      ),
+    ).toEqual(['# One', 'paragraph\r\nline', '```\r\ncode\r\n```']);
+  });
+
+  it('tracks offsets on nested blockquote and list blocks', () => {
+    const root = parseMarkdown('> # Quoted\n> text\n\n- item');
+    const quote = root.children[0]!;
+    const list = root.children[1]!;
+
+    expect(quote.position).toEqual({ start: 0, end: 17 });
+    expect(quote).toMatchObject({
+      type: 'blockquote',
+      children: [
+        { position: { start: 2, end: 10 }, type: 'heading' },
+        { position: { start: 13, end: 17 }, type: 'paragraph' },
+      ],
+    });
+    expect(list).toMatchObject({
+      position: { start: 19, end: 25 },
+      type: 'list',
+      children: [
+        {
+          children: [{ position: { start: 19, end: 25 }, type: 'paragraph' }],
+        },
+      ],
+    });
+  });
+
+  it('splits blocks without parsing their inline contents', () => {
+    const source =
+      'one\nline\n\n# Heading\n\n| A | B |\n| --- | --- |\n| 1 | 2 |';
+
+    expect(splitMarkdownBlocks(source)).toEqual([
+      { start: 0, end: 8, source: 'one\nline' },
+      { start: 10, end: 19, source: '# Heading' },
+      {
+        start: 21,
+        end: source.length,
+        source: '| A | B |\n| --- | --- |\n| 1 | 2 |',
+      },
+    ]);
   });
 });
 
@@ -164,6 +222,37 @@ describe('markdown inline parser', () => {
     ]);
   });
 
+  it('keeps invalid directives inside their surrounding paragraph', () => {
+    const source = '::image[invalid]\nfollowing line';
+
+    expect(splitMarkdownBlocks(source)).toEqual([
+      { start: 0, end: source.length, source },
+    ]);
+    expect(parseMarkdown(source).children).toHaveLength(1);
+  });
+
+  it.each([
+    'paragraph\nline\n\n# Heading\n\nlast',
+    '```ts\nconst value = 1;\n```\n# Heading',
+    '> # Quoted\n> paragraph\n\n- one\n- two\n\n1. ordered',
+    '| A | B |\n| --- | ---: |\n| 1 | 2 |\n\n---',
+    '::media[invalid]\nparagraph\n\n::image[invalid]\nfollowing',
+  ])('keeps scanner and full-parser boundaries equivalent', (source) => {
+    const withoutPositions = (value: unknown): unknown =>
+      JSON.parse(
+        JSON.stringify(value, (key, nested) =>
+          key === 'position' ? undefined : nested,
+        ),
+      );
+    const incremental = splitMarkdownBlocks(source).flatMap((block) =>
+      parseMarkdown(block.source).children,
+    );
+
+    expect(withoutPositions(incremental)).toEqual(
+      withoutPositions(parseMarkdown(source).children),
+    );
+  });
+
   it('parses authored colors on Markdown links and wikilinks', () => {
     expect(
       parseInline(
@@ -192,7 +281,7 @@ describe('markdown inline parser', () => {
   it('parses a validated media directive as a block', () => {
     const source =
       '::media[Lua]{v=1 id=123e4567-e89b-12d3-a456-426614174000 path="Media/lua.png" placement=block span=6 offset=2 fit=contain ratio=1.5 lock=true caption=false}';
-    expect(parseMarkdown(source).children).toEqual([
+    expect(parseMarkdown(source).children).toMatchObject([
       {
         type: 'media',
         directive: {

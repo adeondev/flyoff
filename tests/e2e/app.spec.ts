@@ -54,6 +54,7 @@ async function dispatchWorkspaceDrag(
   source: Locator,
   target: Locator,
   targetPosition?: { x: number; y: number },
+  hoverMs = 0,
 ): Promise<void> {
   const bounds = await target.boundingBox();
   if (!bounds) {
@@ -75,6 +76,9 @@ async function dispatchWorkspaceDrag(
       clientY,
       dataTransfer,
     });
+    if (hoverMs > 0) {
+      await page.waitForTimeout(hoverMs);
+    }
     await target.dispatchEvent('drop', {
       clientX,
       clientY,
@@ -1459,7 +1463,7 @@ test.describe('Flyoff desktop shell', () => {
           mediaView: 'View',
           newFolder: 'New folder',
           openProject: 'Open den',
-          projectRail: 'Den',
+          back: 'Back',
         }
       : {
           closeProject: 'Fechar toca',
@@ -1472,11 +1476,21 @@ test.describe('Flyoff desktop shell', () => {
           mediaView: 'Visualiza\u00e7\u00e3o',
           newFolder: 'Nova pasta',
           openProject: 'Abrir toca',
-          projectRail: 'Toca',
+          back: 'Voltar',
         };
 
     await page.getByRole('button', { name: labels.openProject }).click();
     const rail = page.getByRole('navigation');
+    const projectChromeColor = await page
+      .locator('.project-sidebar__header')
+      .evaluate((element) => getComputedStyle(element).backgroundColor);
+    await expect
+      .poll(() =>
+        page
+          .locator('.project-sidebar__search input')
+          .evaluate((element) => getComputedStyle(element).borderTopWidth),
+      )
+      .toBe('0px');
     await rail
       .getByRole('button', { exact: true, name: labels.media })
       .click();
@@ -1484,6 +1498,27 @@ test.describe('Flyoff desktop shell', () => {
       name: labels.mediaGallery,
     });
     await expect(gallery).toBeVisible();
+    await expect(gallery.locator('.media-gallery__grid--details')).toBeVisible();
+    await expect(
+      gallery.locator('.media-gallery__details-header'),
+    ).toHaveCount(0);
+    const controlBorders = await gallery
+      .locator(
+        [
+          '.project-sidebar__search input',
+          '.media-gallery__scope',
+          '.media-gallery__sort',
+          '.media-gallery__view',
+        ].join(', '),
+      )
+      .evaluateAll((elements) =>
+        elements.map((element) => getComputedStyle(element).borderTopWidth),
+      );
+    expect(controlBorders).toEqual(['0px', '0px', '0px', '0px']);
+    const mediaChromeColor = await gallery
+      .locator('.media-gallery__header')
+      .evaluate((element) => getComputedStyle(element).backgroundColor);
+    expect(mediaChromeColor).toBe(projectChromeColor);
     await gallery
       .getByRole('button', { name: labels.importMedia })
       .click();
@@ -1491,6 +1526,9 @@ test.describe('Flyoff desktop shell', () => {
       name: 'media-e2e.png',
     });
     await expect(asset).toBeVisible();
+    await expect(
+      gallery.locator('.media-gallery__details-header'),
+    ).toBeVisible();
 
     await gallery
       .getByRole('button', { name: labels.newFolder })
@@ -1547,7 +1585,7 @@ test.describe('Flyoff desktop shell', () => {
     expect(selectedStyle.outline).toBe('none:0px');
     expect(selectedStyle.background).not.toBe('rgba(0, 0, 0, 0)');
 
-    await dispatchWorkspaceDrag(asset, folder);
+    await dispatchWorkspaceDrag(asset, folder, undefined, 700);
     await expect(asset).toHaveCount(0);
     await folder.dblclick();
     const movedAsset = gallery.getByRole('gridcell', {
@@ -1580,10 +1618,11 @@ test.describe('Flyoff desktop shell', () => {
       .click();
     await expect(gallery.locator('.media-gallery__grid--details')).toBeVisible();
 
-    await rail
-      .getByRole('button', { exact: true, name: labels.projectRail })
-      .click();
-    await page.getByRole('button', { name: labels.closeProject }).click();
+    await gallery.getByRole('button', { name: labels.back }).click();
+    await gallery.getByRole('button', { name: labels.closeProject }).click();
+    await expect(
+      page.getByRole('button', { name: labels.openProject }),
+    ).toBeVisible();
   });
 
   test('opens and searches the virtualized offline emoji picker without blocking', async () => {

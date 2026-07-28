@@ -283,6 +283,62 @@ describe('markdown DOM renderer', () => {
       expect(container.children[2]?.textContent).toBe('three');
     });
 
+    it('updates metadata on a reused heading after an earlier heading changes', () => {
+      const container = render('# Same\n\ntext\n\n# Same');
+      const reusedHeading = container.children[2] as HTMLElement;
+      expect(reusedHeading.id).toBe('same-2');
+
+      renderMarkdownInto(container, '# Other\n\ntext\n\n# Same');
+
+      expect(container.children[2]).toBe(reusedHeading);
+      expect(reusedHeading.id).toBe('same');
+      expect(reusedHeading.dataset.markdownHeadingPath).toBe('["Same"]');
+    });
+
+    it('updates the path on a reused child heading', () => {
+      const container = render('# Parent\n\n## Child');
+      const reusedHeading = container.children[1] as HTMLElement;
+
+      renderMarkdownInto(container, '# Changed\n\n## Child');
+
+      expect(container.children[1]).toBe(reusedHeading);
+      expect(reusedHeading.dataset.markdownHeadingPath).toBe(
+        '["Changed","Child"]',
+      );
+    });
+
+    it('rebuilds asset URLs when the project context changes', () => {
+      const source =
+        '::image[Lua]{v=2 instance=223e4567-e89b-42d3-a456-426614174001 asset=123e4567-e89b-42d3-a456-426614174000 path="Media/Lua.png" mode=block align=left width=320 height=180 min=96 max=1200 margin=12 ratioLock=true positionLock=false caption=""}';
+      const container = document.createElement('div');
+      renderMarkdownInto(container, source, {
+        projectId: '323e4567-e89b-42d3-a456-426614174001',
+      });
+      const first = container.firstElementChild;
+
+      renderMarkdownInto(container, source, {
+        projectId: '323e4567-e89b-42d3-a456-426614174002',
+      });
+
+      expect(container.firstElementChild).not.toBe(first);
+      expect(container.querySelector('img')?.src).toContain(
+        'flyoff-media://asset/323e4567-e89b-42d3-a456-426614174002/',
+      );
+    });
+
+    it('invalidates merged paragraphs when a blank boundary is removed', () => {
+      const container = render('one\n\ntwo\n\nthree');
+      const before = [...container.children];
+
+      renderMarkdownInto(container, 'one\ntwo\n\nthree');
+
+      expect(container.children).toHaveLength(2);
+      expect(container.children[0]).not.toBe(before[0]);
+      expect(container.children[1]).toBe(before[2]);
+      expect(container.children[0]?.textContent).toBe('onetwo');
+      expect(container.children[0]?.querySelector('br')).not.toBeNull();
+    });
+
     it('drops removed trailing blocks', () => {
       const container = render('one\n\ntwo\n\nthree');
       const [first] = [...container.children];
@@ -307,8 +363,8 @@ describe('markdown DOM renderer', () => {
     it('leaves a text-only document containable', () => {
       const container = render('one\n\ntwo');
 
-      expect(container.hasAttribute('data-floating-media')).toBe(false);
       expect(container.querySelector('.markdown-block--media')).toBeNull();
+      expect(container.querySelector('.markdown-block--float-context')).toBeNull();
     });
 
     it('marks blocks holding media so their height is never guessed', () => {
@@ -337,6 +393,76 @@ describe('markdown DOM renderer', () => {
       expect(
         container.querySelector('img')?.closest('.markdown-block--media'),
       ).not.toBeNull();
+    });
+
+    it('excludes only blocks participating in a wrapped image float', () => {
+      const directive = serializeImageDirective({
+        align: 'left',
+        alt: 'Lua',
+        assetId: '123e4567-e89b-42d3-a456-426614174000',
+        caption: '',
+        height: 90,
+        instanceId: '223e4567-e89b-42d3-a456-426614174001',
+        margin: 8,
+        maxWidth: 1200,
+        minWidth: 96,
+        mode: 'wrap',
+        path: 'Media/Lua.png',
+        positionLock: false,
+        ratioLock: true,
+        version: 2,
+        width: 160,
+      });
+      const container = render(
+        `one\n\n${directive}\n\ntwo\n\n# Clear\n\nthree`,
+      );
+
+      expect(
+        [...container.children].map((block) =>
+          block.classList.contains('markdown-block--float-context'),
+        ),
+      ).toEqual([false, true, true, false, false]);
+    });
+
+    it('keeps the heading immediately after a wrapped image in its context', () => {
+      const directive = serializeImageDirective({
+        align: 'left',
+        alt: 'Lua',
+        assetId: '123e4567-e89b-42d3-a456-426614174000',
+        caption: '',
+        height: 90,
+        instanceId: '223e4567-e89b-42d3-a456-426614174001',
+        margin: 8,
+        maxWidth: 1200,
+        minWidth: 96,
+        mode: 'wrap',
+        path: 'Media/Lua.png',
+        positionLock: false,
+        ratioLock: true,
+        version: 2,
+        width: 160,
+      });
+      const container = render(
+        `${directive}\n\n# Beside image\n\ntext\n\n# Clear\n\nend`,
+      );
+
+      expect(
+        [...container.children].map((block) =>
+          block.classList.contains('markdown-block--float-context'),
+        ),
+      ).toEqual([true, true, true, false, false]);
+    });
+
+    it('lets a heading clear wrapped media directives', () => {
+      const container = render(
+        '::media[Lua]{v=1 id=123e4567-e89b-12d3-a456-426614174000 path="Media/lua.png" placement=wrap-left span=6 offset=1 fit=cover ratio=1.5 lock=true caption=true}\n\n# Clear\n\nafter',
+      );
+
+      expect(
+        [...container.children].map((block) =>
+          block.classList.contains('markdown-block--float-context'),
+        ),
+      ).toEqual([true, false, false]);
     });
 
     it('replaces every block when the document changes wholesale', () => {

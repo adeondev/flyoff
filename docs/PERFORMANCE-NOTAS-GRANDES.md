@@ -1,11 +1,11 @@
 # Flyoff — Performance de notas grandes
 
 > Documento de contexto/hand-off. Descreve o gargalo de performance de notas
-> longas, o que já foi corrigido e o que falta. Escrito para ser lido por um
+> longas e as correções aplicadas. Escrito para ser lido por um
 > humano **ou** por um assistente que vá continuar o trabalho.
 
-Última atualização: contenção de linhas e blocos fora da tela aplicada; falta
-refinar o caso de imagem com wrap e eliminar o reparse do preview.
+Última atualização: contenção seletiva de floats e renderização incremental do
+preview concluídas e medidas em Chromium.
 
 ---
 
@@ -37,56 +37,60 @@ layout e pintura do que está fora da tela. As linhas continuam todas no DOM, o
 navegador só não gasta tempo com as invisíveis.
 
 - CSS: `src/renderer/projects/projects.css`, linhas ~1332 (editor) e ~2205 (preview)
-- `markFloatingMedia()` em `source-renderer.ts` e `markdown-render.ts` liga e
-  desliga o atributo `data-floating-media` na raiz
+- `markFloatContexts()` mantém sem contenção somente o intervalo entre um float
+  e o heading que aplica `clear`
 - As classes `md-line--media` (`markdown-highlight.ts`) e `markdown-block--media`
   (`markdown-render.ts`) marcam linhas e blocos que carregam imagem
 
 Resultado numa nota de 6000 linhas: 215 ms → 12 ms por tecla, e 325 ms → 40 ms
 por frame de animação. No preview com 1000 blocos: 12 ms → 4 ms por frame.
 
-O preview também tem reconciliação incremental de DOM em `renderMarkdownInto`
-(`markdown-render.ts`): renderiza num container destacado e insere apenas os
-blocos cujo HTML mudou, comparando com as assinaturas da renderização anterior —
-e não com o DOM ao vivo, que os próprios callers mutam (legenda expandida, por
-exemplo).
+O preview também tem reconciliação incremental de fonte e DOM em
+`renderMarkdownInto` (`markdown-render.ts`): uma varredura barata encontra os
+limites dos blocos, o diff de prefixo e sufixo reutiliza a AST e os nós intactos,
+e somente os blocos alterados passam por parse e construção de DOM.
 
 ---
 
-## O que falta
+## Implementação concluída
 
-### 1. Documentos com imagem em modo `wrap` não recebem otimização nenhuma
+### Contenção seletiva de imagens em modo `wrap`
 
 Uma imagem `wrap` flutua para fora da própria linha e as linhas seguintes
 contornam ela, o que só funciona enquanto compartilham o mesmo contexto de
 formatação. `content-visibility` implica `contain: layout`, que quebraria isso.
-A solução atual é grosseira: **uma** imagem `wrap` desliga a contenção do
-**documento inteiro**.
 
-Refinar para excluir apenas o intervalo de linhas realmente afetado pelo float
-(do float até o `clear`), em vez de desistir do documento todo. Os seletores que
-geram float estão em `projects.css`: `.md-source-image--wrap` no editor e
-`.markdown-image--wrap`, `.markdown-media--wrap-left`, `.markdown-media--wrap-right`
-no preview.
+As classes `md-line--float-context` e `markdown-block--float-context` agora
+excluem da contenção somente o float e os irmãos afetados até o heading que
+aplica `clear`. O restante do documento continua usando `content-visibility`.
+As exceções existentes para headings imediatamente após uma imagem e headings
+com imagem inline continuam no mesmo contexto do float.
 
-### 2. O preview reparseia e reconstrói todos os blocos a cada tecla
+### Parse e DOM incrementais no preview
 
-A reconciliação evita o layout dos blocos que não mudaram, mas o JS ainda
-parseia o documento inteiro e constrói o DOM de todos os blocos, para depois
-descartar 99,9% deles.
+Todos os blocos da AST carregam `position.start` e `position.end` no texto de
+origem. `splitMarkdownBlocks()` encontra as mesmas fronteiras sem executar o
+parse inline. O renderer compara essas fatias com o estado anterior e só
+reparseia e reconstrói o intervalo alterado.
 
-A correção real é diff em nível de fonte: dividir o markdown em blocos, comparar
-com a versão anterior e só parsear e construir os que mudaram. Isso exige que a
-AST carregue **offsets de origem por bloco**, o que ela não faz hoje — ver
-`src/shared/markdown/parse.ts` e `src/shared/markdown/ast.ts`.
+Blocos reutilizados preservam identidade e mutações legítimas feitas pelos
+callers. IDs, contagens e caminhos de headings são recalculados sem reconstruir
+seus elementos quando um heading anterior muda.
 
-Atenção: `src/shared/markdown` também é usado pelo processo main
-(`src/main/projects/project-service.ts`, `project-reference-index.ts`,
-`project-link-maintenance.ts`). Mudanças no parser não podem quebrar esses usos.
+### Resultado medido
 
-Existe um padrão pronto para copiar: `src/renderer/projects/source-document-model.ts`
-já faz exatamente esse diff de prefixo e sufixo com reuso, por linha, no editor
-de fonte.
+Benchmark Electron 43/Chromium offscreen, viewport de 600 px:
+
+| cenário | antes | depois |
+|---|---:|---:|
+| alteração central em preview de 3000 blocos | 80,7 ms | 4,2 ms |
+| alteração em editor de 6000 linhas com `wrap` curto | 17,9 ms | 7,3 ms |
+
+Os valores são medianas e incluem mutação de DOM e layout forçado por
+`offsetHeight`. O benchmark reproduzível está disponível em
+`npm run benchmark:large-notes`. Como controle da variância do Electron
+headless, execuções alternadas no mesmo ambiente registraram 9,7 ms com a
+contenção de todas as linhas desativada e 7,3 ms com a contenção seletiva.
 
 ---
 

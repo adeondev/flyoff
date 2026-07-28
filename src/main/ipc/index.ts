@@ -1,5 +1,6 @@
 export * from './appearance';
 export * from './bootstrap';
+export * from './color-sample';
 export * from './external-links';
 export * from './diagrams';
 export * from './menu-commands';

@@ -3,6 +3,8 @@ import { contextBridge, ipcRenderer, webFrame } from 'electron/renderer';
 
 import {
   BOOTSTRAP_STATE_CHANNEL,
+  CAPTURE_WINDOW_PIXELS_CHANNEL,
+  isWindowPixelSnapshot,
   OPEN_EXTERNAL_LINK_CHANNEL,
   CLOSE_REQUESTED_CHANNEL,
   CLOSE_RESPONSE_CHANNEL,
@@ -423,6 +425,12 @@ const flyoffApi: FlyoffApi = Object.freeze({
   },
   async restartApplication() {
     await ipcRenderer.invoke(RESTART_APPLICATION_CHANNEL);
+  },
+  async captureWindowPixels() {
+    const snapshot: unknown = await ipcRenderer.invoke(
+      CAPTURE_WINDOW_PIXELS_CHANNEL,
+    );
+    return isWindowPixelSnapshot(snapshot) ? snapshot : null;
   },
   async openExternalLink(request: OpenExternalLinkRequest) {
     if (!isOpenExternalLinkRequest(request)) {

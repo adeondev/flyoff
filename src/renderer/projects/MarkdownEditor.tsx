@@ -34,6 +34,8 @@ import type { EditorMode } from './editor-mode';
 import {
   applyMarkdownAction,
   applyMarkdownInlineColor,
+  collectAuthoredColors,
+  inlineColorKindAt,
   type MarkdownAction,
   type MarkdownInlineColorKind,
 } from './markdown-actions';
@@ -520,6 +522,25 @@ export const MarkdownEditor = forwardRef<
     );
   }
 
+  function readAuthoredColors(): readonly string[] {
+    return collectAuthoredColors(
+      controller.getSnapshot(nodeId, viewId)?.content ?? snapshot.content,
+    );
+  }
+
+  function readColorContext(): {
+    kind: MarkdownInlineColorKind | null;
+    snapTo: readonly string[];
+  } {
+    const content =
+      controller.getSnapshot(nodeId, viewId)?.content ?? snapshot.content;
+    const selection = selectionRef.current;
+    return {
+      kind: inlineColorKindAt(content, selection.start, selection.end),
+      snapTo: collectAuthoredColors(content),
+    };
+  }
+
   function handleInlineColor(
     kind: MarkdownInlineColorKind,
     color: string,
@@ -862,10 +883,12 @@ export const MarkdownEditor = forwardRef<
       {!focusLayout && mode !== 'reading' && editorPreferences.showToolbar ? (
         <MarkdownToolbar
           disabled={editingDisabled}
+          hasSelection={liveSelection.start !== liveSelection.end}
           onEmoji={handleEmojiInsert}
           onEmojiPickerClose={restoreEditorFocus}
           onAction={handleMarkdownAction}
           onColor={handleInlineColor}
+          readColorContext={readColorContext}
           translate={translate}
         />
       ) : null}
@@ -877,10 +900,12 @@ export const MarkdownEditor = forwardRef<
           <div className="markdown-editor__toolbar-drawer">
             <MarkdownToolbar
               disabled={editingDisabled}
+              hasSelection={liveSelection.start !== liveSelection.end}
               onEmoji={handleEmojiInsert}
               onEmojiPickerClose={restoreEditorFocus}
               onAction={handleMarkdownAction}
               onColor={handleInlineColor}
+              readColorContext={readColorContext}
               translate={translate}
             />
           </div>
@@ -990,6 +1015,7 @@ export const MarkdownEditor = forwardRef<
           onApply={(_, color) => handleSourceInlineColor(color)}
           onClose={() => setSourceColorRequest(null)}
           position={sourceColorRequest.position}
+          snapTo={readAuthoredColors()}
           translate={translate}
         />
       ) : null}

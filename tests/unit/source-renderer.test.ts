@@ -257,30 +257,63 @@ describe('incremental source renderer', () => {
       expect(root.querySelector('.md-line--media')).toBeNull();
     });
 
-    it('opts the document out while a wrapped image floats', () => {
+    it('excludes only rows participating in a wrapped image float', () => {
       const root = document.createElement('div');
-      reconcileSource(root, `one\n${imageSource('wrap')}\nthree`);
+      reconcileSource(
+        root,
+        `one\n${imageSource('wrap')}\ntwo\n# Clear\nthree`,
+      );
 
-      expect(root.hasAttribute('data-floating-media')).toBe(true);
+      expect(
+        [...root.children].map((line) =>
+          line.classList.contains('md-line--float-context'),
+        ),
+      ).toEqual([false, true, true, false, false]);
     });
 
-    it('opts back in once the float is gone', () => {
+    it('removes stale float context classes once the float is gone', () => {
       const root = document.createElement('div');
       reconcileSource(root, `one\n${imageSource('wrap')}\nthree`);
-      expect(root.hasAttribute('data-floating-media')).toBe(true);
+      expect(root.querySelector('.md-line--float-context')).not.toBeNull();
 
       reconcileSource(root, 'one\ntwo\nthree');
 
-      expect(root.hasAttribute('data-floating-media')).toBe(false);
+      expect(root.querySelector('.md-line--float-context')).toBeNull();
+    });
+
+    it('keeps a heading after the image inside the float context', () => {
+      const root = document.createElement('div');
+      reconcileSource(
+        root,
+        `${imageSource('wrap')}\n# Beside image\ntext\n# Clear\nend`,
+      );
+
+      expect(
+        [...root.children].map((line) =>
+          line.classList.contains('md-line--float-context'),
+        ),
+      ).toEqual([true, true, true, false, false]);
+    });
+
+    it('marks each independent float interval', () => {
+      const root = document.createElement('div');
+      reconcileSource(
+        root,
+        `${imageSource('wrap')}\none\n# Clear\nbetween\n${imageSource('wrap')}\ntwo\n# Clear again\nafter`,
+      );
+
+      expect(
+        [...root.children].map((line) =>
+          line.classList.contains('md-line--float-context'),
+        ),
+      ).toEqual([true, true, false, false, true, true, false, false]);
     });
 
     it('marks rows holding an image so their height is never guessed', () => {
       const root = document.createElement('div');
       reconcileSource(root, `one\n${imageSource('block')}\nthree`);
 
-      // A centered image does not float, so the document stays containable
-      // while its own row keeps rendering.
-      expect(root.hasAttribute('data-floating-media')).toBe(false);
+      // A centered image does not float, so only its own row keeps rendering.
       expect(root.children[1]?.classList.contains('md-line--media')).toBe(true);
       expect(root.children[0]?.classList.contains('md-line--media')).toBe(false);
     });

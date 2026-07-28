@@ -45,6 +45,11 @@ function mark(value: string): string {
   return span('md-tok-mark', escapeHtml(value));
 }
 
+/** Tagged apart from plain attributes so it alone can be hidden on demand. */
+function colorAttr(value: string): string {
+  return span('md-tok-attr md-tok-color-attr', escapeHtml(value));
+}
+
 const PAIRS: readonly { delimiter: string; className: string }[] = [
   { delimiter: '**', className: 'md-tok-strong' },
   { delimiter: '__', className: 'md-tok-strong' },
@@ -238,10 +243,7 @@ function highlightInline(text: string, baseOffset = 0): string {
             (alias ? span('md-tok-attr', escapeHtml(alias)) : '') +
             mark(']]') +
             (colorAttribute
-              ? span(
-                  'md-tok-attr',
-                  escapeHtml(text.slice(tail + 2, colorAttribute.end)),
-                )
+              ? colorAttr(text.slice(tail + 2, colorAttribute.end))
               : ''),
         );
         index = end;
@@ -290,12 +292,11 @@ function highlightInline(text: string, baseOffset = 0): string {
                   : highlightInline(label, baseOffset + bracketStart + 1),
               ) +
               mark(']') +
-              span('md-tok-attr', escapeHtml(attr)) +
+              (opener === '{' && colorAttribute
+                ? colorAttr(attr)
+                : span('md-tok-attr', escapeHtml(attr))) +
               (opener === '(' && colorAttribute
-                ? span(
-                    'md-tok-attr',
-                    escapeHtml(text.slice(tail + 1, colorAttribute.end)),
-                  )
+                ? colorAttr(text.slice(tail + 1, colorAttribute.end))
                 : ''),
           );
           index = end;
@@ -342,10 +343,7 @@ function highlightInline(text: string, baseOffset = 0): string {
               coloredContent +
               mark(delimiter) +
               (colorAttribute
-                ? span(
-                    'md-tok-attr',
-                    escapeHtml(text.slice(close + delimiter.length, end)),
-                  )
+                ? colorAttr(text.slice(close + delimiter.length, end))
                 : ''),
           );
           index = end;

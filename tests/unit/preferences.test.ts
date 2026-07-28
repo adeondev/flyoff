@@ -32,6 +32,17 @@ afterEach(() => {
 });
 
 describe('Flyoff preferences', () => {
+  it('uses details as the initial media view and preserves explicit choices', () => {
+    expect(createDefaultFlyoffPreferences().workspace.mediaGalleryView).toBe(
+      'details',
+    );
+    expect(
+      normalizeFlyoffPreferences({
+        workspace: { mediaGalleryView: 'grid' },
+      }).workspace.mediaGalleryView,
+    ).toBe('grid');
+  });
+
   it('normalizes partial and out-of-range values without accepting extras', () => {
     const normalized = normalizeFlyoffPreferences({
       appearance: { theme: 'basalt' },
@@ -169,6 +180,46 @@ describe('Flyoff preferences', () => {
       '👨‍👩‍👧‍👦',
     ]);
     expect(normalized.editor.emojiSkinTone).toBe(0);
+  });
+
+  it('keeps the colour markup visible until it is switched off', () => {
+    expect(createDefaultFlyoffPreferences().editor.hideColorMarkup).toBe(false);
+    expect(
+      normalizeFlyoffPreferences({ editor: { hideColorMarkup: 'sim' } }).editor
+        .hideColorMarkup,
+    ).toBe(false);
+    expect(
+      normalizeFlyoffPreferences({ editor: { hideColorMarkup: true } }).editor
+        .hideColorMarkup,
+    ).toBe(true);
+  });
+
+  it('normalizes recent colours to a bounded set of hexadecimal values', () => {
+    const normalized = normalizeFlyoffPreferences({
+      editor: {
+        colorRecent: [
+          '#2de85b',
+          '#2DE85B',
+          'rgb(1 2 3)',
+          'var(--accent)',
+          '#12345',
+          '#fff',
+          '#3B82F680',
+          ...Array.from(
+            { length: 20 },
+            (_, index) => `#${String(index).padStart(6, '0')}`,
+          ),
+        ],
+      },
+    });
+
+    expect(normalized.editor.colorRecent.slice(0, 4)).toEqual([
+      '#2DE85B',
+      '#FFF',
+      '#3B82F680',
+      '#000000',
+    ]);
+    expect(normalized.editor.colorRecent).toHaveLength(10);
   });
 
   it('persists atomically and recovers from corrupt or oversized files', () => {

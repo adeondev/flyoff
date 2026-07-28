@@ -132,7 +132,7 @@
   width: 100%;
   height: 34px;
   padding: 0 10px 0 31px;
-  border: 1px solid var(--color-border);
+  border: 0;
   border-radius: 5px;
   outline: 0;
   background: var(--color-background);
@@ -146,12 +146,11 @@
 }
 
 .project-sidebar__search input:hover {
-  border-color: var(--color-text-disabled);
+  background: var(--color-surface-hover);
 }
 
 .project-sidebar__search input:focus {
-  border-color: var(--color-focus-ring);
-  box-shadow: 0 0 0 1px var(--color-focus-ring);
+  background: var(--color-surface-active);
 }
 
 .project-sidebar__search-options {
@@ -1326,11 +1325,11 @@
  * copy keep working on the whole document.
  *
  * Rows carrying an image are excluded because their height cannot be guessed
- * from the line box, and the whole document opts out once a wrapped image is
- * present, since containing that float would break the text flowing around it.
+ * from the line box. Rows participating in a wrapped image's float remain in
+ * the same formatting context until a heading clears it.
  */
-.markdown-source__editor:not([data-floating-media])
-  .md-line:not(.md-line--media) {
+.markdown-source__editor
+  .md-line:not(.md-line--media, .md-line--float-context) {
   content-visibility: auto;
   contain-intrinsic-block-size: auto calc(1em * var(--md-body-line-height));
 }
@@ -1725,6 +1724,13 @@
 .md-tok-attr,
 .md-tok-rule {
   color: var(--color-text-disabled);
+}
+
+/* Opt-in: the caret line keeps the markup so it stays editable. */
+:root[data-hide-color-markup='true']
+  .md-line:not(.md-line--active)
+  .md-tok-color-attr {
+  display: none;
 }
 
 .md-tok-heading {
@@ -2200,10 +2206,10 @@
 /*
  * Same reasoning as the source editor rows: a long note costs a whole-document
  * layout every frame. Blocks holding media keep their layout so their height is
- * never guessed, and one wrapped image opts the document out entirely.
+ * never guessed, as do blocks participating in a wrapped image's float.
  */
-.markdown-view:not([data-floating-media])
-  > :not(.markdown-block--media) {
+.markdown-view
+  > :not(.markdown-block--media, .markdown-block--float-context) {
   content-visibility: auto;
   contain-intrinsic-block-size: auto calc(1em * var(--md-body-line-height));
 }
@@ -2632,6 +2638,14 @@
   background: var(--color-accent-bright);
 }
 
+.markdown-color-popover__hint {
+  margin: 0;
+  padding: 8px 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
 .markdown-view mark {
   padding: 0 0.2em;
   border-radius: 3px;
@@ -2979,34 +2993,51 @@
 }
 
 .media-gallery__header {
-  display: grid;
-  gap: 6px;
-  padding: 8px;
-  border-bottom: 1px solid var(--color-border);
+  display: flex;
+  min-width: 0;
+  height: var(--project-chrome-height);
+  min-height: var(--project-chrome-height);
+  align-items: center;
+  padding: 4px 8px 3px 12px;
+  background: var(--color-titlebar);
+  user-select: none;
+  -webkit-app-region: drag;
 }
 
 .media-gallery__tools {
   display: flex;
+  flex: none;
   align-items: center;
-  gap: 3px;
+  gap: 2px;
 }
 
 .media-gallery__tools button {
   display: grid;
-  width: 28px;
-  height: 28px;
-  place-items: center;
+  width: 31px;
+  height: 31px;
   padding: 0;
+  place-items: center;
   border: 0;
   border-radius: 4px;
+  outline: 0;
   background: transparent;
   color: var(--color-text-muted);
+  font: inherit;
+  font-size: 19px;
+  -webkit-app-region: no-drag;
 }
 
-.media-gallery__tools button:hover:not(:disabled),
-.media-gallery__tools button:focus-visible {
+.media-gallery__tools button:hover:not(:disabled) {
   background: var(--color-surface-hover);
   color: var(--color-text);
+}
+
+.media-gallery__tools button:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--color-focus-ring);
+}
+
+.media-gallery__tools button:disabled {
+  color: var(--color-text-disabled);
 }
 
 .media-gallery__tools button .masked-icon {
@@ -3018,7 +3049,9 @@
   display: flex;
   min-width: 0;
   align-items: center;
+  padding: 5px 8px 6px 12px;
   overflow: hidden;
+  border-bottom: 1px solid var(--color-border);
 }
 
 .media-gallery__breadcrumbs button {
@@ -3074,7 +3107,7 @@
   align-items: center;
   gap: 5px;
   padding: 0 8px;
-  border: 1px solid var(--color-border);
+  border: 0;
   border-radius: 5px;
   outline: 0;
   background: var(--color-background);
@@ -3089,15 +3122,15 @@
 .media-gallery__scope[aria-expanded='true'],
 .media-gallery__view:hover,
 .media-gallery__view[aria-expanded='true'] {
-  border-color: var(--color-text-disabled);
+  background: var(--color-surface-hover);
   color: var(--color-text);
 }
 
 .media-gallery__sort:focus-visible,
 .media-gallery__scope:focus-visible,
 .media-gallery__view:focus-visible {
-  border-color: var(--color-focus-ring);
-  box-shadow: 0 0 0 1px var(--color-focus-ring);
+  background: var(--color-surface-active);
+  color: var(--color-text);
 }
 
 .media-gallery__sort > span,

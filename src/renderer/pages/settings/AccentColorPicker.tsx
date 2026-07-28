@@ -23,6 +23,17 @@ export function AccentColorPicker({
     <div className="settings-accent-picker">
       <ColorSwatchPicker
         label={translate('settings.accentPresets')}
+        labels={{
+          alpha: translate('color.alpha'),
+          eyedropper: translate('color.eyedropper'),
+          format: translate('color.format'),
+          hue: translate('color.hue'),
+          loupeCancel: translate('color.loupeCancel'),
+          loupeHint: translate('color.loupeHint'),
+          loupeLocked: translate('color.loupeLocked'),
+          loupeScreen: translate('color.loupeScreen'),
+          recent: translate('color.recent'),
+        }}
         onChange={onChange}
         optionLabel={(preset) =>
           `${translate('settings.accentColor')}: ${preset}`

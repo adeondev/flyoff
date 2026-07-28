@@ -24,6 +24,7 @@
     "test:native": "npm run test --workspace=@flyoff/native-core",
     "test:twine-live": "node --env-file=.env.local --import tsx scripts/evaluate-twine-live.ts",
     "test:e2e": "playwright test",
+    "benchmark:large-notes": "electron scripts/benchmark-large-notes.cjs",
     "assets:twemoji": "node scripts/sync-twemoji-assets.mjs",
     "seed:apollo-11": "tsx scripts/seed-apollo-11.ts",
     "verify": "npm run lint && npm run typecheck && npm run test && npm run test:native"

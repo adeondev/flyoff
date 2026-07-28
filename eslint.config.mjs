@@ -53,7 +53,10 @@ export default tseslint.config(
     },
   },
   {
-    files: ['packages/native-core/**/*.{cjs,js}'],
+    files: [
+      'packages/native-core/**/*.{cjs,js}',
+      'scripts/benchmark-large-notes.cjs',
+    ],
     languageOptions: {
       globals: globals.node,
       sourceType: 'commonjs',
