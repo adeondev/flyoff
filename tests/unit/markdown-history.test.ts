@@ -49,6 +49,37 @@ describe('MarkdownHistoryStore', () => {
     ).toEqual({ content: 'ab', selection: selection(2) });
   });
 
+  it('coalesces typing that continues inside newly inserted markup', () => {
+    const history = new MarkdownHistoryStore();
+    history.record(
+      'note',
+      transaction(
+        '',
+        '[a]{color=#8F4FC4}',
+        selection(0),
+        selection(2),
+      ),
+    );
+    history.record(
+      'note',
+      transaction(
+        '[a]{color=#8F4FC4}',
+        '[ab]{color=#8F4FC4}',
+        selection(2),
+        selection(3),
+        'insertText',
+        100,
+      ),
+    );
+
+    expect(
+      history.undo('note', {
+        content: '[ab]{color=#8F4FC4}',
+        selection: selection(3),
+      }),
+    ).toEqual({ content: '', selection: selection(0) });
+  });
+
   it('does not coalesce after the window or after a moved selection', () => {
     const history = new MarkdownHistoryStore();
     history.record('note', transaction('', 'a', selection(0), selection(1)));

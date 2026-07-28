@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useRef, type CSSProperties } from 'react
 import { createPortal } from 'react-dom';
 
 import { ACCENT_COLOR_PRESETS } from '../../shared/contracts';
-import { ColorSwatchPicker } from '../components/color';
+import { ColorSwatchPicker, isColorPicking } from '../components/color';
 import type { Translate } from '../pages/page-types';
 
 export interface NodeColorPopoverProps {
@@ -58,12 +58,12 @@ export function NodeColorPopover({
 
   useEffect(() => {
     const handlePointerDown = (event: PointerEvent): void => {
-      if (!rootRef.current?.contains(event.target as Node)) {
+      if (!isColorPicking() && !rootRef.current?.contains(event.target as Node)) {
         close(false);
       }
     };
     const handleEscape = (event: globalThis.KeyboardEvent): void => {
-      if (event.key !== 'Escape') {
+      if (event.key !== 'Escape' || isColorPicking()) {
         return;
       }
       event.preventDefault();
@@ -92,6 +92,17 @@ export function NodeColorPopover({
       <ColorSwatchPicker
         customLabel={translate('projects.nodeColorCustom')}
         label={translate('projects.nodeColorPresets')}
+        labels={{
+          alpha: translate('color.alpha'),
+          eyedropper: translate('color.eyedropper'),
+          format: translate('color.format'),
+          hue: translate('color.hue'),
+          loupeCancel: translate('color.loupeCancel'),
+          loupeHint: translate('color.loupeHint'),
+          loupeLocked: translate('color.loupeLocked'),
+          loupeScreen: translate('color.loupeScreen'),
+          recent: translate('color.recent'),
+        }}
         onChange={onSelect}
         optionLabel={(preset) =>
           `${translate('projects.nodeColor')}: ${preset}`

@@ -2,32 +2,32 @@
   "name": "@flyoff/native-core",
   "version": "0.1.0",
   "private": true,
-  "description": "Native C++ core for Flyoff",
+  "description": "Native Rust core for Flyoff",
   "main": "index.js",
   "types": "index.d.ts",
-  "gypfile": true,
   "files": [
-    "binding.gyp",
-    "build/Release/*.node",
-    "include",
+    "Cargo.toml",
+    "build.rs",
+    "flyoff_native_core.node",
     "src",
     "scripts",
     "index.js",
     "index.d.ts"
   ],
+  "napi": {
+    "binaryName": "flyoff_native_core"
+  },
   "scripts": {
-    "build": "node scripts/run-node-gyp.cjs rebuild",
-    "clean": "node scripts/run-node-gyp.cjs clean",
-    "install": "node scripts/run-node-gyp.cjs rebuild",
+    "build": "node scripts/run-napi.cjs build --release --dts target/native-core.d.ts -- --locked",
+    "build:windows": "node scripts/run-napi.cjs build --release --dts target/native-core.d.ts --target x86_64-pc-windows-msvc --cross-compile -- --locked",
+    "check": "node scripts/run-cargo.cjs fmt --all -- --check && node scripts/run-cargo.cjs clippy --all-targets -- -D warnings",
+    "clean": "node scripts/run-cargo.cjs clean",
     "test": "node --test --test-isolation=none test/*.test.js"
   },
   "engines": {
     "node": ">=24.18.0 <25"
   },
-  "dependencies": {
-    "node-addon-api": "8.9.0"
-  },
   "devDependencies": {
-    "node-gyp": "13.0.1"
+    "@napi-rs/cli": "3.8.0"
   }
 }

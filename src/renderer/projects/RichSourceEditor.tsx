@@ -28,7 +28,6 @@ import {
 import {
   readSelection,
   readSource,
-  replaceRange,
   sourceOffsetAtPoint,
   writeSelection,
   type SourceSelection,
@@ -45,13 +44,24 @@ import {
   updateActiveSourceLine,
 } from './source-renderer';
 import {
+  clearSourceSpellingErrorsOutsideRange,
   clearSourceSpellingErrors,
   collectSourceSpellcheckWordsFromLines,
   PERSONAL_DICTIONARY_CHANGED_EVENT,
   renderSourceSpellingErrors,
+  sourceSpellcheckViewportRange,
 } from './source-spellcheck';
-import { SOURCE_SPELLCHECK_IDLE_MS } from './editor-performance';
-import { resolveSourceInput } from './source-input';
+import {
+  isLargeMarkdownDocument,
+  SOURCE_SPELLCHECK_IDLE_MS,
+  SOURCE_SPELLCHECK_SCROLL_IDLE_MS,
+} from './editor-performance';
+import {
+  applyMarkdownTypingComposition,
+  applyMarkdownTypingReplacement,
+  resolveMarkdownTypingInput,
+  type MarkdownTypingColor,
+} from './source-typing-color';
 import {
   createSourceMenuRequest,
   type SourceMenuRequest,
@@ -79,6 +89,7 @@ export interface RichSourceEditorProps {
   checkCodeBlocks?: boolean;
   inlineColorLabel?: string;
   spellcheckScope?: string;
+  typingColor?: MarkdownTypingColor | null;
   selection: SourceSelection;
   value: string;
   onKeyDown?: (event: KeyboardEvent<HTMLDivElement>) => void;
@@ -116,10 +127,6 @@ interface PendingInput {
   timestamp: number;
 }
 
-function collapsedSelection(offset: number): SourceSelection {
-  return { start: offset, end: offset, direction: 'none' };
-}
-
 export function RichSourceEditor({
   activeOffset,
   ariaLabel,
@@ -147,21 +154,27 @@ export function RichSourceEditor({
   selection,
   spellcheckScope = '',
   translate,
+  typingColor = null,
   value,
 }: RichSourceEditorProps) {
   const activeSourceOffset = activeOffset ?? selection.end;
+  const largeSourceDocument = isLargeMarkdownDocument(value);
   const scrollReporter = useScrollPositionReporter(onScroll);
   const composingRef = useRef(false);
   const [spellcheckRevision, setSpellcheckRevision] = useState(0);
+  const [spellcheckViewportRevision, setSpellcheckViewportRevision] =
+    useState(0);
   const spellcheckCacheRef = useRef(new Map<string, boolean>());
   const spellcheckGenerationRef = useRef(0);
   const spellcheckScopeRef = useRef<string | undefined>(undefined);
+  const spellcheckScrollTimerRef = useRef<number | undefined>(undefined);
   const compositionTimerRef = useRef<number | undefined>(undefined);
   const suppressedInputRef = useRef<string | undefined>(undefined);
   const suppressedInputTimerRef = useRef<number | undefined>(undefined);
   const pendingRef = useRef<PendingInput | undefined>(undefined);
   const stateRef = useRef({ content: value, selection });
   const readOnlyRef = useRef(readOnly);
+  const typingColorRef = useRef(typingColor);
   const callbacksRef = useRef({
     onRedo,
     onSelectionChange,
@@ -176,6 +189,10 @@ export function RichSourceEditor({
       composingRef.current = false;
     }
   }, [readOnly]);
+
+  useEffect(() => {
+    typingColorRef.current = typingColor;
+  }, [typingColor]);
 
   useEffect(() => {
     callbacksRef.current = {
@@ -266,13 +283,17 @@ export function RichSourceEditor({
         return;
       }
       const changed = getSourceChangeRange(root);
-      const range =
-        fullRefresh || changed?.full
+      const range = largeSourceDocument
+        ? sourceSpellcheckViewportRange(root, model.lines.length)
+        : fullRefresh || changed?.full
           ? { startLine: 0, endLine: model.lines.length }
           : {
               startLine: changed?.startLine ?? 0,
               endLine: changed?.endLine ?? model.lines.length,
             };
+      if (largeSourceDocument) {
+        clearSourceSpellingErrorsOutsideRange(root, range);
+      }
       const words = collectSourceSpellcheckWordsFromLines(
         model.lines.slice(range.startLine, range.endLine),
         checkCodeBlocks,
@@ -332,11 +353,22 @@ export function RichSourceEditor({
   }, [
     checkCodeBlocks,
     editorRef,
+    largeSourceDocument,
     spellCheck,
     spellcheckScope,
     spellcheckRevision,
+    spellcheckViewportRevision,
     value,
   ]);
+
+  useEffect(
+    () => () => {
+      if (spellcheckScrollTimerRef.current !== undefined) {
+        window.clearTimeout(spellcheckScrollTimerRef.current);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     const root = editorRef.current;
@@ -389,22 +421,24 @@ export function RichSourceEditor({
       });
     }
 
-    function commitReplacement(inputType: string, inserted: string): void {
+    function commitReplacement(
+      inputType: string,
+      inserted: string,
+      applyTypingColor = true,
+    ): void {
       const before = {
         content: stateRef.current.content,
         selection: readSelection(editor),
       };
-      const content = replaceRange(
-        before.content,
-        before.selection.start,
-        before.selection.end,
+      const after = applyMarkdownTypingReplacement(
+        before,
         inserted,
+        applyTypingColor ? typingColorRef.current : null,
       );
-      const caret = before.selection.start + inserted.length;
       commit(
         before,
-        content,
-        collapsedSelection(caret),
+        after.content,
+        after.selection,
         inputType,
         performance.now(),
       );
@@ -427,13 +461,20 @@ export function RichSourceEditor({
       }
 
       const before = pendingRef.current?.before ?? stateRef.current;
-      const after = {
+      let after = {
         content: readSource(editor),
         selection: readSelection(editor),
       };
       const resolvedInputType =
         inputType ?? pendingRef.current?.inputType ?? 'insertText';
       const timestamp = pendingRef.current?.timestamp ?? performance.now();
+      if (resolvedInputType === 'insertCompositionText') {
+        after = applyMarkdownTypingComposition(
+          before,
+          after,
+          typingColorRef.current,
+        );
+      }
 
       if (after.content === before.content) {
         reconcileSelection(after.content, after.selection);
@@ -504,7 +545,12 @@ export function RichSourceEditor({
       };
       const data =
         event.data === null ? null : normalizeSourceText(event.data);
-      const resolved = resolveSourceInput(before, event.inputType, data);
+      const resolved = resolveMarkdownTypingInput(
+        before,
+        event.inputType,
+        data,
+        typingColorRef.current,
+      );
       if (resolved) {
         event.preventDefault();
         if (resolved.content === before.content) {
@@ -574,7 +620,7 @@ export function RichSourceEditor({
             editor.ownerDocument,
           );
       if (inserted) {
-        commitReplacement('insertFromPaste', inserted);
+        commitReplacement('insertFromPaste', inserted, !image);
       }
       suppressPairedInput('insertFromPaste');
     }
@@ -631,7 +677,12 @@ export function RichSourceEditor({
         'text/plain',
         before.content.slice(before.selection.start, before.selection.end),
       );
-      const resolved = resolveSourceInput(before, 'deleteByCut');
+      const resolved = resolveMarkdownTypingInput(
+        before,
+        'deleteByCut',
+        null,
+        typingColorRef.current,
+      );
       if (resolved) {
         commit(
           before,
@@ -914,12 +965,29 @@ export function RichSourceEditor({
         }}
         onKeyDown={handleKeyDown}
         onPointerDown={handleColorPointerDown}
-        onScroll={(event) =>
-          scrollReporter.reportScroll(event.currentTarget.scrollTop)
-        }
-        onScrollEnd={(event) =>
-          scrollReporter.reportScrollEnd(event.currentTarget.scrollTop)
-        }
+        onScroll={(event) => {
+          scrollReporter.reportScroll(event.currentTarget.scrollTop);
+          if (
+            spellCheck &&
+            largeSourceDocument
+          ) {
+            if (spellcheckScrollTimerRef.current !== undefined) {
+              window.clearTimeout(spellcheckScrollTimerRef.current);
+            }
+            spellcheckScrollTimerRef.current = window.setTimeout(() => {
+              spellcheckScrollTimerRef.current = undefined;
+              setSpellcheckViewportRevision((current) => current + 1);
+            }, SOURCE_SPELLCHECK_SCROLL_IDLE_MS);
+          }
+        }}
+        onScrollEnd={(event) => {
+          scrollReporter.reportScrollEnd(event.currentTarget.scrollTop);
+          if (spellcheckScrollTimerRef.current !== undefined) {
+            window.clearTimeout(spellcheckScrollTimerRef.current);
+            spellcheckScrollTimerRef.current = undefined;
+            setSpellcheckViewportRevision((current) => current + 1);
+          }
+        }}
         ref={editorRef}
         role="textbox"
         spellCheck={spellCheck}

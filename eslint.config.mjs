@@ -13,6 +13,7 @@ export default tseslint.config(
       'node_modules/**',
       'out/**',
       'packages/native-core/build/**',
+      'packages/native-core/target/**',
       'playwright-report/**',
       'test-results/**',
     ],
@@ -53,7 +54,10 @@ export default tseslint.config(
     },
   },
   {
-    files: ['packages/native-core/**/*.{cjs,js}'],
+    files: [
+      'packages/native-core/**/*.{cjs,js}',
+      'scripts/benchmark-large-notes.cjs',
+    ],
     languageOptions: {
       globals: globals.node,
       sourceType: 'commonjs',

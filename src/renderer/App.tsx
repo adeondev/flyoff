@@ -3480,6 +3480,7 @@ export function App() {
         {project && layout.railViewId === RAIL_VIEW_IDS.media ? (
           <MediaGalleryPanel
             key={`${project.projectId}:media`}
+            onCloseProject={() => void closeProjectWorkspace()}
             onAssetsRemoved={(assetIds) =>
               void commitProjectNodeTrashed(assetIds)
             }

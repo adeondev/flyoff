@@ -20,9 +20,9 @@ playwright-report/
 .env.*
 !.env.example
 
-packages/native-core/build/
-packages/native-core/bin/
+packages/native-core/flyoff_native_core.node
 packages/native-core/node_modules/
+packages/native-core/target/
 
 .DS_Store
 Thumbs.db

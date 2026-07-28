@@ -23,9 +23,15 @@ IS_WINDOWS = os.name == "nt"
 
 NATIVE_WORKSPACE = "@flyoff/native-core"
 NATIVE_DIR = ROOT / "packages" / "native-core"
-NATIVE_ARTIFACT = NATIVE_DIR / "build" / "Release" / "flyoff_native_core.node"
-NATIVE_FORGE_META = NATIVE_DIR / "build" / "Release" / ".forge-meta"
-NATIVE_SOURCES = (NATIVE_DIR / "src", NATIVE_DIR / "include", NATIVE_DIR / "binding.gyp")
+NATIVE_ARTIFACT = NATIVE_DIR / "flyoff_native_core.node"
+NATIVE_SOURCES = (
+    NATIVE_DIR / "src",
+    NATIVE_DIR / "Cargo.toml",
+    NATIVE_DIR / "Cargo.lock",
+    NATIVE_DIR / "build.rs",
+    NATIVE_DIR / "package.json",
+    ROOT / "rust-toolchain.toml",
+)
 
 WEBPACK_DIR = ROOT / ".webpack"
 OUT_DIR = ROOT / "out"
@@ -316,20 +322,8 @@ def node_query(expression: str) -> str | None:
     return result.stdout.strip() or None
 
 
-def native_abi_mismatch() -> bool:
-    """forge repoints the addon at Electron's ABI, which breaks node-based tests."""
-    if not NATIVE_FORGE_META.is_file():
-        return False
-    built_abi = NATIVE_FORGE_META.read_text(encoding="utf-8").strip().rsplit("-", 1)[-1]
-    node_abi = node_query("process.versions.modules")
-    return bool(node_abi) and built_abi != node_abi
-
-
-def needs_native_build(for_node_abi: bool = False) -> bool:
+def needs_native_build(_for_node_abi: bool = False) -> bool:
     if not NATIVE_ARTIFACT.is_file():
-        return True
-    if for_node_abi and native_abi_mismatch():
-        log("info", "native-core is built for Electron's ABI, rebuilding for node")
         return True
     return newest_mtime(NATIVE_SOURCES) > NATIVE_ARTIFACT.stat().st_mtime
 
@@ -366,7 +360,8 @@ def step_clean(deep: bool) -> bool:
     for pattern in OUT_ARTIFACT_GLOBS:
         targets += [entry for entry in OUT_DIR.glob(pattern) if entry.is_dir()]
     if deep:
-        targets += [NATIVE_DIR / "build", NODE_MODULES]
+        targets += [NATIVE_DIR / "target", NODE_MODULES]
+        NATIVE_ARTIFACT.unlink(missing_ok=True)
     return all(remove_tree(target) for target in targets)
 
 
@@ -389,9 +384,6 @@ def step_native(force: bool, for_node_abi: bool) -> bool:
 
     backup = backup_native_artifact()
     ok = run(npm("run", "build", f"--workspace={NATIVE_WORKSPACE}")) == 0
-    if not ok:
-        log("warn", "workspace build failed, calling node-gyp directly")
-        ok = run(["node", "scripts/run-node-gyp.cjs", "rebuild"], cwd=NATIVE_DIR) == 0
 
     if not ok and restore_native_artifact(backup):
         log("warn", "native-core build failed; restored the previous binary")

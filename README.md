@@ -10,7 +10,7 @@ modelo extensível, sem transformar o shell em um editor dependente de `.md`.
 
 - Electron `43.1.0`, Node.js `24.18.0` e Electron Forge `7.11.2` com Webpack.
 - React e TypeScript no renderer.
-- Node-API e C++20 em `packages/native-core`, carregados por um
+- Node-API e Rust em `packages/native-core`, carregados por um
   `utilityProcess` separado.
 - Interface em `pt-BR` ou `en-US`, escolhida pelo idioma do sistema, com
   `pt-BR` como fallback.
@@ -24,7 +24,7 @@ src/
   shared/     contratos e catálogos compartilhados
   utility/    processo isolado que carrega o addon
 packages/
-  native-core/  workspace Node-API + C++20
+  native-core/  workspace Node-API + Rust
 resources/    ícones de empacotamento
 tests/        testes unitários, Electron e smoke do pacote
 ```
@@ -160,9 +160,11 @@ continuam restritos ao processo principal.
 
 - Node.js `24.18.0` e npm correspondente. Use a versão exata para reproduzir o
   lockfile e a CI.
-- Python 3 e uma toolchain C++ compatível com `node-gyp`:
-  - Windows: Visual Studio Build Tools com **Desktop development with C++**;
-  - Ubuntu: `build-essential` e Python 3;
+- Rust `1.97.1` via rustup. O arquivo `rust-toolchain.toml` fixa a versão e os
+  componentes Clippy e rustfmt.
+- Toolchain de sistema para link:
+  - Windows: Visual Studio Build Tools;
+  - Ubuntu: `clang`;
   - macOS: Xcode Command Line Tools.
 
 Confira as versões e instale tudo com:
@@ -185,7 +187,7 @@ npm start
 ```
 
 O Forge prepara o addon para o Electron, inicia os bundles de main,
-preload, utility e renderer e abre a janela. Alterações em C++ exigem uma nova
+preload, utility e renderer e abre a janela. Alterações em Rust exigem uma nova
 compilação/reinicialização.
 
 Comandos principais:
@@ -199,10 +201,23 @@ Comandos principais:
 | `npm run verify` | Executa lint, tipos e testes unitários/nativos. |
 | `npm run package` | Gera o aplicativo com ASAR e fuses endurecidos em `out/`. |
 | `npm run make` | Gera os formatos de distribuição configurados para o SO. |
+| `npm run setup:windows-cross` | Prepara Rust e o target Windows no Linux/macOS. |
+| `npm run make:windows:zip` | Gera o ZIP portátil Windows x64 a partir do Linux/macOS. |
 
-O addon usa a ABI estável do Node-API. Ainda assim, execute `npm run test:native`
-antes de `npm run package`; o Forge recompila o módulo para o SO, arquitetura e
-runtime de destino durante o empacotamento.
+O addon usa a ABI estável do Node-API. Os ciclos `start`, `package` e `make`
+compilam o módulo para o host antes de executar o Forge. Execute
+`npm run test:native` para validar também rustfmt, Clippy e o contrato JavaScript.
+
+Para produzir o portátil Windows x64 em Linux ou macOS:
+
+```console
+npm run setup:windows-cross
+npm run make:windows:zip
+```
+
+O resultado fica em `out/make/zip/win32/x64/`. Essa rota usa `cargo-xwin` e não
+precisa de Wine ou Mono; o instalador Squirrel continua sendo produzido no
+runner Windows da release.
 
 ## Testes Electron e pacote final
 

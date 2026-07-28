@@ -1,9 +1,8 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, type CSSProperties } from 'react';
 
 import boldIcon from '../../../public/images/icons/editor/bold.svg';
 import codeIcon from '../../../public/images/icons/editor/code.svg';
 import dividerIcon from '../../../public/images/icons/editor/divider.svg';
-import emojiIcon from '../../../public/images/icons/editor/emoji.svg';
 import headingIcon from '../../../public/images/icons/editor/heading.svg';
 import highlightIcon from '../../../public/images/icons/editor/highlight.svg';
 import linkIcon from '../../../public/images/icons/editor/ink.svg';
@@ -12,7 +11,8 @@ import listIcon from '../../../public/images/icons/editor/list-bullet.svg';
 import quoteIcon from '../../../public/images/icons/editor/quote.svg';
 import strikeIcon from '../../../public/images/icons/editor/strikethrough.svg';
 import taskIcon from '../../../public/images/icons/instances/checklist.svg';
-import paletteIcon from '../../../newicons/propriedades.svg';
+import emojiIcon from '../../../newicons/emoji.svg';
+import paletteIcon from '../../../newicons/color-pallete.svg';
 import { EMOJI_RECENT_LIMIT, type EmojiSkinTone } from '../../shared/contracts';
 import { MaskedIcon } from '../components/MaskedIcon';
 import { getTooltipTargetProps } from '../components/tooltip';
@@ -22,6 +22,7 @@ import { EmojiPicker } from './EmojiPicker';
 import { MARKDOWN_ACTIONS, type MarkdownAction } from './markdown-actions';
 import type { MarkdownInlineColorKind } from './markdown-actions';
 import { MarkdownColorPopover } from './MarkdownColorPopover';
+import type { MarkdownTypingColor } from './source-typing-color';
 
 export const MARKDOWN_ACTION_LABEL_KEYS: Record<
   MarkdownAction,
@@ -55,29 +56,44 @@ export const MARKDOWN_ACTION_ICONS: Record<MarkdownAction, string> = {
 };
 
 export interface MarkdownToolbarProps {
+  activeTypingColor?: MarkdownTypingColor | null;
   disabled?: boolean;
+  hasSelection?: boolean;
   translate: Translate;
+  /** Read once per opening, so long notes are not rescanned per keystroke. */
+  readColorContext?: () => {
+    color: string | null;
+    hasSelection?: boolean;
+    kind: MarkdownInlineColorKind | null;
+    snapTo: readonly string[];
+  };
   onAction: (action: MarkdownAction) => void;
-  onColor: (kind: MarkdownInlineColorKind, color: string) => void;
+  onColor: (kind: MarkdownInlineColorKind, color: string | null) => void;
   onEmoji: (emoji: string) => void;
   onEmojiPickerClose: () => void;
 }
 
 export function MarkdownToolbar({
+  activeTypingColor = null,
   disabled = false,
+  hasSelection = true,
   onAction,
   onColor,
   onEmoji,
   onEmojiPickerClose,
+  readColorContext,
   translate,
 }: MarkdownToolbarProps) {
   const { preferences, update } = useFlyoffPreferences();
   const emojiButtonRef = useRef<HTMLButtonElement>(null);
   const colorButtonRef = useRef<HTMLButtonElement>(null);
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
-  const [colorPickerPosition, setColorPickerPosition] = useState<{
-    x: number;
-    y: number;
+  const [colorPicker, setColorPicker] = useState<{
+    color: string | null;
+    hasSelection: boolean;
+    kind: MarkdownInlineColorKind | null;
+    position: { x: number; y: number };
+    snapTo: readonly string[];
   } | null>(null);
 
   function updateSkinTone(emojiSkinTone: EmojiSkinTone): void {
@@ -141,37 +157,57 @@ export function MarkdownToolbar({
         );
       })}
       <button
-        aria-expanded={Boolean(colorPickerPosition)}
+        aria-expanded={Boolean(colorPicker)}
         aria-haspopup="dialog"
         aria-label={translate('toolbar.color')}
-        className="markdown-toolbar__button"
+        aria-pressed={Boolean(activeTypingColor)}
+        className="markdown-toolbar__button markdown-toolbar__button--color"
+        data-color-default={
+          activeTypingColor?.color === null ? true : undefined
+        }
         disabled={disabled}
         onClick={(event) => {
-          if (colorPickerPosition) {
-            setColorPickerPosition(null);
+          if (colorPicker) {
+            setColorPicker(null);
             return;
           }
           const bounds = event.currentTarget.getBoundingClientRect();
-          setColorPickerPosition({
-            x: bounds.left,
-            y: bounds.bottom + 5,
+          const context = readColorContext?.();
+          setColorPicker({
+            color: context?.color ?? null,
+            hasSelection: context?.hasSelection ?? hasSelection,
+            kind: context?.kind ?? null,
+            position: { x: bounds.left, y: bounds.bottom + 5 },
+            snapTo: context?.snapTo ?? [],
           });
         }}
         ref={colorButtonRef}
+        style={
+          activeTypingColor?.color
+            ? ({
+                '--markdown-toolbar-color': activeTypingColor.color,
+              } as CSSProperties)
+            : undefined
+        }
         type="button"
         {...getTooltipTargetProps(translate('toolbar.color'), 'bottom')}
       >
         <MaskedIcon className="markdown-toolbar__icon" icon={paletteIcon} />
       </button>
-      {colorPickerPosition ? (
+      {colorPicker ? (
         <MarkdownColorPopover
           anchorRef={colorButtonRef}
+          hasSelection={colorPicker.hasSelection}
+          initialColor={colorPicker.color ?? undefined}
+          initialDefault={colorPicker.color === null}
+          initialKind={colorPicker.kind ?? 'text'}
           onApply={onColor}
           onClose={() => {
-            setColorPickerPosition(null);
+            setColorPicker(null);
             onEmojiPickerClose();
           }}
-          position={colorPickerPosition}
+          position={colorPicker.position}
+          snapTo={colorPicker.snapTo}
           translate={translate}
         />
       ) : null}

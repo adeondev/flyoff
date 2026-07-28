@@ -1222,7 +1222,9 @@ describe('Markdown editor', () => {
     );
     fireEvent.change(hex, { target: { value: '#ff0000' } });
     fireEvent.blur(hex);
-    fireEvent.click(screen.getByRole('button', { name: 'toolbar.applyColor' }));
+    fireEvent.click(
+      screen.getByRole('button', { name: 'toolbar.applyToSelection' }),
+    );
 
     expect(controller.getSnapshot(note.nodeId)?.content).toBe(
       '[John]{color=#FF0000}',
@@ -1230,6 +1232,41 @@ describe('Markdown editor', () => {
     controller.undo(note.nodeId);
     expect(controller.getSnapshot(note.nodeId)?.content).toBe(
       original.content,
+    );
+  });
+
+  it('removes a link colour without removing the link', () => {
+    const original: MarkdownDocument = {
+      nodeId: note.nodeId,
+      content: '[John](https://x.dev){color=#3B82F6}',
+      readOnly: false,
+      revision: '1'.repeat(64),
+    };
+    const controller = new MarkdownDocumentController({
+      reload: vi.fn(),
+      save: successfulSave(),
+    });
+    const { container } = render(
+      <MarkdownEditor
+        controller={controller}
+        document={original}
+        translate={translate}
+      />,
+    );
+    fireEvent.click(
+      container.querySelector<HTMLButtonElement>(
+        '.md-inline-color-trigger',
+      )!,
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: 'toolbar.defaultColor' }),
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: 'toolbar.applyToSelection' }),
+    );
+
+    expect(controller.getSnapshot(note.nodeId)?.content).toBe(
+      '[John](https://x.dev)',
     );
   });
 
@@ -2250,6 +2287,79 @@ describe('Markdown editor', () => {
     expect(controller.getSnapshot(note.nodeId)?.content).toBe('**a**');
     controller.undo(note.nodeId);
     expect(controller.getSnapshot(note.nodeId)?.content).toBe('a');
+  });
+
+  it('types with a chosen colour and returns to true Default at the caret', () => {
+    const original: MarkdownDocument = {
+      nodeId: note.nodeId,
+      content: '',
+      readOnly: false,
+      revision: '1'.repeat(64),
+    };
+    const controller = new MarkdownDocumentController({
+      reload: vi.fn(),
+      save: successfulSave(),
+    });
+    render(
+      <MarkdownEditor
+        controller={controller}
+        document={original}
+        translate={translate}
+      />,
+    );
+    const editor = screen.getByRole('textbox', {
+      name: 'projects.editorLabel',
+    });
+    const toolbar = screen.getByRole('toolbar');
+    const openColour = () =>
+      fireEvent.click(
+        within(toolbar).getByRole('button', { name: 'toolbar.color' }),
+      );
+
+    writeSelection(editor, 0);
+    openColour();
+    fireEvent.click(
+      screen.getByRole('radio', {
+        name: 'toolbar.color: #8F4FC4',
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: 'toolbar.useWhileTyping' }),
+    );
+    writeSelection(editor, 0);
+    fireEvent(
+      editor,
+      new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data: 'A',
+        inputType: 'insertText',
+      }),
+    );
+    expect(controller.getSnapshot(note.nodeId)?.content).toBe(
+      '[A]{color=#8F4FC4}',
+    );
+
+    openColour();
+    fireEvent.click(
+      screen.getByRole('button', { name: 'toolbar.defaultColor' }),
+    );
+    fireEvent.click(
+      screen.getByRole('button', { name: 'toolbar.useWhileTyping' }),
+    );
+    writeSelection(editor, 2);
+    fireEvent(
+      editor,
+      new InputEvent('beforeinput', {
+        bubbles: true,
+        cancelable: true,
+        data: 'B',
+        inputType: 'insertText',
+      }),
+    );
+    expect(controller.getSnapshot(note.nodeId)?.content).toBe(
+      '[A]{color=#8F4FC4}B',
+    );
   });
 
   it('never inserts internal drag identifiers into Markdown', () => {

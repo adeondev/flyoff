@@ -132,7 +132,7 @@
   width: 100%;
   height: 34px;
   padding: 0 10px 0 31px;
-  border: 1px solid var(--color-border);
+  border: 0;
   border-radius: 5px;
   outline: 0;
   background: var(--color-background);
@@ -146,12 +146,11 @@
 }
 
 .project-sidebar__search input:hover {
-  border-color: var(--color-text-disabled);
+  background: var(--color-surface-hover);
 }
 
 .project-sidebar__search input:focus {
-  border-color: var(--color-focus-ring);
-  box-shadow: 0 0 0 1px var(--color-focus-ring);
+  background: var(--color-surface-active);
 }
 
 .project-sidebar__search-options {
@@ -1319,22 +1318,6 @@
   position: relative;
 }
 
-/*
- * A long note otherwise costs a full-document layout on every frame, which is
- * what drags the frame rate down while nothing is even being typed. Skipping
- * offscreen rows leaves them in the DOM, so selection, caret, find-in-page and
- * copy keep working on the whole document.
- *
- * Rows carrying an image are excluded because their height cannot be guessed
- * from the line box, and the whole document opts out once a wrapped image is
- * present, since containing that float would break the text flowing around it.
- */
-.markdown-source__editor:not([data-floating-media])
-  .md-line:not(.md-line--media) {
-  content-visibility: auto;
-  contain-intrinsic-block-size: auto calc(1em * var(--md-body-line-height));
-}
-
 .md-line--heading {
   clear: both;
 }
@@ -1727,6 +1710,13 @@
   color: var(--color-text-disabled);
 }
 
+/* Opt-in: the caret line keeps the markup so it stays editable. */
+:root[data-hide-color-markup='true']
+  .md-line:not(.md-line--active)
+  .md-tok-color-attr {
+  display: none;
+}
+
 .md-tok-heading {
   color: var(--color-text);
   font-style: normal;
@@ -2030,6 +2020,21 @@
   cursor: not-allowed;
 }
 
+.markdown-toolbar__button--color {
+  position: relative;
+}
+
+.markdown-toolbar__button--color[aria-pressed='true']::after {
+  position: absolute;
+  right: 5px;
+  bottom: 3px;
+  left: 5px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--markdown-toolbar-color, currentColor);
+  content: '';
+}
+
 .emoji-picker {
   position: fixed;
   top: var(--emoji-picker-top);
@@ -2195,17 +2200,6 @@
   outline: 0;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
-}
-
-/*
- * Same reasoning as the source editor rows: a long note costs a whole-document
- * layout every frame. Blocks holding media keep their layout so their height is
- * never guessed, and one wrapped image opts the document out entirely.
- */
-.markdown-view:not([data-floating-media])
-  > :not(.markdown-block--media) {
-  content-visibility: auto;
-  contain-intrinsic-block-size: auto calc(1em * var(--md-body-line-height));
 }
 
 .markdown-view > :first-child {
@@ -2601,6 +2595,7 @@
 }
 
 .markdown-color-popover__modes button,
+.markdown-color-popover__default,
 .markdown-color-popover__apply {
   min-height: 32px;
   border: 0;
@@ -2617,7 +2612,22 @@
   color: var(--color-text);
 }
 
+.markdown-color-popover__default {
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+  text-align: left;
+}
+
+.markdown-color-popover__default[aria-pressed='true'] {
+  border-color: var(--color-accent);
+  box-shadow: inset 3px 0 0 var(--color-accent);
+}
+
 .markdown-color-popover__modes button:focus-visible,
+.markdown-color-popover__default:focus-visible,
 .markdown-color-popover__apply:focus-visible {
   box-shadow: 0 0 0 2px var(--color-focus-ring);
 }
@@ -2630,6 +2640,14 @@
 
 .markdown-color-popover__apply:hover {
   background: var(--color-accent-bright);
+}
+
+.markdown-color-popover__hint {
+  margin: 0;
+  padding: 8px 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  text-align: center;
 }
 
 .markdown-view mark {
@@ -2979,34 +2997,51 @@
 }
 
 .media-gallery__header {
-  display: grid;
-  gap: 6px;
-  padding: 8px;
-  border-bottom: 1px solid var(--color-border);
+  display: flex;
+  min-width: 0;
+  height: var(--project-chrome-height);
+  min-height: var(--project-chrome-height);
+  align-items: center;
+  padding: 4px 8px 3px 12px;
+  background: var(--color-titlebar);
+  user-select: none;
+  -webkit-app-region: drag;
 }
 
 .media-gallery__tools {
   display: flex;
+  flex: none;
   align-items: center;
-  gap: 3px;
+  gap: 2px;
 }
 
 .media-gallery__tools button {
   display: grid;
-  width: 28px;
-  height: 28px;
-  place-items: center;
+  width: 31px;
+  height: 31px;
   padding: 0;
+  place-items: center;
   border: 0;
   border-radius: 4px;
+  outline: 0;
   background: transparent;
   color: var(--color-text-muted);
+  font: inherit;
+  font-size: 19px;
+  -webkit-app-region: no-drag;
 }
 
-.media-gallery__tools button:hover:not(:disabled),
-.media-gallery__tools button:focus-visible {
+.media-gallery__tools button:hover:not(:disabled) {
   background: var(--color-surface-hover);
   color: var(--color-text);
+}
+
+.media-gallery__tools button:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--color-focus-ring);
+}
+
+.media-gallery__tools button:disabled {
+  color: var(--color-text-disabled);
 }
 
 .media-gallery__tools button .masked-icon {
@@ -3018,7 +3053,9 @@
   display: flex;
   min-width: 0;
   align-items: center;
+  padding: 5px 8px 6px 12px;
   overflow: hidden;
+  border-bottom: 1px solid var(--color-border);
 }
 
 .media-gallery__breadcrumbs button {
@@ -3074,7 +3111,7 @@
   align-items: center;
   gap: 5px;
   padding: 0 8px;
-  border: 1px solid var(--color-border);
+  border: 0;
   border-radius: 5px;
   outline: 0;
   background: var(--color-background);
@@ -3089,15 +3126,15 @@
 .media-gallery__scope[aria-expanded='true'],
 .media-gallery__view:hover,
 .media-gallery__view[aria-expanded='true'] {
-  border-color: var(--color-text-disabled);
+  background: var(--color-surface-hover);
   color: var(--color-text);
 }
 
 .media-gallery__sort:focus-visible,
 .media-gallery__scope:focus-visible,
 .media-gallery__view:focus-visible {
-  border-color: var(--color-focus-ring);
-  box-shadow: 0 0 0 1px var(--color-focus-ring);
+  background: var(--color-surface-active);
+  color: var(--color-text);
 }
 
 .media-gallery__sort > span,

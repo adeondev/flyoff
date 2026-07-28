@@ -3,8 +3,11 @@ import {
   mediaAssetUrl,
   parseMarkdown,
   parseInternalLinkDestination,
+  splitMarkdownBlocks,
   type BlockNode,
+  type Heading,
   type InlineNode,
+  type MarkdownBlockSource,
 } from '../../shared/markdown';
 import { twemojiAssetUrl, twemojiSegments } from '../components/twemoji';
 import { colorContrastInk } from '../components/color';
@@ -276,6 +279,22 @@ interface RenderContext {
   projectId?: string;
 }
 
+function applyHeadingMetadata(
+  node: Heading,
+  element: HTMLElement,
+  context: RenderContext,
+): void {
+  const text = inlineText(node.children).trim();
+  context.headingPath.length = node.depth;
+  context.headingPath[node.depth - 1] = text;
+  const headingPath = context.headingPath.filter(Boolean);
+  const slug = markdownHeadingSlug(text) || 'heading';
+  const count = context.headingIds.get(slug) ?? 0;
+  context.headingIds.set(slug, count + 1);
+  element.id = count === 0 ? slug : `${slug}-${count + 1}`;
+  element.dataset.markdownHeadingPath = JSON.stringify(headingPath);
+}
+
 function renderBlocks(
   nodes: readonly BlockNode[],
   parent: Node,
@@ -285,15 +304,7 @@ function renderBlocks(
     switch (node.type) {
       case 'heading': {
         const element = document.createElement(`h${node.depth}`);
-        const text = inlineText(node.children).trim();
-        context.headingPath.length = node.depth;
-        context.headingPath[node.depth - 1] = text;
-        const headingPath = context.headingPath.filter(Boolean);
-        const slug = markdownHeadingSlug(text) || 'heading';
-        const count = context.headingIds.get(slug) ?? 0;
-        context.headingIds.set(slug, count + 1);
-        element.id = count === 0 ? slug : `${slug}-${count + 1}`;
-        element.dataset.markdownHeadingPath = JSON.stringify(headingPath);
+        applyHeadingMetadata(node, element, context);
         if (node.divided) {
           element.classList.add('markdown-view__heading--divided');
         }
@@ -486,36 +497,121 @@ function renderBlocks(
   }
 }
 
-// Signatures of the top-level nodes produced by the previous render, kept so
-// an edit can be diffed against what we emitted rather than against the live
-// DOM, which callers legitimately mutate (expanding an image caption, say).
-const renderedSignatures = new WeakMap<HTMLElement, readonly string[]>();
-
-function nodeSignature(node: ChildNode): string {
-  return node instanceof Element
-    ? node.outerHTML
-    : `#${node.nodeType}:${node.textContent ?? ''}`;
+interface RenderedMarkdownBlock {
+  element: ChildNode;
+  node: BlockNode;
+  source: string;
 }
 
-const FLOATING_MEDIA_SELECTOR =
-  '.markdown-image--wrap, .markdown-media--wrap-left, .markdown-media--wrap-right';
+interface MarkdownRenderState {
+  blocks: readonly RenderedMarkdownBlock[];
+  projectId?: string;
+  source: string;
+}
 
-// Marks blocks whose height a skipped element could not guess, so they stay
-// laid out. Runs before signatures are taken, otherwise the class would make
-// every block differ from its cached signature on the next render.
-function markMediaBlocks(nodes: readonly ChildNode[]): void {
-  for (const node of nodes) {
-    if (node instanceof Element && node.querySelector('img, video, audio')) {
-      node.classList.add('markdown-block--media');
+const renderStates = new WeakMap<HTMLElement, MarkdownRenderState>();
+
+function collectHeadings(node: BlockNode, headings: Heading[]): void {
+  if (node.type === 'heading') {
+    headings.push(node);
+    return;
+  }
+  if (node.type === 'blockquote') {
+    for (const child of node.children) {
+      collectHeadings(child, headings);
+    }
+    return;
+  }
+  if (node.type === 'list') {
+    for (const item of node.children) {
+      for (const child of item.children) {
+        collectHeadings(child, headings);
+      }
     }
   }
 }
 
-function markFloatingMedia(container: HTMLElement): void {
-  container.toggleAttribute(
-    'data-floating-media',
-    container.querySelector(FLOATING_MEDIA_SELECTOR) !== null,
+function syncHeadingMetadata(
+  node: BlockNode,
+  element: ChildNode,
+  context: RenderContext,
+): void {
+  if (!(element instanceof Element)) {
+    return;
+  }
+  const headings: Heading[] = [];
+  collectHeadings(node, headings);
+  if (headings.length === 0) {
+    return;
+  }
+  const elements = [
+    ...(element.matches(':is(h1, h2, h3, h4, h5, h6)')
+      ? [element as HTMLElement]
+      : []),
+    ...element.querySelectorAll<HTMLElement>(
+      ':is(h1, h2, h3, h4, h5, h6)',
+    ),
+  ];
+  headings.forEach((heading, index) => {
+    const headingElement = elements[index];
+    if (headingElement) {
+      applyHeadingMetadata(heading, headingElement, context);
+    }
+  });
+}
+
+function renderContext(projectId?: string): RenderContext {
+  return {
+    headingIds: new Map(),
+    headingPath: [],
+    projectId,
+  };
+}
+
+function rebuildMarkdown(
+  container: HTMLElement,
+  source: string,
+  projectId?: string,
+): void {
+  const nodes = parseMarkdown(source).children;
+  const fragment = document.createDocumentFragment();
+  const context = renderContext(projectId);
+  const blocks: RenderedMarkdownBlock[] = [];
+
+  for (const node of nodes) {
+    renderBlocks([node], fragment, context);
+    const element = fragment.lastChild!;
+    blocks.push({
+      element,
+      node,
+      source: source.slice(node.position.start, node.position.end),
+    });
+  }
+
+  container.replaceChildren(fragment);
+  renderStates.set(container, { blocks, projectId, source });
+}
+
+function hasExpectedChildren(
+  container: HTMLElement,
+  blocks: readonly RenderedMarkdownBlock[],
+): boolean {
+  if (container.childNodes.length !== blocks.length) {
+    return false;
+  }
+  return blocks.every(
+    ({ element }, index) => container.childNodes[index] === element,
   );
+}
+
+function parseChangedBlock(segment: MarkdownBlockSource): BlockNode | null {
+  const children = parseMarkdown(segment.source).children;
+  if (children.length !== 1) {
+    return null;
+  }
+  const node = children[0]!;
+  node.position = { end: segment.end, start: segment.start };
+  return node;
 }
 
 export function renderMarkdownInto(
@@ -523,52 +619,84 @@ export function renderMarkdownInto(
   source: string,
   options: { projectId?: string } = {},
 ): void {
-  const staged = document.createElement('div');
-  renderBlocks(parseMarkdown(source).children, staged, {
-    headingIds: new Map(),
-    headingPath: [],
-    projectId: options.projectId,
-  });
-
-  const next = [...staged.childNodes];
-  markMediaBlocks(next);
-  const signatures = next.map(nodeSignature);
-  const previous = renderedSignatures.get(container);
-
-  // Without a signature list matching the live children there is nothing
-  // trustworthy to diff against, so rebuild the whole subtree.
-  if (!previous || previous.length !== container.childNodes.length) {
-    container.replaceChildren(...next);
-    renderedSignatures.set(container, signatures);
-    markFloatingMedia(container);
+  const state = renderStates.get(container);
+  if (
+    !state ||
+    state.projectId !== options.projectId ||
+    !hasExpectedChildren(container, state.blocks)
+  ) {
+    rebuildMarkdown(container, source, options.projectId);
     return;
   }
 
+  if (state.source === source) {
+    return;
+  }
+
+  const segments = splitMarkdownBlocks(source);
   let prefix = 0;
   while (
-    prefix < previous.length &&
-    prefix < signatures.length &&
-    previous[prefix] === signatures[prefix]
+    prefix < state.blocks.length &&
+    prefix < segments.length &&
+    state.blocks[prefix]?.source === segments[prefix]?.source
   ) {
     prefix += 1;
   }
 
-  if (previous.length === signatures.length && prefix === signatures.length) {
+  if (state.blocks.length === segments.length && prefix === segments.length) {
+    renderStates.set(container, { ...state, source });
     return;
   }
 
   let suffix = 0;
   while (
-    suffix < previous.length - prefix &&
-    suffix < signatures.length - prefix &&
-    previous[previous.length - suffix - 1] ===
-      signatures[signatures.length - suffix - 1]
+    suffix < state.blocks.length - prefix &&
+    suffix < segments.length - prefix &&
+    state.blocks[state.blocks.length - suffix - 1]?.source ===
+      segments[segments.length - suffix - 1]?.source
   ) {
     suffix += 1;
   }
 
-  const oldEnd = previous.length - suffix;
-  const newEnd = signatures.length - suffix;
+  const oldEnd = state.blocks.length - suffix;
+  const newEnd = segments.length - suffix;
+  const next: Array<RenderedMarkdownBlock | undefined> = new Array(
+    segments.length,
+  );
+
+  for (let index = 0; index < prefix; index += 1) {
+    next[index] = state.blocks[index]!;
+  }
+  for (let index = 0; index < suffix; index += 1) {
+    next[segments.length - index - 1] =
+      state.blocks[state.blocks.length - index - 1]!;
+  }
+  for (let index = prefix; index < newEnd; index += 1) {
+    const segment = segments[index]!;
+    const node = parseChangedBlock(segment);
+    if (!node) {
+      rebuildMarkdown(container, source, options.projectId);
+      return;
+    }
+    next[index] = {
+      element: document.createTextNode(''),
+      node,
+      source: segment.source,
+    };
+  }
+
+  const context = renderContext(options.projectId);
+  for (let index = 0; index < next.length; index += 1) {
+    const block = next[index]!;
+    if (index >= prefix && index < newEnd) {
+      const fragment = document.createDocumentFragment();
+      renderBlocks([block.node], fragment, context);
+      block.element = fragment.firstChild!;
+    } else {
+      syncHeadingMetadata(block.node, block.element, context);
+    }
+  }
+
   const anchor = container.childNodes[oldEnd] ?? null;
 
   for (let index = oldEnd - 1; index >= prefix; index -= 1) {
@@ -577,10 +705,13 @@ export function renderMarkdownInto(
 
   const fragment = document.createDocumentFragment();
   for (let index = prefix; index < newEnd; index += 1) {
-    fragment.appendChild(next[index]!);
+    fragment.appendChild(next[index]!.element);
   }
   container.insertBefore(fragment, anchor);
 
-  renderedSignatures.set(container, signatures);
-  markFloatingMedia(container);
+  renderStates.set(container, {
+    blocks: next as RenderedMarkdownBlock[],
+    projectId: options.projectId,
+    source,
+  });
 }

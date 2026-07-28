@@ -9,6 +9,7 @@ const SPELLING_WORD =
 const IGNORED_SOURCE =
   /`[^`\n]*`|https?:\/\/[^\s<>()]+|\]\([^)\n]*\)|\[\[[^\]\n]*\]\]/gu;
 const SPELLING_ERROR_CLASS = 'md-spelling-error';
+export const SOURCE_SPELLCHECK_OVERSCAN_LINES = 120;
 export const PERSONAL_DICTIONARY_CHANGED_EVENT =
   'flyoff:personal-dictionary-changed';
 
@@ -69,12 +70,101 @@ function sourceLinesInRange(
   root: HTMLElement,
   range?: Pick<SourceChangeRange, 'endLine' | 'startLine'>,
 ): readonly HTMLElement[] {
-  const lines = Array.from(
-    root.querySelectorAll<HTMLElement>(':scope > .md-line'),
+  const start = Math.max(0, range?.startLine ?? 0);
+  const end = Math.min(
+    root.children.length,
+    range?.endLine ?? root.children.length,
   );
-  return range
-    ? lines.slice(range.startLine, range.endLine)
-    : lines;
+  const lines: HTMLElement[] = [];
+  for (let index = start; index < end; index += 1) {
+    const line = root.children[index];
+    if (line instanceof HTMLElement && line.classList.contains('md-line')) {
+      lines.push(line);
+    }
+  }
+  return lines;
+}
+
+function lineIndexFromPoint(
+  root: HTMLElement,
+  x: number,
+  y: number,
+): number | undefined {
+  const target = root.ownerDocument.elementFromPoint?.(x, y);
+  const line =
+    target instanceof Element
+      ? target.closest<HTMLElement>('.md-line')
+      : null;
+  if (!line || !root.contains(line)) {
+    return undefined;
+  }
+  const index = Number(line.dataset.line) - 1;
+  return Number.isInteger(index) && index >= 0 ? index : undefined;
+}
+
+export function sourceSpellcheckViewportRange(
+  root: HTMLElement,
+  lineCount: number,
+  overscan = SOURCE_SPELLCHECK_OVERSCAN_LINES,
+): Pick<SourceChangeRange, 'endLine' | 'startLine'> {
+  if (lineCount <= 0) {
+    return { endLine: 0, startLine: 0 };
+  }
+
+  const bounds = root.getBoundingClientRect();
+  const x = Math.min(bounds.right - 1, bounds.left + bounds.width / 2);
+  const hitStart = lineIndexFromPoint(root, x, bounds.top + 1);
+  const hitEnd = lineIndexFromPoint(root, x, bounds.bottom - 1);
+  const scrollHeight = Math.max(1, root.scrollHeight);
+  const estimatedStart = Math.floor(
+    (root.scrollTop / scrollHeight) * lineCount,
+  );
+  const estimatedVisible = Math.max(
+    1,
+    Math.ceil((Math.max(1, root.clientHeight) / scrollHeight) * lineCount),
+  );
+  const visibleStart = Math.min(
+    lineCount - 1,
+    hitStart ?? estimatedStart,
+  );
+  const visibleEnd = Math.min(
+    lineCount,
+    (hitEnd ?? visibleStart + estimatedVisible - 1) + 1,
+  );
+  return {
+    endLine: Math.min(lineCount, visibleEnd + overscan),
+    startLine: Math.max(0, visibleStart - overscan),
+  };
+}
+
+export function clearSourceSpellingErrorsOutsideRange(
+  root: HTMLElement,
+  range: Pick<SourceChangeRange, 'endLine' | 'startLine'>,
+): void {
+  const affected = new Set<Node>();
+  for (const marker of root.querySelectorAll<HTMLElement>(
+    `.${SPELLING_ERROR_CLASS}`,
+  )) {
+    const line = marker.closest<HTMLElement>('.md-line');
+    const index = Number(line?.dataset.line) - 1;
+    if (
+      Number.isInteger(index) &&
+      index >= range.startLine &&
+      index < range.endLine
+    ) {
+      continue;
+    }
+    const parent = marker.parentNode;
+    marker.replaceWith(
+      root.ownerDocument.createTextNode(marker.textContent ?? ''),
+    );
+    if (parent) {
+      affected.add(parent);
+    }
+  }
+  for (const node of affected) {
+    node.normalize();
+  }
 }
 
 export function clearSourceSpellingErrors(

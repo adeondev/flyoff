@@ -11,7 +11,6 @@ import {
   reconcileSource,
   updateActiveSourceLine,
 } from '../../src/renderer/projects/source-renderer';
-import { serializeImageDirective } from '../../src/shared/markdown';
 
 describe('incremental source renderer', () => {
   it('creates canonical gutter and content cells for every line', () => {
@@ -228,61 +227,4 @@ describe('incremental source renderer', () => {
     expect(root.children[0]?.classList.contains('md-line--active')).toBe(true);
   });
 
-  describe('offscreen row containment', () => {
-    function imageSource(mode: 'wrap' | 'block'): string {
-      return serializeImageDirective({
-        align: 'left',
-        alt: 'Lua',
-        assetId: '123e4567-e89b-42d3-a456-426614174000',
-        caption: '',
-        height: 90,
-        instanceId: '223e4567-e89b-42d3-a456-426614174001',
-        margin: 8,
-        maxWidth: 1200,
-        minWidth: 96,
-        mode,
-        path: 'Media/Lua.png',
-        positionLock: false,
-        ratioLock: true,
-        version: 2,
-        width: 160,
-      });
-    }
-
-    it('leaves a plain document containable', () => {
-      const root = document.createElement('div');
-      reconcileSource(root, 'one\ntwo\nthree');
-
-      expect(root.hasAttribute('data-floating-media')).toBe(false);
-      expect(root.querySelector('.md-line--media')).toBeNull();
-    });
-
-    it('opts the document out while a wrapped image floats', () => {
-      const root = document.createElement('div');
-      reconcileSource(root, `one\n${imageSource('wrap')}\nthree`);
-
-      expect(root.hasAttribute('data-floating-media')).toBe(true);
-    });
-
-    it('opts back in once the float is gone', () => {
-      const root = document.createElement('div');
-      reconcileSource(root, `one\n${imageSource('wrap')}\nthree`);
-      expect(root.hasAttribute('data-floating-media')).toBe(true);
-
-      reconcileSource(root, 'one\ntwo\nthree');
-
-      expect(root.hasAttribute('data-floating-media')).toBe(false);
-    });
-
-    it('marks rows holding an image so their height is never guessed', () => {
-      const root = document.createElement('div');
-      reconcileSource(root, `one\n${imageSource('block')}\nthree`);
-
-      // A centered image does not float, so the document stays containable
-      // while its own row keeps rendering.
-      expect(root.hasAttribute('data-floating-media')).toBe(false);
-      expect(root.children[1]?.classList.contains('md-line--media')).toBe(true);
-      expect(root.children[0]?.classList.contains('md-line--media')).toBe(false);
-    });
-  });
 });

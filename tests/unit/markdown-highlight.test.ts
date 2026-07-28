@@ -102,6 +102,25 @@ describe('markdown source highlighter', () => {
     expect(coloredText).toContain('data-md-color-end="17"');
   });
 
+  it('tags color attributes apart from ordinary link attributes', () => {
+    expect(highlightSource('[x]{color=#3B82F6}')).toContain(
+      'md-tok-attr md-tok-color-attr',
+    );
+    expect(highlightSource('==blue=={color=#3B82F6}')).toContain(
+      'md-tok-attr md-tok-color-attr',
+    );
+    expect(highlightSource('[[note]]{color=#3B82F6}')).toContain(
+      'md-tok-attr md-tok-color-attr',
+    );
+    expect(highlightSource('[x](https://a.dev){color=#3B82F6}')).toContain(
+      'md-tok-attr md-tok-color-attr',
+    );
+
+    const plainLink = highlightSource('[x](https://a.dev)');
+    expect(plainLink).toContain('md-tok-attr');
+    expect(plainLink).not.toContain('md-tok-color-attr');
+  });
+
   it('adds editable source swatches for inherited and custom highlights', () => {
     const inherited = highlightSource('prefix ==blue==');
     expect(inherited).toContain('data-md-color-kind="highlight"');

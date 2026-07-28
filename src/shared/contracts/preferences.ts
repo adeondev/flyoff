@@ -71,6 +71,8 @@ export const FOCUS_INDICATORS = ['standard', 'strong'] as const;
 export const SPELLCHECK_SUGGESTION_LIMITS = [3, 5, 8] as const;
 export const EMOJI_SKIN_TONES = [0, 1, 2, 3, 4, 5] as const;
 export const EMOJI_RECENT_LIMIT = 24;
+export const COLOR_RECENT_LIMIT = 10;
+const RECENT_COLOR = /^#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 
 export const NOTE_FONT_SIZE_MIN = 12;
 export const NOTE_FONT_SIZE_MAX = 24;
@@ -152,7 +154,9 @@ export interface FlyoffPreferences {
     tabSize: EditorTabSize;
     syncSplitScroll: boolean;
     highlightActiveLine: boolean;
+    hideColorMarkup: boolean;
     fontLigatures: boolean;
+    colorRecent: readonly string[];
     emojiRecent: readonly string[];
     emojiSkinTone: EmojiSkinTone;
   };
@@ -369,7 +373,9 @@ export function createDefaultFlyoffPreferences(): FlyoffPreferences {
       tabSize: 2,
       syncSplitScroll: true,
       highlightActiveLine: true,
+      hideColorMarkup: false,
       fontLigatures: true,
+      colorRecent: [],
       emojiRecent: [],
       emojiSkinTone: 0,
     },
@@ -379,7 +385,7 @@ export function createDefaultFlyoffPreferences(): FlyoffPreferences {
       treeDensity: 'comfortable',
       showSearchTips: true,
       showPaneDropLabels: true,
-      mediaGalleryView: 'grid',
+      mediaGalleryView: 'details',
       mediaGalleryDensity: 'normal',
       mediaGallerySearchScope: 'all',
       mediaGallerySort: 'name-ascending',
@@ -437,6 +443,17 @@ export function normalizeFlyoffPreferences(value: unknown): FlyoffPreferences {
         ),
       ].slice(0, EMOJI_RECENT_LIMIT)
     : defaults.editor.emojiRecent;
+  const colorRecent = Array.isArray(editor.colorRecent)
+    ? [
+        ...new Set(
+          editor.colorRecent.flatMap((color) =>
+            typeof color === 'string' && RECENT_COLOR.test(color)
+              ? [color.toUpperCase()]
+              : [],
+          ),
+        ),
+      ].slice(0, COLOR_RECENT_LIMIT)
+    : defaults.editor.colorRecent;
 
   return {
     version: PREFERENCES_VERSION,
@@ -568,10 +585,15 @@ export function normalizeFlyoffPreferences(value: unknown): FlyoffPreferences {
         typeof editor.highlightActiveLine === 'boolean'
           ? editor.highlightActiveLine
           : defaults.editor.highlightActiveLine,
+      hideColorMarkup:
+        typeof editor.hideColorMarkup === 'boolean'
+          ? editor.hideColorMarkup
+          : defaults.editor.hideColorMarkup,
       fontLigatures:
         typeof editor.fontLigatures === 'boolean'
           ? editor.fontLigatures
           : defaults.editor.fontLigatures,
+      colorRecent,
       emojiRecent,
       emojiSkinTone: includes(EMOJI_SKIN_TONES, editor.emojiSkinTone)
         ? editor.emojiSkinTone

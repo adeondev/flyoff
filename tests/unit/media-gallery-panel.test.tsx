@@ -9,7 +9,10 @@ import {
 } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { MediaGalleryPanel } from '../../src/renderer/projects/MediaGalleryPanel';
+import {
+  MEDIA_ENTRY_TRANSFER,
+  MediaGalleryPanel,
+} from '../../src/renderer/projects/MediaGalleryPanel';
 import type { MediaGallerySnapshot } from '../../src/shared/contracts';
 
 const snapshot: MediaGallerySnapshot = {
@@ -42,12 +45,20 @@ const snapshot: MediaGallerySnapshot = {
   })),
 };
 
-function renderGallery(overrides: Record<string, unknown> = {}) {
+function renderGallery(
+  overrides: Record<string, unknown> = {},
+  props: { onCloseProject?: () => void } = {},
+) {
   Object.defineProperty(window, 'flyoff', {
     configurable: true,
     value: {
       getMediaGallery: vi.fn().mockResolvedValue({ ok: true, value: snapshot }),
       cancelProjectMediaImport: vi.fn(),
+      onProjectMediaImportProgress: vi.fn(() => () => undefined),
+      startDroppedProjectMediaImport: vi.fn().mockResolvedValue({
+        ok: true,
+        value: { operationId: 'import-operation' },
+      }),
       createMediaFolder: vi.fn().mockResolvedValue({
         ok: true,
         value: snapshot,
@@ -61,6 +72,7 @@ function renderGallery(overrides: Record<string, unknown> = {}) {
   });
   return render(
     <MediaGalleryPanel
+      onCloseProject={props.onCloseProject}
       projectId={snapshot.projectId}
       translate={(key) => key}
     />,
@@ -73,6 +85,36 @@ afterEach(() => {
 });
 
 describe('media gallery panel selection', () => {
+  it('opens with the details view by default', async () => {
+    const { container } = renderGallery();
+    await screen.findByRole('gridcell', { name: 'Folder' });
+
+    expect(
+      container.querySelector('.media-gallery__grid--details'),
+    ).toBeTruthy();
+    expect(
+      container.querySelector('.media-gallery__details-header'),
+    ).toBeTruthy();
+  });
+
+  it('hides the details header when the current folder is empty', async () => {
+    const emptySnapshot = {
+      ...snapshot,
+      assets: [],
+      folders: [],
+    };
+    const { container } = renderGallery({
+      getMediaGallery: vi
+        .fn()
+        .mockResolvedValue({ ok: true, value: emptySnapshot }),
+    });
+
+    await screen.findByText('projects.mediaEmpty');
+    expect(
+      container.querySelector('.media-gallery__details-header'),
+    ).toBeNull();
+  });
+
   it('supports Shift ranges, Ctrl toggles, select all and Escape', async () => {
     renderGallery();
     const folder = await screen.findByRole('gridcell', { name: 'Folder' });
@@ -197,5 +239,122 @@ describe('media gallery panel selection', () => {
 
     fireEvent.keyDown(document, { key: ' ' });
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  });
+
+  it('moves an internal asset to the highlighted folder without opening it', async () => {
+    const moveMediaEntries = vi.fn().mockResolvedValue({
+      ok: true,
+      value: snapshot,
+    });
+    renderGallery({ moveMediaEntries });
+    const folder = await screen.findByRole('gridcell', { name: 'Folder' });
+    const payload = JSON.stringify({
+      projectId: snapshot.projectId,
+      entries: [{ entryId: snapshot.assets[0]!.assetId, kind: 'asset' }],
+      expectedRevision: snapshot.revision,
+    });
+    const dataTransfer = {
+      dropEffect: 'none',
+      files: [],
+      getData: (type: string) =>
+        type === MEDIA_ENTRY_TRANSFER ? payload : '',
+      types: [MEDIA_ENTRY_TRANSFER],
+    };
+
+    vi.useFakeTimers();
+    try {
+      fireEvent.dragOver(folder, { dataTransfer });
+      await vi.advanceTimersByTimeAsync(700);
+      expect(folder.isConnected).toBe(true);
+      expect(folder.classList.contains('media-gallery__item--drop-target')).toBe(
+        true,
+      );
+      fireEvent.drop(folder, { dataTransfer });
+    } finally {
+      vi.useRealTimers();
+    }
+
+    await waitFor(() => expect(moveMediaEntries).toHaveBeenCalledTimes(1));
+    expect(moveMediaEntries).toHaveBeenCalledWith({
+      entries: [{ entryId: snapshot.assets[0]!.assetId, kind: 'asset' }],
+      expectedRevision: snapshot.revision,
+      parentId: snapshot.folders[0]!.folderId,
+    });
+  });
+
+  it('imports external files into the folder that receives the drop', async () => {
+    let reportProgress:
+      | ((progress: {
+          completed: number;
+          currentName: string;
+          failed: number;
+          operationId: string;
+          status: 'completed';
+          total: number;
+        }) => void)
+      | undefined;
+    const startDroppedProjectMediaImport = vi.fn().mockResolvedValue({
+      ok: true,
+      value: { operationId: 'import-operation' },
+    });
+    renderGallery({
+      onProjectMediaImportProgress: vi.fn((callback) => {
+        reportProgress = callback;
+        return () => undefined;
+      }),
+      startDroppedProjectMediaImport,
+    });
+    const folder = await screen.findByRole('gridcell', { name: 'Folder' });
+    const file = new File(['image'], 'external.png', { type: 'image/png' });
+    const dataTransfer = {
+      dropEffect: 'none',
+      files: [file],
+      getData: () => '',
+      types: ['Files'],
+    };
+
+    fireEvent.dragOver(folder, { dataTransfer });
+    fireEvent.drop(folder, { dataTransfer });
+
+    await waitFor(() =>
+      expect(startDroppedProjectMediaImport).toHaveBeenCalledTimes(1),
+    );
+    expect(startDroppedProjectMediaImport).toHaveBeenCalledWith([file], {
+      folderId: snapshot.folders[0]!.folderId,
+      parentId: null,
+    });
+    reportProgress?.({
+      completed: 1,
+      currentName: 'external.png',
+      failed: 0,
+      operationId: 'import-operation',
+      status: 'completed',
+      total: 1,
+    });
+  });
+
+  it('goes to the parent folder before closing the project at the root', async () => {
+    const onCloseProject = vi.fn();
+    renderGallery({}, { onCloseProject });
+    const folder = await screen.findByRole('gridcell', { name: 'Folder' });
+    const close = screen.getByRole('button', {
+      name: 'projects.closeProject',
+    });
+
+    fireEvent.click(close);
+    expect(onCloseProject).toHaveBeenCalledTimes(1);
+
+    fireEvent.doubleClick(folder);
+    const back = await screen.findByRole('button', {
+      name: 'projects.mediaBack',
+    });
+    fireEvent.click(back);
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'projects.closeProject' }),
+      ).toBeTruthy(),
+    );
+    expect(onCloseProject).toHaveBeenCalledTimes(1);
   });
 });

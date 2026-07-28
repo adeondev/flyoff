@@ -406,6 +406,58 @@ describe('Flyoff tooltip', () => {
     }
   });
 
+  it('offers true Default colour at a collapsed caret', () => {
+    const onColor = vi.fn();
+    render(
+      <MarkdownToolbar
+        hasSelection={false}
+        onAction={vi.fn()}
+        onColor={onColor}
+        onEmoji={vi.fn()}
+        onEmojiPickerClose={vi.fn()}
+        readColorContext={() => ({
+          color: null,
+          kind: 'text',
+          snapTo: [],
+        })}
+        translate={(key) => key}
+      />,
+    );
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'toolbar.color' }),
+    );
+    expect(
+      screen
+        .getByRole('button', { name: 'toolbar.defaultColor' })
+        .getAttribute('aria-pressed'),
+    ).toBe('true');
+    fireEvent.click(
+      screen.getByRole('button', { name: 'toolbar.useWhileTyping' }),
+    );
+
+    expect(onColor).toHaveBeenCalledWith('text', null);
+  });
+
+  it('exposes the active typing colour on the toolbar button', () => {
+    render(
+      <MarkdownToolbar
+        activeTypingColor={{ color: '#8F4FC4', kind: 'text' }}
+        onAction={vi.fn()}
+        onColor={vi.fn()}
+        onEmoji={vi.fn()}
+        onEmojiPickerClose={vi.fn()}
+        translate={(key) => key}
+      />,
+    );
+
+    expect(
+      screen
+        .getByRole('button', { name: 'toolbar.color' })
+        .getAttribute('aria-pressed'),
+    ).toBe('true');
+  });
+
   it('searches and inserts offline emoji without closing the picker', () => {
     const onEmoji = vi.fn();
     render(

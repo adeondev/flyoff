@@ -119,6 +119,7 @@ export interface MediaGalleryPanelHandle {
 
 export interface MediaGalleryPanelProps {
   projectId: string;
+  onCloseProject?: () => void;
   onError?: (message: string) => void;
   onInsertAsset?: (asset: MediaAsset) => void;
   onOpenAsset?: (asset: MediaAsset) => void;
@@ -158,6 +159,7 @@ export const MediaGalleryPanel = forwardRef<
 >(function MediaGalleryPanel(
   {
     onAssetsRemoved,
+    onCloseProject,
     onError,
     onInsertAsset,
     onOpenAsset,
@@ -231,9 +233,6 @@ export const MediaGalleryPanel = forwardRef<
   const navigationHistoryRef = useRef<(string | null)[]>([]);
   const navigationForwardRef = useRef<(string | null)[]>([]);
   const activeProjectRef = useRef<string | undefined>(undefined);
-  const hoverFolderTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(
-    undefined,
-  );
   const typeaheadRef = useRef('');
   const typeaheadTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
@@ -404,9 +403,6 @@ export const MediaGalleryPanel = forwardRef<
       const operationId = importOperationRef.current;
       if (operationId) {
         void window.flyoff.cancelProjectMediaImport({ operationId });
-      }
-      if (hoverFolderTimerRef.current) {
-        clearTimeout(hoverFolderTimerRef.current);
       }
       if (typeaheadTimerRef.current) {
         clearTimeout(typeaheadTimerRef.current);
@@ -872,31 +868,6 @@ export const MediaGalleryPanel = forwardRef<
       navigateToFolder(entry.folder.folderId);
     } else {
       onOpenAsset?.(entry.asset);
-    }
-  }
-
-  function scheduleFolderHover(folder: MediaFolder): void {
-    if (dropTargetId === folder.folderId && hoverFolderTimerRef.current) {
-      return;
-    }
-    if (hoverFolderTimerRef.current) {
-      clearTimeout(hoverFolderTimerRef.current);
-    }
-    hoverFolderTimerRef.current = setTimeout(() => {
-      hoverFolderTimerRef.current = undefined;
-      navigateToFolder(folder.folderId);
-      setDropTargetId(null);
-      // The dragged source <article> unmounts on navigation, so its
-      // onDragEnd never fires — reset the ghost overlay here or it is
-      // left floating on screen for the rest of the session.
-      finishImageDrag();
-    }, 600);
-  }
-
-  function cancelFolderHover(): void {
-    if (hoverFolderTimerRef.current) {
-      clearTimeout(hoverFolderTimerRef.current);
-      hoverFolderTimerRef.current = undefined;
     }
   }
 
@@ -1553,6 +1524,9 @@ export const MediaGalleryPanel = forwardRef<
         item.kind === 'action' &&
         item.id === (moveRequest?.destinationId ?? 'root'),
     )?.label ?? translate('rail.media');
+  const backLabel = folderId
+    ? translate('projects.mediaBack')
+    : translate('projects.closeProject');
 
   return (
     <aside
@@ -1575,16 +1549,17 @@ export const MediaGalleryPanel = forwardRef<
       <header className="media-gallery__header">
         <div className="media-gallery__tools">
           <button
-            aria-label={translate('projects.mediaBack')}
-            disabled={!folderId}
+            aria-label={backLabel}
+            disabled={!folderId && !onCloseProject}
             onClick={() => {
-              navigateToFolder(parentFolder?.parentId ?? null);
+              if (folderId) {
+                navigateToFolder(parentFolder?.parentId ?? null);
+              } else {
+                onCloseProject?.();
+              }
             }}
             type="button"
-            {...getTooltipTargetProps(
-              translate('projects.mediaBack'),
-              'bottom',
-            )}
+            {...getTooltipTargetProps(backLabel, 'bottom')}
           >
             <MaskedIcon icon={arrowLeftIcon} />
           </button>
@@ -1619,52 +1594,52 @@ export const MediaGalleryPanel = forwardRef<
             <MaskedIcon icon={refreshIcon} />
           </button>
         </div>
-        <div className="media-gallery__breadcrumbs">
+      </header>
+      <div className="media-gallery__breadcrumbs">
+        <button
+          data-drop-target={dropTargetId === null || undefined}
+          onClick={() => navigateToFolder(null)}
+          onDragOver={(event) => {
+            if (event.dataTransfer.types.includes(MEDIA_ENTRY_TRANSFER)) {
+              event.preventDefault();
+              event.dataTransfer.dropEffect = 'move';
+              setDropTargetId(null);
+            }
+          }}
+          onDrop={(event) => {
+            if (moveTransferredEntries(event, null)) {
+              finishImageDrag();
+            }
+            setDropTargetId(undefined);
+          }}
+          type="button"
+        >
+          {translate('rail.media')}
+        </button>
+        {breadcrumbs.map((folder) => (
           <button
-            data-drop-target={dropTargetId === null || undefined}
-            onClick={() => navigateToFolder(null)}
+            data-drop-target={dropTargetId === folder.folderId || undefined}
+            key={folder.folderId}
+            onClick={() => navigateToFolder(folder.folderId)}
             onDragOver={(event) => {
               if (event.dataTransfer.types.includes(MEDIA_ENTRY_TRANSFER)) {
                 event.preventDefault();
                 event.dataTransfer.dropEffect = 'move';
-                setDropTargetId(null);
+                setDropTargetId(folder.folderId);
               }
             }}
             onDrop={(event) => {
-              if (moveTransferredEntries(event, null)) {
+              if (moveTransferredEntries(event, folder.folderId)) {
                 finishImageDrag();
               }
               setDropTargetId(undefined);
             }}
             type="button"
           >
-            {translate('rail.media')}
+            {folder.name}
           </button>
-          {breadcrumbs.map((folder) => (
-            <button
-              data-drop-target={dropTargetId === folder.folderId || undefined}
-              key={folder.folderId}
-              onClick={() => navigateToFolder(folder.folderId)}
-              onDragOver={(event) => {
-                if (event.dataTransfer.types.includes(MEDIA_ENTRY_TRANSFER)) {
-                  event.preventDefault();
-                  event.dataTransfer.dropEffect = 'move';
-                  setDropTargetId(folder.folderId);
-                }
-              }}
-              onDrop={(event) => {
-                if (moveTransferredEntries(event, folder.folderId)) {
-                  finishImageDrag();
-                }
-                setDropTargetId(undefined);
-              }}
-              type="button"
-            >
-              {folder.name}
-            </button>
-          ))}
-        </div>
-      </header>
+        ))}
+      </div>
       <div className="media-gallery__filters">
         <SearchComposer
           ariaLabel={translate('projects.mediaSearch')}
@@ -1873,7 +1848,8 @@ export const MediaGalleryPanel = forwardRef<
           ref={gridRef}
           role="grid"
         >
-          {viewMode === 'details' ? (
+          {viewMode === 'details' &&
+          (entries.length > 0 || creatingFolder) ? (
             <div
               aria-hidden="true"
               className="media-gallery__details-header"
@@ -2029,7 +2005,6 @@ export const MediaGalleryPanel = forwardRef<
                       )
                     ) {
                       event.dataTransfer.dropEffect = 'none';
-                      cancelFolderHover();
                       setDropTargetId(undefined);
                       return;
                     }
@@ -2038,11 +2013,6 @@ export const MediaGalleryPanel = forwardRef<
                         ? 'move'
                         : 'copy';
                     setDropTargetId(entry.id);
-                    if (
-                      event.dataTransfer.types.includes(MEDIA_ENTRY_TRANSFER)
-                    ) {
-                      scheduleFolderHover(entry.folder);
-                    }
                   }
                 }}
                 onDragLeave={(event) => {
@@ -2053,7 +2023,6 @@ export const MediaGalleryPanel = forwardRef<
                     setDropTargetId((current) =>
                       current === entry.id ? undefined : current,
                     );
-                    cancelFolderHover();
                   }
                 }}
                 onDragStart={(event: DragEvent<HTMLElement>) => {
@@ -2168,7 +2137,6 @@ export const MediaGalleryPanel = forwardRef<
                   }
                 }}
                 onDragEnd={() => {
-                  cancelFolderHover();
                   setDropTargetId(undefined);
                   dispatchInteraction({ type: 'finish' });
                   if (entry.kind === 'asset') {
@@ -2179,21 +2147,30 @@ export const MediaGalleryPanel = forwardRef<
                   if (entry.kind !== 'folder') {
                     return;
                   }
-                  if (
-                    moveTransferredEntries(event, entry.folder.folderId)
-                  ) {
-                    event.stopPropagation();
-                    finishImageDrag();
-                  } else if (event.dataTransfer.files.length > 0) {
-                    event.preventDefault();
-                    event.stopPropagation();
+                  const transfersEntries =
+                    event.dataTransfer.types.includes(MEDIA_ENTRY_TRANSFER);
+                  const transfersFiles =
+                    event.dataTransfer.types.includes('Files') &&
+                    event.dataTransfer.files.length > 0;
+                  if (!transfersEntries && !transfersFiles) {
+                    return;
+                  }
+                  event.preventDefault();
+                  event.stopPropagation();
+                  if (transfersEntries) {
+                    if (
+                      moveTransferredEntries(event, entry.folder.folderId)
+                    ) {
+                      finishImageDrag();
+                      dispatchInteraction({ type: 'finish' });
+                    }
+                  } else {
                     void importImages(
                       Array.from(event.dataTransfer.files),
                       entry.folder.folderId,
                     );
                   }
                   setDropTargetId(undefined);
-                  cancelFolderHover();
                 }}
                 onKeyDown={(event) => handleItemKeyDown(event, entry)}
                 ref={(element) => {

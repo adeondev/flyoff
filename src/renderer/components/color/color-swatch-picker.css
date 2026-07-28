@@ -1,4 +1,11 @@
 .flyoff-color-picker {
+  --picker-checkerboard: repeating-conic-gradient(
+      var(--color-border) 0% 25%,
+      transparent 0% 50%
+    )
+    0 0 / 10px 10px;
+  --picker-eyedropper: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M17.7 3.3a2.9 2.9 0 0 1 4.1 4.1l-2.4 2.4 1 1a1 1 0 0 1-1.4 1.4l-1-1-7.6 7.6a3 3 0 0 1-1.5.8l-3.6.9a1 1 0 0 1-1.2-1.2l.9-3.6a3 3 0 0 1 .8-1.5l7.6-7.6-1-1A1 1 0 0 1 13.8 4l1 1 2.4-2.4z'/%3E%3C/svg%3E");
+
   display: grid;
   gap: 11px;
 }
@@ -36,6 +43,11 @@
     0 0 0 4px var(--color-focus-ring);
 }
 
+.flyoff-swatches--recent {
+  grid-template-columns: repeat(10, minmax(0, 1fr));
+  gap: 6px;
+}
+
 .flyoff-color-picker__plane {
   position: relative;
   height: 112px;
@@ -66,11 +78,40 @@
   transform: translate(-50%, -50%);
 }
 
-.flyoff-color-picker__hue {
+.flyoff-color-picker__sliders {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+}
+
+.flyoff-color-picker__preview {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 50%;
+  background:
+    linear-gradient(var(--preview-color), var(--preview-color)),
+    var(--picker-checkerboard);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 16%);
+  color: var(--preview-ink);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.flyoff-color-picker__ranges {
+  display: grid;
+  gap: 8px;
+}
+
+.flyoff-color-picker__hue,
+.flyoff-color-picker__alpha {
   display: grid;
 }
 
-.flyoff-color-picker__hue > span {
+.flyoff-color-picker__hue > span,
+.flyoff-color-picker__alpha > span {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -78,13 +119,17 @@
   clip: rect(0, 0, 0, 0);
 }
 
-.flyoff-color-picker__hue input {
+.flyoff-color-picker__hue input,
+.flyoff-color-picker__alpha input {
   width: 100%;
   height: 14px;
   margin: 0;
   appearance: none;
   border-radius: 999px;
   outline: 0;
+}
+
+.flyoff-color-picker__hue input {
   background: linear-gradient(
     to right,
     #f00,
@@ -97,7 +142,14 @@
   );
 }
 
-.flyoff-color-picker__hue input::-webkit-slider-thumb {
+.flyoff-color-picker__alpha input {
+  background:
+    linear-gradient(to right, transparent, var(--alpha-color)),
+    var(--picker-checkerboard);
+}
+
+.flyoff-color-picker__hue input::-webkit-slider-thumb,
+.flyoff-color-picker__alpha input::-webkit-slider-thumb {
   width: 15px;
   height: 15px;
   appearance: none;
@@ -107,14 +159,68 @@
   box-shadow: 0 0 0 1px black;
 }
 
-.flyoff-color-picker__hue input:focus-visible {
+.flyoff-color-picker__hue input:focus-visible,
+.flyoff-color-picker__alpha input:focus-visible {
   box-shadow: 0 0 0 2px var(--color-focus-ring);
+}
+
+.flyoff-color-picker__eyedropper {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  outline: 0;
+  background: var(--color-surface-active);
+  color: var(--color-text-muted);
+}
+
+.flyoff-color-picker__eyedropper:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.flyoff-color-picker__eyedropper:focus-visible {
+  box-shadow: 0 0 0 2px var(--color-focus-ring);
+}
+
+.flyoff-color-picker__eyedropper > span {
+  width: 15px;
+  height: 15px;
+  background: currentcolor;
+  mask: var(--picker-eyedropper) center / contain no-repeat;
 }
 
 .flyoff-color-picker__fields {
   display: grid;
-  grid-template-columns: repeat(3, minmax(48px, 1fr)) minmax(88px, 1.5fr);
-  gap: 7px;
+  grid-template-columns: auto repeat(3, minmax(0, 1fr)) minmax(74px, 1.3fr);
+  align-items: end;
+  gap: 6px;
+}
+
+.flyoff-color-picker__format {
+  height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 999px;
+  outline: 0;
+  background: var(--color-surface-active);
+  color: var(--color-text-muted);
+  font: inherit;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.flyoff-color-picker__format:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.flyoff-color-picker__format:focus-visible {
+  box-shadow: 0 0 0 2px var(--color-focus-ring);
 }
 
 .flyoff-color-picker__fields label {
@@ -148,8 +254,150 @@
   border-color: var(--color-danger);
 }
 
+:root[data-color-picking='true'],
+:root[data-color-picking='true'] * {
+  cursor: crosshair !important;
+}
+
+/* Kept out of its own still, so it never samples itself. */
+:root[data-color-capturing='true'] .color-loupe-layer {
+  visibility: hidden;
+}
+
+.color-loupe-layer {
+  /* Portaled to the body, so it cannot inherit the picker's own copy. */
+  --picker-checkerboard: repeating-conic-gradient(
+      var(--color-border) 0% 25%,
+      transparent 0% 50%
+    )
+    0 0 / 10px 10px;
+
+  position: fixed;
+  z-index: 400;
+  inset: 0;
+  pointer-events: none;
+}
+
+.color-loupe {
+  --loupe-size: 78px;
+
+  position: absolute;
+  top: var(--loupe-y);
+  left: var(--loupe-x);
+  display: grid;
+  justify-items: center;
+  gap: 5px;
+  pointer-events: none;
+  transform: translate(-50%, calc(-100% - 18px));
+}
+
+.color-loupe__well {
+  position: relative;
+  display: grid;
+  width: var(--loupe-size);
+  height: var(--loupe-size);
+  overflow: hidden;
+  place-items: center;
+  border: 3px solid var(--color-surface);
+  border-radius: 50%;
+  background:
+    linear-gradient(var(--loupe-color), var(--loupe-color)),
+    var(--picker-checkerboard, transparent);
+  box-shadow: 0 0 0 1px var(--color-border);
+}
+
+.color-loupe__zoom {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+  inset: 0;
+}
+
+/* Ring marking the one pixel the click will take. */
+.color-loupe__cell {
+  position: relative;
+  width: var(--loupe-cell);
+  height: var(--loupe-cell);
+  box-shadow:
+    inset 0 0 0 1px rgb(0 0 0 / 55%),
+    0 0 0 1px rgb(255 255 255 / 85%);
+}
+
+.color-loupe[data-authored] .color-loupe__well {
+  border-color: var(--color-accent);
+}
+
+/* The page moved; the still is being re-taken. Do not look confident. */
+.color-loupe[data-stale] {
+  opacity: 0.45;
+}
+
+.color-loupe__value,
+.color-loupe__badge {
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.color-loupe__value {
+  background: var(--loupe-color);
+  color: var(--loupe-ink);
+  box-shadow: 0 0 0 1px var(--color-border);
+}
+
+.color-loupe__badge {
+  background: var(--color-accent);
+  color: var(--color-accent-ink);
+}
+
+.color-loupe-bar {
+  position: absolute;
+  bottom: 22px;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px 6px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-size: 11px;
+  pointer-events: auto;
+  transform: translateX(-50%);
+}
+
+.color-loupe-bar button {
+  height: 26px;
+  padding: 0 11px;
+  border: 0;
+  border-radius: 999px;
+  outline: 0;
+  background: var(--color-surface-active);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.color-loupe-bar button:hover {
+  background: var(--color-surface-hover);
+}
+
+.color-loupe-bar button:focus-visible {
+  box-shadow: 0 0 0 2px var(--color-focus-ring);
+}
+
 @media (max-width: 720px) {
   .flyoff-swatches {
     grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .flyoff-swatches--recent {
+    grid-template-columns: repeat(8, minmax(0, 1fr));
   }
 }

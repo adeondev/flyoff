@@ -97,6 +97,7 @@ function applyDocumentPreferences(preferences: FlyoffPreferences): void {
   root.dataset.highlightActiveLine = String(
     preferences.editor.highlightActiveLine,
   );
+  root.dataset.hideColorMarkup = String(preferences.editor.hideColorMarkup);
   root.dataset.focusIndicator =
     preferences.accessibility.focusIndicator;
   root.dataset.reduceTransparency = String(
