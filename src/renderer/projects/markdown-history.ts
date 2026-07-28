@@ -108,13 +108,22 @@ function mergeEntries(
   if (
     kind === 'insert' &&
     previous.deleted === '' &&
-    next.deleted === '' &&
-    next.start === previous.start + previous.inserted.length
+    next.deleted === ''
   ) {
+    const relativeStart = next.start - previous.start;
+    if (
+      relativeStart < 0 ||
+      relativeStart > previous.inserted.length
+    ) {
+      return undefined;
+    }
     return {
       ...previous,
       afterSelection: next.afterSelection,
-      inserted: previous.inserted + next.inserted,
+      inserted:
+        previous.inserted.slice(0, relativeStart) +
+        next.inserted +
+        previous.inserted.slice(relativeStart),
       timestamp: next.timestamp,
     };
   }

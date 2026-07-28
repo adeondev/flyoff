@@ -13,6 +13,7 @@ export default tseslint.config(
       'node_modules/**',
       'out/**',
       'packages/native-core/build/**',
+      'packages/native-core/target/**',
       'playwright-report/**',
       'test-results/**',
     ],

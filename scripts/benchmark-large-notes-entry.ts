@@ -1,5 +1,9 @@
 import { renderMarkdownInto } from '../src/renderer/projects/markdown-render';
 import { reconcileSource } from '../src/renderer/projects/source-renderer';
+import {
+  renderSourceSpellingErrors,
+  sourceSpellcheckViewportRange,
+} from '../src/renderer/projects/source-spellcheck';
 import { serializeImageDirective } from '../src/shared/markdown';
 
 interface BenchmarkResult {
@@ -7,15 +11,41 @@ interface BenchmarkResult {
   maximumMs: number;
   medianMs: number;
   minimumMs: number;
+  p95Ms: number;
+}
+
+interface RenderBenchmark {
+  descendantNodes: number;
+  edit: BenchmarkResult;
+  initial: BenchmarkResult;
+  scroll: {
+    distancePx: number;
+    frameTime: BenchmarkResult;
+    heightAfterPx: number;
+    heightBeforePx: number;
+    heightChangePx: number;
+  };
+  scrollHeight: number;
+}
+
+interface SpellcheckBenchmark {
+  durationMs: number;
+  markers: number;
+  range?: { endLine: number; startLine: number };
 }
 
 declare global {
   interface Window {
-    runLargeNotesBenchmark(validateContainment?: boolean): Promise<{
-      floatContainmentValidated: boolean;
-      preview: BenchmarkResult;
-      sourceWithWrap: BenchmarkResult;
-      viewportHeight: number;
+    runLargeNotesBenchmark(): Promise<{
+      fixture: { characters: number; lines: number };
+      stableLayoutValidated: boolean;
+      preview: RenderBenchmark;
+      source: RenderBenchmark;
+      spellcheck: {
+        fullDocument: SpellcheckBenchmark;
+        visibleWindow: SpellcheckBenchmark;
+      };
+      viewport: { height: number; width: number };
     }>;
   }
 }
@@ -27,11 +57,41 @@ function summarize(samples: readonly number[]): BenchmarkResult {
     maximumMs: sorted.at(-1) ?? 0,
     medianMs: sorted[Math.floor(sorted.length / 2)] ?? 0,
     minimumMs: sorted[0] ?? 0,
+    p95Ms: sorted[Math.ceil(sorted.length * 0.95) - 1] ?? 0,
   };
 }
 
 function forceLayout(element: HTMLElement): void {
   void element.offsetHeight;
+  void element.scrollHeight;
+}
+
+function benchmarkHost(kind: 'preview' | 'source'): {
+  host: HTMLElement;
+  target: HTMLDivElement;
+} {
+  const host = document.createElement('main');
+  const body = document.createElement('div');
+  const target = document.createElement('div');
+  host.className = 'markdown-editor';
+  host.style.width = '1000px';
+  host.style.height = '650px';
+  body.className = `markdown-editor__body markdown-editor__body--${
+    kind === 'source' ? 'edit' : 'reading'
+  }`;
+  if (kind === 'source') {
+    const source = document.createElement('div');
+    source.className = 'markdown-source';
+    target.className = 'markdown-source__editor';
+    source.appendChild(target);
+    body.appendChild(source);
+  } else {
+    target.className = 'markdown-view';
+    body.appendChild(target);
+  }
+  host.appendChild(body);
+  document.body.appendChild(host);
+  return { host, target };
 }
 
 function wrappedImageSource(): string {
@@ -54,118 +114,221 @@ function wrappedImageSource(): string {
   });
 }
 
-function validateFloatContainment(): void {
-  const source = document.createElement('div');
-  source.className = 'markdown-source__editor';
-  document.body.appendChild(source);
+function representativeSource(): string {
+  const lines: string[] = [];
+  for (let index = 0; index < 1_766; index += 1) {
+    if (index % 9 === 0) {
+      lines.push(
+        `${'#'.repeat((index % 5) + 1)} Seção ${index}: sociedade, religião e poder`,
+      );
+    } else if (index >= 220 && index < 280) {
+      lines.push(
+        `| Dinastia ${index - 219} | Período ${index} | Evidência |`,
+      );
+    } else if (index % 4 === 0) {
+      lines.push(
+        `- Item ${index}: administração, comércio e **vida cotidiana**.`,
+      );
+    } else if (index % 33 === 0) {
+      lines.push(
+        `Consulte [fonte ${index}](https://example.com/${index}) e referências.`,
+      );
+    } else {
+      lines.push(
+        `Registro ${index}: política, religião e vida cotidiana no período.`,
+      );
+    }
+  }
+  return lines.join('\n');
+}
+
+function validateStableLayout(): void {
+  const sourceHost = benchmarkHost('source');
   reconcileSource(
-    source,
+    sourceHost.target,
     `before\n${wrappedImageSource()}\nbeside\n# Clear\nafter`,
   );
-  forceLayout(source);
-  const sourceImage = source.querySelector<HTMLElement>(
+  forceLayout(sourceHost.target);
+  const sourceImage = sourceHost.target.querySelector<HTMLElement>(
     '.md-source-image--wrap',
   )!;
-  const sourceClear = source.children[3]!;
+  const sourceClear = sourceHost.target.children[3]!;
   const sourceValid =
     getComputedStyle(sourceImage).float === 'left' &&
-    source.children[1]?.classList.contains('md-line--float-context') === true &&
-    source.children[2]?.classList.contains('md-line--float-context') === true &&
     getComputedStyle(sourceClear).clear === 'both' &&
-    getComputedStyle(source.children[4]!).contentVisibility === 'auto';
-  source.remove();
+    getComputedStyle(sourceHost.target.children[4]!).contentVisibility ===
+      'visible';
+  sourceHost.host.remove();
 
-  const preview = document.createElement('div');
-  preview.className = 'markdown-view';
-  document.body.appendChild(preview);
+  const previewHost = benchmarkHost('preview');
   renderMarkdownInto(
-    preview,
+    previewHost.target,
     `${wrappedImageSource()}\n\nbeside\n\n# Clear\n\nafter`,
   );
-  forceLayout(preview);
-  const previewImage = preview.querySelector<HTMLElement>(
+  forceLayout(previewHost.target);
+  const previewImage = previewHost.target.querySelector<HTMLElement>(
     '.markdown-image--wrap',
   )!;
-  const previewClear = preview.children[2]!;
+  const previewClear = previewHost.target.children[2]!;
   const previewValid =
     getComputedStyle(previewImage).float === 'left' &&
-    preview.children[0]?.classList.contains(
-      'markdown-block--float-context',
-    ) === true &&
-    preview.children[1]?.classList.contains(
-      'markdown-block--float-context',
-    ) === true &&
     getComputedStyle(previewClear).clear === 'both' &&
-    getComputedStyle(preview.children[3]!).contentVisibility === 'auto';
-  preview.remove();
+    getComputedStyle(previewHost.target.children[3]!).contentVisibility ===
+      'visible';
+  previewHost.host.remove();
 
   if (!sourceValid || !previewValid) {
-    throw new Error('Selective float containment validation failed.');
+    throw new Error('Stable editor layout validation failed.');
   }
 }
 
-function benchmarkPreview(): BenchmarkResult {
-  const container = document.createElement('div');
-  container.className = 'markdown-view';
-  document.body.appendChild(container);
-  const blocks = Array.from(
-    { length: 3_000 },
-    (_, index) => `Paragraph ${index} with **formatted text** and a [link](https://example.com/${index}).`,
-  );
-  const middle = Math.floor(blocks.length / 2);
-  const source = blocks.join('\n\n');
-  renderMarkdownInto(container, source);
-  forceLayout(container);
+async function nextFrame(): Promise<void> {
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+}
 
+async function benchmarkScroll(target: HTMLElement): Promise<{
+  distancePx: number;
+  frameTime: BenchmarkResult;
+  heightAfterPx: number;
+  heightBeforePx: number;
+  heightChangePx: number;
+}> {
+  target.scrollTop = 0;
+  await nextFrame();
+  await nextFrame();
+  const heightBeforePx = target.scrollHeight;
+  const distancePx = Math.max(0, heightBeforePx - target.clientHeight);
   const samples: number[] = [];
-  for (let iteration = 0; iteration < 9; iteration += 1) {
-    blocks[middle] = `Paragraph ${middle} changed ${iteration} with **formatted text** and a [link](https://example.com/${iteration}).`;
-    const next = blocks.join('\n\n');
-    const startedAt = performance.now();
-    renderMarkdownInto(container, next);
-    forceLayout(container);
-    samples.push(performance.now() - startedAt);
+  let previous = performance.now();
+
+  for (let index = 1; index <= 120; index += 1) {
+    target.scrollTop = (distancePx * index) / 120;
+    await nextFrame();
+    const current = performance.now();
+    samples.push(current - previous);
+    previous = current;
   }
 
-  container.remove();
-  return summarize(samples.slice(2));
-}
-
-function benchmarkSourceWithWrap(): BenchmarkResult {
-  const editor = document.createElement('div');
-  editor.className = 'markdown-source__editor';
-  document.body.appendChild(editor);
-  const lines = Array.from(
-    { length: 6_000 },
-    (_, index) => `Line ${index} with enough text to exercise layout across the editor.`,
-  );
-  lines[100] = wrappedImageSource();
-  lines[110] = '# Clear the short float';
-  reconcileSource(editor, lines.join('\n'));
-  forceLayout(editor);
-
-  const samples: number[] = [];
-  for (let iteration = 0; iteration < 7; iteration += 1) {
-    lines[3_000] = `Line 3000 changed ${iteration} with enough text to exercise layout across the editor.`;
-    const startedAt = performance.now();
-    reconcileSource(editor, lines.join('\n'));
-    forceLayout(editor);
-    samples.push(performance.now() - startedAt);
-  }
-
-  editor.remove();
-  return summarize(samples.slice(2));
-}
-
-window.runLargeNotesBenchmark = async (validateContainment = true) => {
-  const result = {
-    floatContainmentValidated: validateContainment,
-    preview: benchmarkPreview(),
-    sourceWithWrap: benchmarkSourceWithWrap(),
-    viewportHeight: window.innerHeight,
+  const heightAfterPx = target.scrollHeight;
+  return {
+    distancePx,
+    frameTime: summarize(samples),
+    heightAfterPx,
+    heightBeforePx,
+    heightChangePx: heightAfterPx - heightBeforePx,
   };
-  if (validateContainment) {
-    validateFloatContainment();
+}
+
+async function benchmarkRender(
+  source: string,
+  kind: 'preview' | 'source',
+): Promise<RenderBenchmark> {
+  const render =
+    kind === 'source'
+      ? (target: HTMLElement, value: string) =>
+          reconcileSource(target, value)
+      : (target: HTMLElement, value: string) =>
+          renderMarkdownInto(target, value);
+  const initialSamples: number[] = [];
+  for (let iteration = 0; iteration < 7; iteration += 1) {
+    const { host, target } = benchmarkHost(kind);
+    const startedAt = performance.now();
+    render(target, source);
+    forceLayout(target);
+    initialSamples.push(performance.now() - startedAt);
+    host.remove();
   }
+
+  const { host, target } = benchmarkHost(kind);
+  render(target, source);
+  forceLayout(target);
+  const marker = 'vida cotidiana';
+  const editOffset = source.indexOf(marker, Math.floor(source.length / 3));
+  const before = source.slice(0, editOffset);
+  const after = source.slice(editOffset + marker.length);
+  const editSamples: number[] = [];
+  for (let iteration = 0; iteration < 11; iteration += 1) {
+    const next = `${before}vida cotidiana ${iteration}${after}`;
+    const startedAt = performance.now();
+    render(target, next);
+    forceLayout(target);
+    editSamples.push(performance.now() - startedAt);
+  }
+  const result = {
+    descendantNodes: target.querySelectorAll('*').length,
+    edit: summarize(editSamples.slice(2)),
+    initial: summarize(initialSamples.slice(2)),
+    scroll: await benchmarkScroll(target),
+    scrollHeight: target.scrollHeight,
+  };
+  host.remove();
+  return result;
+}
+
+function benchmarkSpellcheck(
+  source: string,
+): {
+  fullDocument: SpellcheckBenchmark;
+  visibleWindow: SpellcheckBenchmark;
+} {
+  const misspelled = [
+    'administração',
+    'comércio',
+    'cotidiana',
+    'evidência',
+    'período',
+    'política',
+    'referências',
+    'religião',
+    'sociedade',
+  ];
+  const measure = (
+    range?: { endLine: number; startLine: number },
+  ): SpellcheckBenchmark => {
+    const { host, target } = benchmarkHost('source');
+    reconcileSource(target, source);
+    forceLayout(target);
+    if (range) {
+      target.scrollTop = target.scrollHeight / 2;
+    }
+    const startedAt = performance.now();
+    renderSourceSpellingErrors(target, misspelled, false, range);
+    forceLayout(target);
+    const result = {
+      durationMs: performance.now() - startedAt,
+      markers: target.querySelectorAll('.md-spelling-error').length,
+      ...(range ? { range } : {}),
+    };
+    host.remove();
+    return result;
+  };
+
+  const probe = benchmarkHost('source');
+  reconcileSource(probe.target, source);
+  forceLayout(probe.target);
+  probe.target.scrollTop = probe.target.scrollHeight / 2;
+  const range = sourceSpellcheckViewportRange(probe.target, 1_766);
+  probe.host.remove();
+  return {
+    fullDocument: measure(),
+    visibleWindow: measure(range),
+  };
+}
+
+window.runLargeNotesBenchmark = async () => {
+  document.body.style.margin = '0';
+  const source = representativeSource();
+  validateStableLayout();
+  const result = {
+    fixture: {
+      characters: source.length,
+      lines: source.split('\n').length,
+    },
+    stableLayoutValidated: true,
+    preview: await benchmarkRender(source, 'preview'),
+    source: await benchmarkRender(source, 'source'),
+    spellcheck: benchmarkSpellcheck(source),
+    viewport: { height: 650, width: 1_000 },
+  };
   return result;
 };

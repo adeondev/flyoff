@@ -1318,22 +1318,6 @@
   position: relative;
 }
 
-/*
- * A long note otherwise costs a full-document layout on every frame, which is
- * what drags the frame rate down while nothing is even being typed. Skipping
- * offscreen rows leaves them in the DOM, so selection, caret, find-in-page and
- * copy keep working on the whole document.
- *
- * Rows carrying an image are excluded because their height cannot be guessed
- * from the line box. Rows participating in a wrapped image's float remain in
- * the same formatting context until a heading clears it.
- */
-.markdown-source__editor
-  .md-line:not(.md-line--media, .md-line--float-context) {
-  content-visibility: auto;
-  contain-intrinsic-block-size: auto calc(1em * var(--md-body-line-height));
-}
-
 .md-line--heading {
   clear: both;
 }
@@ -2036,6 +2020,21 @@
   cursor: not-allowed;
 }
 
+.markdown-toolbar__button--color {
+  position: relative;
+}
+
+.markdown-toolbar__button--color[aria-pressed='true']::after {
+  position: absolute;
+  right: 5px;
+  bottom: 3px;
+  left: 5px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--markdown-toolbar-color, currentColor);
+  content: '';
+}
+
 .emoji-picker {
   position: fixed;
   top: var(--emoji-picker-top);
@@ -2201,17 +2200,6 @@
   outline: 0;
   overflow-wrap: anywhere;
   white-space: pre-wrap;
-}
-
-/*
- * Same reasoning as the source editor rows: a long note costs a whole-document
- * layout every frame. Blocks holding media keep their layout so their height is
- * never guessed, as do blocks participating in a wrapped image's float.
- */
-.markdown-view
-  > :not(.markdown-block--media, .markdown-block--float-context) {
-  content-visibility: auto;
-  contain-intrinsic-block-size: auto calc(1em * var(--md-body-line-height));
 }
 
 .markdown-view > :first-child {
@@ -2607,6 +2595,7 @@
 }
 
 .markdown-color-popover__modes button,
+.markdown-color-popover__default,
 .markdown-color-popover__apply {
   min-height: 32px;
   border: 0;
@@ -2623,7 +2612,22 @@
   color: var(--color-text);
 }
 
+.markdown-color-popover__default {
+  min-height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+  text-align: left;
+}
+
+.markdown-color-popover__default[aria-pressed='true'] {
+  border-color: var(--color-accent);
+  box-shadow: inset 3px 0 0 var(--color-accent);
+}
+
 .markdown-color-popover__modes button:focus-visible,
+.markdown-color-popover__default:focus-visible,
 .markdown-color-popover__apply:focus-visible {
   box-shadow: 0 0 0 2px var(--color-focus-ring);
 }

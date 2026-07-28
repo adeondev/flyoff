@@ -1,0 +1,16 @@
+[package]
+name = "flyoff-native-core"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97.1"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+napi = { version = "=3.11.0", default-features = false, features = ["napi4"] }
+napi-derive = "=3.6.0"
+
+[build-dependencies]
+napi-build = "=2.3.2"

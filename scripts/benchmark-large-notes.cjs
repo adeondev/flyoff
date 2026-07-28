@@ -37,8 +37,11 @@ async function run() {
     await app.whenReady();
     process.stderr.write('Opening offscreen Chromium window...\n');
     const window = new BrowserWindow({
+      height: 900,
       show: false,
+      width: 1280,
       webPreferences: {
+        backgroundThrottling: false,
         contextIsolation: true,
         offscreen: true,
         sandbox: true,
@@ -51,21 +54,11 @@ async function run() {
         'utf8',
       ),
     );
-    const containmentDisabled =
-      process.env.FLYOFF_BENCHMARK_DISABLE_SOURCE_CONTAINMENT === '1';
-    if (containmentDisabled) {
-      await window.webContents.insertCSS(
-        '.markdown-source__editor .md-line { content-visibility: visible !important; }',
-      );
-    }
     process.stderr.write('Running benchmark cases...\n');
     const result = await window.webContents.executeJavaScript(
-      `window.runLargeNotesBenchmark(${String(!containmentDisabled)})`,
+      'window.runLargeNotesBenchmark()',
       true,
     );
-    result.sourceContainment = containmentDisabled
-      ? 'disabled'
-      : 'selective';
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     window.destroy();
   } finally {

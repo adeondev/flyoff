@@ -15,15 +15,15 @@ function findCaseInsensitive(directory, expectedName) {
   return entry ? path.join(directory, entry.name) : undefined;
 }
 
-function selectBuildDirectory(outDirectory) {
-  const suffix = `-${process.platform}-${process.arch}`;
+function selectBuildDirectory(outDirectory, platform, arch) {
+  const suffix = `-${platform}-${arch}`;
   const candidates = readdirSync(outDirectory, { withFileTypes: true })
     .filter((entry) => entry.isDirectory() && entry.name.endsWith(suffix))
     .map(({ name }) => path.join(outDirectory, name));
 
   if (candidates.length !== 1) {
     throw new Error(
-      `Expected one packaged build for ${process.platform}/${process.arch}, found ${candidates.length}.`,
+      `Expected one packaged build for ${platform}/${arch}, found ${candidates.length}.`,
     );
   }
 
@@ -31,6 +31,8 @@ function selectBuildDirectory(outDirectory) {
 }
 
 export function locatePackagedApplication() {
+  const platform = process.env.FLYOFF_PACKAGE_PLATFORM ?? process.platform;
+  const arch = process.env.FLYOFF_PACKAGE_ARCH ?? process.arch;
   const configuredOutDirectory =
     process.env.FLYOFF_PACKAGE_OUT_DIR ?? process.env.FLYOFF_E2E_OUT_DIR;
   const outDirectory = configuredOutDirectory
@@ -41,9 +43,9 @@ export function locatePackagedApplication() {
     throw new Error('Package output is missing. Run `npm run package` first.');
   }
 
-  const buildDirectory = selectBuildDirectory(outDirectory);
+  const buildDirectory = selectBuildDirectory(outDirectory, platform, arch);
 
-  if (process.platform === 'darwin') {
+  if (platform === 'darwin') {
     const appPath = findCaseInsensitive(buildDirectory, 'Flyoff.app');
     if (!appPath || !statSync(appPath).isDirectory()) {
       throw new Error('Flyoff.app was not found in the packaged build.');
@@ -59,7 +61,7 @@ export function locatePackagedApplication() {
     };
   }
 
-  const executableName = process.platform === 'win32' ? 'Flyoff.exe' : 'Flyoff';
+  const executableName = platform === 'win32' ? 'Flyoff.exe' : 'Flyoff';
   const executable = findCaseInsensitive(buildDirectory, executableName);
   if (!executable || !statSync(executable).isFile()) {
     throw new Error(`${executableName} was not found in the packaged build.`);

@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useRef, useState, type CSSProperties } from 'react';
 
 import boldIcon from '../../../public/images/icons/editor/bold.svg';
 import codeIcon from '../../../public/images/icons/editor/code.svg';
@@ -22,6 +22,7 @@ import { EmojiPicker } from './EmojiPicker';
 import { MARKDOWN_ACTIONS, type MarkdownAction } from './markdown-actions';
 import type { MarkdownInlineColorKind } from './markdown-actions';
 import { MarkdownColorPopover } from './MarkdownColorPopover';
+import type { MarkdownTypingColor } from './source-typing-color';
 
 export const MARKDOWN_ACTION_LABEL_KEYS: Record<
   MarkdownAction,
@@ -55,21 +56,25 @@ export const MARKDOWN_ACTION_ICONS: Record<MarkdownAction, string> = {
 };
 
 export interface MarkdownToolbarProps {
+  activeTypingColor?: MarkdownTypingColor | null;
   disabled?: boolean;
   hasSelection?: boolean;
   translate: Translate;
   /** Read once per opening, so long notes are not rescanned per keystroke. */
   readColorContext?: () => {
+    color: string | null;
+    hasSelection?: boolean;
     kind: MarkdownInlineColorKind | null;
     snapTo: readonly string[];
   };
   onAction: (action: MarkdownAction) => void;
-  onColor: (kind: MarkdownInlineColorKind, color: string) => void;
+  onColor: (kind: MarkdownInlineColorKind, color: string | null) => void;
   onEmoji: (emoji: string) => void;
   onEmojiPickerClose: () => void;
 }
 
 export function MarkdownToolbar({
+  activeTypingColor = null,
   disabled = false,
   hasSelection = true,
   onAction,
@@ -84,6 +89,8 @@ export function MarkdownToolbar({
   const colorButtonRef = useRef<HTMLButtonElement>(null);
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
   const [colorPicker, setColorPicker] = useState<{
+    color: string | null;
+    hasSelection: boolean;
     kind: MarkdownInlineColorKind | null;
     position: { x: number; y: number };
     snapTo: readonly string[];
@@ -153,7 +160,11 @@ export function MarkdownToolbar({
         aria-expanded={Boolean(colorPicker)}
         aria-haspopup="dialog"
         aria-label={translate('toolbar.color')}
-        className="markdown-toolbar__button"
+        aria-pressed={Boolean(activeTypingColor)}
+        className="markdown-toolbar__button markdown-toolbar__button--color"
+        data-color-default={
+          activeTypingColor?.color === null ? true : undefined
+        }
         disabled={disabled}
         onClick={(event) => {
           if (colorPicker) {
@@ -163,12 +174,21 @@ export function MarkdownToolbar({
           const bounds = event.currentTarget.getBoundingClientRect();
           const context = readColorContext?.();
           setColorPicker({
+            color: context?.color ?? null,
+            hasSelection: context?.hasSelection ?? hasSelection,
             kind: context?.kind ?? null,
             position: { x: bounds.left, y: bounds.bottom + 5 },
             snapTo: context?.snapTo ?? [],
           });
         }}
         ref={colorButtonRef}
+        style={
+          activeTypingColor?.color
+            ? ({
+                '--markdown-toolbar-color': activeTypingColor.color,
+              } as CSSProperties)
+            : undefined
+        }
         type="button"
         {...getTooltipTargetProps(translate('toolbar.color'), 'bottom')}
       >
@@ -177,7 +197,9 @@ export function MarkdownToolbar({
       {colorPicker ? (
         <MarkdownColorPopover
           anchorRef={colorButtonRef}
-          hasSelection={hasSelection}
+          hasSelection={colorPicker.hasSelection}
+          initialColor={colorPicker.color ?? undefined}
+          initialDefault={colorPicker.color === null}
           initialKind={colorPicker.kind ?? 'text'}
           onApply={onColor}
           onClose={() => {

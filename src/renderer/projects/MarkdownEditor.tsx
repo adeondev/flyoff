@@ -36,9 +36,14 @@ import {
   applyMarkdownInlineColor,
   collectAuthoredColors,
   inlineColorKindAt,
+  removeMarkdownInlineColor,
   type MarkdownAction,
   type MarkdownInlineColorKind,
 } from './markdown-actions';
+import {
+  markdownTypingColorAt,
+  type MarkdownTypingColor,
+} from './source-typing-color';
 import { MarkdownReadingView } from './MarkdownReadingView';
 import { MarkdownFocusShelf } from './MarkdownFocusShelf';
 import { MarkdownSourceContextMenu } from './MarkdownSourceContextMenu';
@@ -168,6 +173,8 @@ export const MarkdownEditor = forwardRef<
   const [liveSelection, setLiveSelection] = useState(snapshot.selection);
   const [sourceColorRequest, setSourceColorRequest] =
     useState<SourceInlineColorRequest | null>(null);
+  const [typingColor, setTypingColor] =
+    useState<MarkdownTypingColor | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
   const readingRef = useRef<HTMLDivElement>(null);
   const selectionRef = useRef(snapshot.selection);
@@ -238,6 +245,10 @@ export const MarkdownEditor = forwardRef<
       }
     });
   }, [controller, document, nodeId, viewId]);
+
+  useEffect(() => {
+    setTypingColor(null);
+  }, [nodeId, viewId]);
 
   useEffect(() => {
     onDirtyChange?.(snapshot.dirty);
@@ -529,21 +540,36 @@ export const MarkdownEditor = forwardRef<
   }
 
   function readColorContext(): {
+    color: string | null;
+    hasSelection: boolean;
     kind: MarkdownInlineColorKind | null;
     snapTo: readonly string[];
   } {
     const content =
       controller.getSnapshot(nodeId, viewId)?.content ?? snapshot.content;
     const selection = selectionRef.current;
+    const contextual = markdownTypingColorAt(
+      content,
+      selection.start,
+    );
+    const active =
+      selection.start === selection.end
+        ? typingColor ?? contextual
+        : contextual ?? typingColor;
     return {
-      kind: inlineColorKindAt(content, selection.start, selection.end),
+      color: active?.color ?? null,
+      hasSelection: selection.start !== selection.end,
+      kind:
+        inlineColorKindAt(content, selection.start, selection.end) ??
+        active?.kind ??
+        null,
       snapTo: collectAuthoredColors(content),
     };
   }
 
   function handleInlineColor(
     kind: MarkdownInlineColorKind,
-    color: string,
+    color: string | null,
   ): void {
     if (editingDisabled) {
       return;
@@ -551,20 +577,33 @@ export const MarkdownEditor = forwardRef<
     const currentSelection = selectionRef.current;
     const currentContent =
       controller.getSnapshot(nodeId, viewId)?.content ?? snapshot.content;
-    const edit = applyMarkdownInlineColor(
-      kind,
-      currentContent,
-      currentSelection.start,
-      currentSelection.end,
-      color,
-    );
+    setTypingColor({ color, kind });
+    if (currentSelection.start === currentSelection.end) {
+      return;
+    }
+    const edit =
+      color === null
+        ? removeMarkdownInlineColor(
+            kind,
+            currentContent,
+            currentSelection.start,
+            currentSelection.end,
+          )
+        : applyMarkdownInlineColor(
+            kind,
+            currentContent,
+            currentSelection.start,
+            currentSelection.end,
+            color,
+          );
     commitContextEdit(
       {
         content: edit.value,
         selection: {
           start: edit.selectionStart,
           end: edit.selectionEnd,
-          direction: 'forward',
+          direction:
+            edit.selectionStart === edit.selectionEnd ? 'none' : 'forward',
         },
       },
       currentSelection,
@@ -572,12 +611,99 @@ export const MarkdownEditor = forwardRef<
     );
   }
 
-  function handleSourceInlineColor(color: string): void {
+  function handleSourceInlineColor(color: string | null): void {
     if (!sourceColorRequest || editingDisabled) {
       return;
     }
     const currentContent =
       controller.getSnapshot(nodeId, viewId)?.content ?? snapshot.content;
+    if (color === null) {
+      const attributeStart = currentContent.lastIndexOf(
+        '{',
+        sourceColorRequest.start,
+      );
+      const attributeEnd = currentContent.indexOf(
+        '}',
+        sourceColorRequest.end,
+      );
+      const attribute =
+        attributeStart >= 0 && attributeEnd >= sourceColorRequest.end
+          ? currentContent.slice(attributeStart, attributeEnd + 1)
+          : '';
+      const validAttribute =
+        /^\{color\s*=\s*(["']?)#[0-9a-fA-F]{3,8}\1\s*\}$/.test(
+          attribute,
+        );
+      const close =
+        validAttribute ? attributeStart : sourceColorRequest.start;
+      const markerLength = sourceColorRequest.kind === 'text' ? 1 : 2;
+      const closeMarker =
+        sourceColorRequest.kind === 'text' ? ']' : '==';
+      const openMarker =
+        sourceColorRequest.kind === 'text' ? '[' : '==';
+      const opening = currentContent.lastIndexOf(
+        openMarker,
+        close - markerLength - 1,
+      );
+      const directTextColor =
+        sourceColorRequest.kind === 'text' &&
+        currentContent[close - 1] === closeMarker &&
+        opening >= 0 &&
+        currentContent[opening - 1] !== '[' &&
+        !currentContent.slice(opening + 1, close - 1).includes(']');
+      const directHighlight =
+        sourceColorRequest.kind === 'highlight' &&
+        currentContent.slice(close - markerLength, close) === closeMarker;
+      if ((directTextColor || directHighlight) && opening >= 0) {
+        const edit = removeMarkdownInlineColor(
+          sourceColorRequest.kind,
+          currentContent,
+          opening + markerLength,
+          close - markerLength,
+        );
+        commitContextEdit(
+          {
+            content: edit.value,
+            selection: {
+              direction: 'forward',
+              end: edit.selectionEnd,
+              start: edit.selectionStart,
+            },
+          },
+          selectionRef.current,
+          'source:inline-color-default',
+        );
+        setSourceColorRequest(null);
+        return;
+      }
+      if (validAttribute) {
+        const content =
+          currentContent.slice(0, attributeStart) +
+          currentContent.slice(attributeEnd + 1);
+        const removed = attributeEnd + 1 - attributeStart;
+        const currentSelection = selectionRef.current;
+        const adjust = (offset: number): number =>
+          offset <= attributeStart
+            ? offset
+            : offset >= attributeEnd + 1
+              ? offset - removed
+              : attributeStart;
+        commitContextEdit(
+          {
+            content,
+            selection: {
+              direction: currentSelection.direction,
+              end: adjust(currentSelection.end),
+              start: adjust(currentSelection.start),
+            },
+          },
+          currentSelection,
+          'source:inline-color-default',
+        );
+      }
+      setSourceColorRequest(null);
+      return;
+    }
     const inserted =
       sourceColorRequest.start === sourceColorRequest.end
         ? `{color=${color}}`
@@ -882,6 +1008,7 @@ export const MarkdownEditor = forwardRef<
       ) : null}
       {!focusLayout && mode !== 'reading' && editorPreferences.showToolbar ? (
         <MarkdownToolbar
+          activeTypingColor={typingColor}
           disabled={editingDisabled}
           hasSelection={liveSelection.start !== liveSelection.end}
           onEmoji={handleEmojiInsert}
@@ -899,6 +1026,7 @@ export const MarkdownEditor = forwardRef<
         >
           <div className="markdown-editor__toolbar-drawer">
             <MarkdownToolbar
+              activeTypingColor={typingColor}
               disabled={editingDisabled}
               hasSelection={liveSelection.start !== liveSelection.end}
               onEmoji={handleEmojiInsert}
@@ -979,6 +1107,7 @@ export const MarkdownEditor = forwardRef<
             spellCheck={preferences.spellcheck.enabled}
             spellcheckScope={preferences.spellcheck.languages.join('\u0000')}
             translate={translate}
+            typingColor={typingColor}
             value={snapshot.content}
           />
         )}
@@ -1010,6 +1139,7 @@ export const MarkdownEditor = forwardRef<
       {sourceColorRequest ? (
         <MarkdownColorPopover
           initialColor={sourceColorRequest.color ?? noteSeed ?? undefined}
+          initialDefault={sourceColorRequest.color === null}
           initialKind={sourceColorRequest.kind}
           kindLocked
           onApply={(_, color) => handleSourceInlineColor(color)}

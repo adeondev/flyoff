@@ -5,6 +5,7 @@ import {
   applyMarkdownInlineColor,
   collectAuthoredColors,
   inlineColorKindAt,
+  removeMarkdownInlineColor,
 } from '../../src/renderer/projects/markdown-actions';
 
 describe('markdown toolbar actions', () => {
@@ -117,6 +118,38 @@ describe('markdown toolbar actions', () => {
 
     expect(edit.value).toBe('a ==b=={color=#F00} c');
     expect(edit.value.slice(edit.selectionStart, edit.selectionEnd)).toBe('b');
+  });
+
+  it('uses Default by removing authored colour instead of writing a theme colour', () => {
+    const text = removeMarkdownInlineColor(
+      'text',
+      'a [word]{color=#FFFFFF} b',
+      3,
+      7,
+    );
+    expect(text.value).toBe('a word b');
+    expect(text.value.slice(text.selectionStart, text.selectionEnd)).toBe(
+      'word',
+    );
+
+    expect(
+      removeMarkdownInlineColor(
+        'highlight',
+        '==one=={color=#FACC15} and ==two==',
+        0,
+        34,
+      ).value,
+    ).toBe('one and two');
+  });
+
+  it('does not insert placeholder markup at a collapsed caret', () => {
+    expect(
+      applyMarkdownInlineColor('text', 'plain', 3, 3, '#FFFFFF'),
+    ).toEqual({
+      selectionEnd: 3,
+      selectionStart: 3,
+      value: 'plain',
+    });
   });
 
   it('reports how the selection is already marked', () => {

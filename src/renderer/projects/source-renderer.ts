@@ -9,7 +9,6 @@ import {
   type SourceChangeRange,
   type SourceDocumentModel,
 } from './source-document-model';
-import { markFloatContexts } from './floating-media';
 
 interface SourceRenderState {
   activeLine: number;
@@ -17,16 +16,6 @@ interface SourceRenderState {
 }
 
 const renderStates = new WeakMap<HTMLElement, SourceRenderState>();
-
-function markFloatingMedia(root: HTMLElement): void {
-  markFloatContexts(root, {
-    clearSelector: '.md-line--heading',
-    contextClassName: 'md-line--float-context',
-    floatingSelector: '.md-source-image--wrap',
-    ignoredClearSelector: '.md-source-image--inline',
-    previousSiblingIgnoredClearSelector: '.md-source-image--wrap',
-  });
-}
 
 function markActiveLine(root: HTMLElement, lineIndex: number): void {
   for (const active of root.querySelectorAll(':scope > .md-line--active')) {
@@ -191,7 +180,6 @@ export function reconcileSource(root: HTMLElement, source: string): void {
     });
     markActiveLine(root, currentState?.activeLine ?? -1);
     applyCodeBlockWidths(root, model, model.change);
-    markFloatingMedia(root);
     return;
   }
 
@@ -257,7 +245,6 @@ export function reconcileSource(root: HTMLElement, source: string): void {
   const activeLine = currentState.activeLine;
   renderStates.set(root, { activeLine, model });
   markActiveLine(root, activeLine);
-  markFloatingMedia(root);
 }
 
 export function updateActiveSourceLine(

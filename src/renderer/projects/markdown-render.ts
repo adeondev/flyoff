@@ -11,7 +11,6 @@ import {
 } from '../../shared/markdown';
 import { twemojiAssetUrl, twemojiSegments } from '../components/twemoji';
 import { colorContrastInk } from '../components/color';
-import { markFloatContexts } from './floating-media';
 
 const SCHEME = /^([a-z][a-z0-9+.-]*):/i;
 const ALLOWED_ASSET_SCHEMES = /^(https?|flyoff|flyoff-media)$/i;
@@ -512,27 +511,6 @@ interface MarkdownRenderState {
 
 const renderStates = new WeakMap<HTMLElement, MarkdownRenderState>();
 
-const FLOATING_MEDIA_SELECTOR =
-  '.markdown-image--wrap, .markdown-media--wrap-left, .markdown-media--wrap-right';
-
-function markMediaBlocks(nodes: readonly ChildNode[]): void {
-  for (const node of nodes) {
-    if (node instanceof Element && node.querySelector('img, video, audio')) {
-      node.classList.add('markdown-block--media');
-    }
-  }
-}
-
-function markFloatingMedia(container: HTMLElement): void {
-  markFloatContexts(container, {
-    clearSelector: ':is(h1, h2, h3, h4, h5, h6)',
-    contextClassName: 'markdown-block--float-context',
-    floatingSelector: FLOATING_MEDIA_SELECTOR,
-    ignoredClearSelector: '.markdown-image--inline',
-    previousSiblingIgnoredClearSelector: '.markdown-image--wrap',
-  });
-}
-
 function collectHeadings(node: BlockNode, headings: Heading[]): void {
   if (node.type === 'heading') {
     headings.push(node);
@@ -610,10 +588,8 @@ function rebuildMarkdown(
     });
   }
 
-  markMediaBlocks([...fragment.childNodes]);
   container.replaceChildren(fragment);
   renderStates.set(container, { blocks, projectId, source });
-  markFloatingMedia(container);
 }
 
 function hasExpectedChildren(
@@ -716,7 +692,6 @@ export function renderMarkdownInto(
       const fragment = document.createDocumentFragment();
       renderBlocks([block.node], fragment, context);
       block.element = fragment.firstChild!;
-      markMediaBlocks([block.element]);
     } else {
       syncHeadingMetadata(block.node, block.element, context);
     }
@@ -739,5 +714,4 @@ export function renderMarkdownInto(
     projectId: options.projectId,
     source,
   });
-  markFloatingMedia(container);
 }

@@ -241,6 +241,13 @@ export function applyMarkdownInlineColor(
   end: number,
   color: string,
 ): MarkdownEdit {
+  if (start === end) {
+    return {
+      value,
+      selectionStart: start,
+      selectionEnd: end,
+    };
+  }
   const run = existingColoredRun(value, start, end);
   const from = run?.start ?? start;
   const to = run?.end ?? end;
@@ -252,5 +259,46 @@ export function applyMarkdownInlineColor(
     value: value.slice(0, from) + inserted + value.slice(to),
     selectionStart: from + prefix.length,
     selectionEnd: from + prefix.length + selected.length,
+  };
+}
+
+export function removeMarkdownInlineColor(
+  kind: MarkdownInlineColorKind,
+  value: string,
+  start: number,
+  end: number,
+): MarkdownEdit {
+  const selected = value.slice(start, end);
+  const unwrapped =
+    kind === 'text'
+      ? selected.replace(
+          /\[([^\]\n]*)\]\{color\s*=\s*(["']?)#[0-9a-fA-F]{3,8}\2\s*\}/g,
+          '$1',
+        )
+      : selected.replace(
+          /==([^\n]*?)==(?:\{color\s*=\s*(["']?)#[0-9a-fA-F]{3,8}\2\s*\})?/g,
+          '$1',
+        );
+  if (unwrapped !== selected) {
+    return {
+      value: value.slice(0, start) + unwrapped + value.slice(end),
+      selectionStart: start,
+      selectionEnd: start + unwrapped.length,
+    };
+  }
+
+  const run = existingColoredRun(value, start, end);
+  if (run?.kind === kind) {
+    return {
+      value: value.slice(0, run.start) + run.text + value.slice(run.end),
+      selectionStart: run.start,
+      selectionEnd: run.start + run.text.length,
+    };
+  }
+
+  return {
+    value,
+    selectionStart: start,
+    selectionEnd: end,
   };
 }

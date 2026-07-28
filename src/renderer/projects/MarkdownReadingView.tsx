@@ -13,7 +13,7 @@ import type { ProjectInternalLinkSyntax } from '../../shared/contracts';
 import type { Translate } from '../pages/page-types';
 import { ExternalLinkPopover } from './ExternalLinkPopover';
 import {
-  LARGE_MARKDOWN_DOCUMENT_CHARACTERS,
+  isLargeMarkdownDocument,
   SPLIT_PREVIEW_IDLE_MS,
   SPLIT_PREVIEW_MAX_LAG_MS,
 } from './editor-performance';
@@ -110,7 +110,7 @@ export function MarkdownReadingView({
       return;
     }
 
-    if (content.length < LARGE_MARKDOWN_DOCUMENT_CHARACTERS) {
+    if (!isLargeMarkdownDocument(content)) {
       if (frameRef.current === undefined) {
         frameRef.current = requestAnimationFrame(() => {
           frameRef.current = undefined;

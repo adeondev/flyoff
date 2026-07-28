@@ -1,146 +1,137 @@
 # Flyoff — Performance de notas grandes
 
-> Documento de contexto/hand-off. Descreve o gargalo de performance de notas
-> longas e as correções aplicadas. Escrito para ser lido por um
-> humano **ou** por um assistente que vá continuar o trabalho.
+> Contexto técnico para manter o editor fluido sem comprometer seleção,
+> navegação, corretor ou fidelidade do Markdown.
 
-Última atualização: contenção seletiva de floats e renderização incremental do
-preview concluídas e medidas em Chromium.
+Última atualização: medição de frame-time no aplicativo empacotado, remoção de
+layout tardio durante a rolagem e benchmark de estabilidade geométrica.
 
----
+## Sintoma e causa
 
-## O problema
+A nota usada para investigar o problema tem 100.963 bytes e 1.766 linhas. O
+editor gera 7.738 descendentes no DOM; a leitura gera 1.516. O sintoma não era
+tempo de abertura ou crash, mas rolagem e animações próximas de 15–30 FPS.
 
-Abrir uma nota grande derruba o frame rate: as animações da interface engasgam
-mesmo sem o usuário digitar. A causa foi medida, não é suposição.
+O parse de Markdown isolado fica perto de 10 ms nessa escala. Rust ou outro
+parser nativo não resolveria o gargalo principal, porque o custo observado
+estava no layout e na pintura do DOM pelo Blink.
 
-Numa nota de 6000 linhas, por tecla:
+O editor usava `content-visibility: auto` por linha, com uma altura intrínseca
+de uma linha. A leitura aplicava a mesma estratégia por bloco. A estimativa era
+incorreta para headings, tabelas, listas e texto quebrado:
 
-| | custo |
-|---|---|
-| todo o JS + mutação de DOM (`reconcileSource`) | 9,3 ms |
-| **layout do Blink** | **131,6 ms** |
+| superfície | altura estimada | altura real | diferença |
+|---|---:|---:|---:|
+| edição | 41.600 px | 53.187 px | +27,9% |
+| leitura | 31.948 px | 49.879 px | +56,1% |
 
-94% do custo era layout, porque o documento inteiro fica no DOM e o navegador
-precisa refazer o layout de tudo a cada mudança. Por isso qualquer animação
-rodando junto perde o orçamento de frame.
+Ao rolar, o Chromium ativava os elementos, descobria suas alturas e corrigia a
+geometria do documento. Esse trabalho acontecia dentro dos frames e também
+alterava a posição relativa da barra de rolagem.
 
-Custo de parse puro no preview (JS, independente de engine): 13,8 ms com 1000
-blocos, 33,8 ms com 3000 blocos.
+Medição no aplicativo empacotado, com a nota real:
 
----
+| rolagem do editor | mediana | p95 | máximo |
+|---|---:|---:|---:|
+| layout tardio por linha | 31,0 ms | 63,3 ms | 186,1 ms |
+| layout estável | 16,7 ms | 21,6 ms | 58,7 ms |
 
-## O que já foi feito
+Uma passagem mais agressiva pelo documento caiu de 42,0 ms de mediana e
+87,2 ms de p95 para 17,0 ms e 46,2 ms. A leitura já era menos custosa, mas seu
+p95 caiu de 27,6 ms para 20,7 ms e a altura deixou de mudar durante o scroll.
 
-`content-visibility: auto` + `contain-intrinsic-block-size` fazem o Blink pular
-layout e pintura do que está fora da tela. As linhas continuam todas no DOM, o
-navegador só não gasta tempo com as invisíveis.
+`contain: paint` também foi medido. Não trouxe ganho relevante e poderia cortar
+conteúdo que escapa visualmente de um bloco, portanto não foi adotado.
 
-- CSS: `src/renderer/projects/projects.css`, linhas ~1332 (editor) e ~2205 (preview)
-- `markFloatContexts()` mantém sem contenção somente o intervalo entre um float
-  e o heading que aplica `clear`
-- As classes `md-line--media` (`markdown-highlight.ts`) e `markdown-block--media`
-  (`markdown-render.ts`) marcam linhas e blocos que carregam imagem
+## Estratégia atual
 
-Resultado numa nota de 6000 linhas: 215 ms → 12 ms por tecla, e 325 ms → 40 ms
-por frame de animação. No preview com 1000 blocos: 12 ms → 4 ms por frame.
+O documento permanece inteiro no DOM e com layout estável. Isso preserva
+`contenteditable`, cursor, seleção, find-in-page, copiar/colar e a geometria
+correta da barra de rolagem.
 
-O preview também tem reconciliação incremental de fonte e DOM em
-`renderMarkdownInto` (`markdown-render.ts`): uma varredura barata encontra os
-limites dos blocos, o diff de prefixo e sufixo reutiliza a AST e os nós intactos,
-e somente os blocos alterados passam por parse e construção de DOM.
+As otimizações mantidas são:
 
----
+- reconciliação incremental do source, preservando linhas que não mudaram;
+- parse e DOM incrementais na leitura, preservando blocos intactos;
+- preview de notas grandes atualizado com debounce;
+- spellcheck de notas grandes limitado à janela visível mais 120 linhas de
+  margem em cada direção;
+- cache de palavras do corretor reaproveitado entre janelas;
+- classificação como nota grande a partir de 64 mil caracteres ou 1.000
+  linhas.
 
-## Implementação concluída
+As classes e a varredura que existiam apenas para excluir imagens e floats da
+contenção foram removidas junto com a estratégia. Imagens `wrap` continuam
+usando seu float normal e headings continuam aplicando `clear`.
 
-### Contenção seletiva de imagens em modo `wrap`
+O custo de abertura pode ser maior do que com layout tardio, mas acontece uma
+vez. Transferir esse custo para cada frame de rolagem produzia uma experiência
+pior e imprevisível.
 
-Uma imagem `wrap` flutua para fora da própria linha e as linhas seguintes
-contornam ela, o que só funciona enquanto compartilham o mesmo contexto de
-formatação. `content-visibility` implica `contain: layout`, que quebraria isso.
+## Benchmark reproduzível
 
-As classes `md-line--float-context` e `markdown-block--float-context` agora
-excluem da contenção somente o float e os irmãos afetados até o heading que
-aplica `clear`. O restante do documento continua usando `content-visibility`.
-As exceções existentes para headings imediatamente após uma imagem e headings
-com imagem inline continuam no mesmo contexto do float.
+`npm run benchmark:large-notes` executa Chromium offscreen com:
 
-### Parse e DOM incrementais no preview
+- viewport interno de 1.000 × 650 px;
+- fixture de 1.766 linhas e aproximadamente 100 mil caracteres;
+- hierarquia real de `.markdown-editor`;
+- abertura e edição incremental de source e leitura;
+- spellcheck completo comparado à janela visível;
+- frame-time durante uma passagem completa pelo documento;
+- altura antes e depois da rolagem.
 
-Todos os blocos da AST carregam `position.start` e `position.end` no texto de
-origem. `splitMarkdownBlocks()` encontra as mesmas fronteiras sem executar o
-parse inline. O renderer compara essas fatias com o estado anterior e só
-reparseia e reconstrói o intervalo alterado.
+O benchmark exige `heightChangePx: 0` como evidência de geometria estável. Os
+percentis de frame são dados de diagnóstico: valores absolutos variam por
+hardware e virtualização, portanto regressões devem ser comparadas no mesmo
+ambiente.
 
-Blocos reutilizados preservam identidade e mutações legítimas feitas pelos
-callers. IDs, contagens e caminhos de headings são recalculados sem reconstruir
-seus elementos quando um heading anterior muda.
+Resultado depois da correção, no Chromium offscreen do Codespace:
 
-### Resultado medido
-
-Benchmark Electron 43/Chromium offscreen, viewport de 600 px:
-
-| cenário | antes | depois |
+| cenário | mediana | p95 |
 |---|---:|---:|
-| alteração central em preview de 3000 blocos | 80,7 ms | 4,2 ms |
-| alteração em editor de 6000 linhas com `wrap` curto | 17,9 ms | 7,3 ms |
+| abertura do source | 87,7 ms | 117,9 ms |
+| edição central no source | 3,1 ms | 3,6 ms |
+| scroll do source | 16,7 ms | 17,0 ms |
+| abertura da leitura | 59,7 ms | 94,5 ms |
+| edição central na leitura | 4,8 ms | 6,3 ms |
+| scroll da leitura | 16,7 ms | 17,7 ms |
 
-Os valores são medianas e incluem mutação de DOM e layout forçado por
-`offsetHeight`. O benchmark reproduzível está disponível em
-`npm run benchmark:large-notes`. Como controle da variância do Electron
-headless, execuções alternadas no mesmo ambiente registraram 9,7 ms com a
-contenção de todas as linhas desativada e 7,3 ms com a contenção seletiva.
+Source e leitura terminaram a passagem com `heightChangePx: 0`. O spellcheck
+completo custou 221,1 ms e criou 6.002 marcadores; a janela visível custou
+21,5 ms e criou 947, mantendo a redução de aproximadamente 10 vezes.
 
----
+O teste E2E do editor também verifica:
 
-## Restrições que não podem ser violadas
-
-- O editor de fonte é um `contenteditable` (`plaintext-only`). Cursor, seleção,
-  find-in-page e copiar/colar precisam continuar funcionando sobre o **documento
-  inteiro**, inclusive fora da tela. Isso foi validado para a solução atual numa
-  linha 2500 posições abaixo do viewport e precisa continuar valendo.
-- Floats precisam continuar escapando das linhas, senão o texto para de
-  contornar as imagens.
-- Alturas de linhas e blocos com imagem não podem ser estimadas, senão a barra
-  de rolagem pula.
-
----
+- `content-visibility: visible` em edição e leitura;
+- `scrollHeight` inalterado durante a passagem;
+- p95 abaixo de 50 ms e nenhum frame acima de 100 ms no cenário empacotado.
 
 ## Como verificar
 
-- `npm run verify` (lint, typecheck, testes, nativos) precisa passar. Adicione
-  testes para o que mudar.
-- **Medir em Chromium de verdade.** Não use jsdom: ele não faz layout nenhum,
-  então reporta números sem relação com o problema real — o gargalo é
-  exatamente o que o jsdom não simula.
+1. Execute `npm run verify`.
+2. Execute `env -u ELECTRON_RUN_AS_NODE npm run benchmark:large-notes`.
+3. Empacote o aplicativo e execute o E2E do editor.
+4. Abra a nota de 1.766 linhas em edição, leitura e modo dividido.
+5. Teste roda, trackpad, Page Up/Down, seleção longa, busca, digitação e troca
+   de modo.
 
-Para medir, rode o Electron headless: bundle um script de benchmark com esbuild,
-carregue numa `BrowserWindow` com `webPreferences: { offscreen: true }`, injete o
-CSS com `webContents.insertCSS()` e force layout lendo `offsetHeight`.
+O benchmark precisa rodar em Chromium real. JSDOM não calcula layout e não
+representa este problema.
 
-- Flags: `--no-sandbox --ozone-platform=headless --disable-gpu`
-- É preciso `unset ELECTRON_RUN_AS_NODE` antes de rodar
-- Injete o CSS com `insertCSS()`, **não** via `--define` do esbuild, que corrompe
-  strings grandes e faz a regra silenciosamente não aplicar
-- Em container Linux, o Electron precisa das libs de sistema (`libgtk-3-0t64`,
-  `libatk1.0-0t64`, `libnss3`, `libgbm1`, entre outras)
+## Restrições
 
-Meça antes e depois e registre os números. Se a mudança não melhorar de forma
-mensurável, não vale a complexidade.
+- Não virtualizar linhas sem uma solução explícita para seleção, caret,
+  find-in-page e cópia do documento inteiro.
+- Não reintroduzir altura estimada por linha ou bloco sem medir frame-time,
+  estabilidade do `scrollHeight` e comportamento da barra de rolagem.
+- Não mover parse para o core nativo esperando corrigir layout do Blink.
+- Não aplicar contenção que crie um contexto incompatível com imagens `wrap`.
+- Não usar um limite absoluto de FPS isoladamente para comparar máquinas
+  diferentes.
 
----
+## Referências
 
-## Armadilhas já encontradas
-
-- Otimizar `hasCanonicalLines` e o loop de renumeração em `source-renderer.ts`
-  rendeu ~4 ms de um problema de 140 ms. Micro-otimização de JS ali é ruído; o
-  custo é layout.
-- `markActiveLine` usa `querySelectorAll` e custa 0,09 ms com 6000 linhas. Não é
-  gargalo, não mexa.
-- A janela offscreen do Electron reporta `innerHeight = 1`, o que superestima o
-  ganho do `content-visibility` — no app real umas 30 linhas ficam visíveis e
-  são renderizadas. Use os números como ordem de grandeza, não valor absoluto.
-- `content-visibility` foi descartado uma vez por causa dos floats, sem medição.
-  O raciocínio sobre o float estava certo, mas abandonar a ideia inteira custou
-  94% do ganho por um caso que afeta poucos documentos. Meça antes de descartar.
+- [Input Events Level 2](https://www.w3.org/TR/input-events-2/) para
+  `beforeinput` e composição IME.
+- [CSS Containment Module Level 2](https://www.w3.org/TR/css-contain-2/) para os
+  efeitos de contenção e `content-visibility`.

@@ -44,7 +44,7 @@ simples, direta, sem excesso de animação (ver `AGENTS.md`).
 **Stack:**
 - **Electron 43** + **React 19** + **TypeScript** (Electron Forge + Webpack).
 - **Node 24.18**.
-- **`packages/native-core`**: addon **C++ (N-API / C++20)** compilado por `node-gyp`.
+- **`packages/native-core`**: addon **Rust (Node-API)** compilado por NAPI-RS.
 - Testes: **Vitest** (unit, jsdom) + **Playwright** (e2e).
 - i18n próprio (pt-BR / en-US) em `src/shared/i18n/catalogs.ts` (catálogo tipado).
 
@@ -189,9 +189,9 @@ Sistema de ícones: `src/renderer/components/MaskedIcon.tsx` (máscara CSS `curr
 
 ## 8. Build & Release (Windows)
 
-**Por que não dá cross-compile local:** o `native-core` é um addon C++ compilado por `node-gyp` por plataforma; `node-gyp` **não** cross-compila Linux→Windows. Buildar no Windows é o único caminho confiável.
+**Cross-compile local:** o `native-core` usa Rust com NAPI-RS. Em Linux ou macOS, `npm run setup:windows-cross` prepara o target MSVC e `npm run make:windows:zip` gera o portátil Windows x64 por `cargo-xwin`.
 
-**Como funciona:** workflow `.github/workflows/build-windows.yml` roda em **`windows-2022`** (o `windows-2025` tem VS 18, que o `@electron/node-gyp` do Forge ainda não reconhece), faz `npm run make` e **publica** o instalador Squirrel + zip portátil num **GitHub Release** com tag `windows-build` (a cota de artefatos do Actions estava estourada; Release não conta nessa cota).
+**Como funciona:** o workflow `.github/workflows/build-windows.yml` continua rodando em **`windows-2022`**, faz `npm run make` e publica o instalador Squirrel + ZIP portátil num GitHub Release. A CI também cross-compila o ZIP no Linux e executa o artefato resultante em um runner Windows.
 
 **Dispara em:** push na branch `build/windows-installer` **ou** manualmente (Actions → "Build Windows" → Run workflow).
 
@@ -199,8 +199,6 @@ Sistema de ícones: `src/renderer/components/MaskedIcon.tsx` (máscara CSS `curr
 `https://github.com/adeondev/flyoff/releases/tag/windows-build`
 - Instalador: `Flyoff-0.1.0.Setup.exe`
 - Portátil: `Flyoff-win32-x64-0.1.0.zip`
-
-> ⚠️ O workflow **"CI"** (padrão do repo) ainda roda no `windows-2025` e **falha** por esse mesmo bug do VS 18 — é pré-existente, **não** tem a ver com os lotes. Correção pendente (trocar `windows-2025`→`windows-2022` em `.github/workflows/ci.yml`), não aplicada por não ter sido autorizada.
 
 ---
 

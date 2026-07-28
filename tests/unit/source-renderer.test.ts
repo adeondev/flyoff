@@ -11,7 +11,6 @@ import {
   reconcileSource,
   updateActiveSourceLine,
 } from '../../src/renderer/projects/source-renderer';
-import { serializeImageDirective } from '../../src/shared/markdown';
 
 describe('incremental source renderer', () => {
   it('creates canonical gutter and content cells for every line', () => {
@@ -228,94 +227,4 @@ describe('incremental source renderer', () => {
     expect(root.children[0]?.classList.contains('md-line--active')).toBe(true);
   });
 
-  describe('offscreen row containment', () => {
-    function imageSource(mode: 'wrap' | 'block'): string {
-      return serializeImageDirective({
-        align: 'left',
-        alt: 'Lua',
-        assetId: '123e4567-e89b-42d3-a456-426614174000',
-        caption: '',
-        height: 90,
-        instanceId: '223e4567-e89b-42d3-a456-426614174001',
-        margin: 8,
-        maxWidth: 1200,
-        minWidth: 96,
-        mode,
-        path: 'Media/Lua.png',
-        positionLock: false,
-        ratioLock: true,
-        version: 2,
-        width: 160,
-      });
-    }
-
-    it('leaves a plain document containable', () => {
-      const root = document.createElement('div');
-      reconcileSource(root, 'one\ntwo\nthree');
-
-      expect(root.hasAttribute('data-floating-media')).toBe(false);
-      expect(root.querySelector('.md-line--media')).toBeNull();
-    });
-
-    it('excludes only rows participating in a wrapped image float', () => {
-      const root = document.createElement('div');
-      reconcileSource(
-        root,
-        `one\n${imageSource('wrap')}\ntwo\n# Clear\nthree`,
-      );
-
-      expect(
-        [...root.children].map((line) =>
-          line.classList.contains('md-line--float-context'),
-        ),
-      ).toEqual([false, true, true, false, false]);
-    });
-
-    it('removes stale float context classes once the float is gone', () => {
-      const root = document.createElement('div');
-      reconcileSource(root, `one\n${imageSource('wrap')}\nthree`);
-      expect(root.querySelector('.md-line--float-context')).not.toBeNull();
-
-      reconcileSource(root, 'one\ntwo\nthree');
-
-      expect(root.querySelector('.md-line--float-context')).toBeNull();
-    });
-
-    it('keeps a heading after the image inside the float context', () => {
-      const root = document.createElement('div');
-      reconcileSource(
-        root,
-        `${imageSource('wrap')}\n# Beside image\ntext\n# Clear\nend`,
-      );
-
-      expect(
-        [...root.children].map((line) =>
-          line.classList.contains('md-line--float-context'),
-        ),
-      ).toEqual([true, true, true, false, false]);
-    });
-
-    it('marks each independent float interval', () => {
-      const root = document.createElement('div');
-      reconcileSource(
-        root,
-        `${imageSource('wrap')}\none\n# Clear\nbetween\n${imageSource('wrap')}\ntwo\n# Clear again\nafter`,
-      );
-
-      expect(
-        [...root.children].map((line) =>
-          line.classList.contains('md-line--float-context'),
-        ),
-      ).toEqual([true, true, false, false, true, true, false, false]);
-    });
-
-    it('marks rows holding an image so their height is never guessed', () => {
-      const root = document.createElement('div');
-      reconcileSource(root, `one\n${imageSource('block')}\nthree`);
-
-      // A centered image does not float, so only its own row keeps rendering.
-      expect(root.children[1]?.classList.contains('md-line--media')).toBe(true);
-      expect(root.children[0]?.classList.contains('md-line--media')).toBe(false);
-    });
-  });
 });

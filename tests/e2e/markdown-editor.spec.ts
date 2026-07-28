@@ -758,8 +758,9 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
     await expect
       .poll(() => editor.evaluate((root) => root.scrollTop))
       .toBeGreaterThan(0);
-    const scrollFrameDurations = await editor.evaluate(async (root) => {
+    const scrollMeasurement = await editor.evaluate(async (root) => {
       const durations: number[] = [];
+      const heightBefore = root.scrollHeight;
       const range = Math.max(1, root.scrollHeight - root.clientHeight);
       let previous = performance.now();
       for (let index = 1; index <= 24; index += 1) {
@@ -773,9 +774,36 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
         previous = current;
       }
       root.dispatchEvent(new Event('scrollend', { bubbles: true }));
-      return durations;
+      return {
+        contentVisibility: root.firstElementChild
+          ? getComputedStyle(root.firstElementChild).contentVisibility
+          : '',
+        durations,
+        heightAfter: root.scrollHeight,
+        heightBefore,
+      };
     });
-    expect(Math.max(...scrollFrameDurations)).toBeLessThan(100);
+    const sortedScrollFrames = [...scrollMeasurement.durations].sort(
+      (left, right) => left - right,
+    );
+    const scrollP95 =
+      sortedScrollFrames[
+        Math.min(
+          sortedScrollFrames.length - 1,
+          Math.ceil(sortedScrollFrames.length * 0.95) - 1,
+        )
+      ] ?? 0;
+    expect(scrollMeasurement.contentVisibility).toBe('visible');
+    expect(scrollMeasurement.heightAfter).toBe(scrollMeasurement.heightBefore);
+    expect(scrollP95).toBeLessThan(50);
+    expect(Math.max(...scrollMeasurement.durations)).toBeLessThan(100);
+    expect(
+      await reading.evaluate((root) =>
+        root.firstElementChild
+          ? getComputedStyle(root.firstElementChild).contentVisibility
+          : '',
+      ),
+    ).toBe('visible');
     await page.keyboard.press(documentStart);
     await expect.poll(() => editor.evaluate((root) => root.scrollTop)).toBe(0);
     await page.keyboard.press('PageDown');

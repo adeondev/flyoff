@@ -110,7 +110,11 @@ export interface TranslationCatalog {
     textColor: string;
     highlightColor: string;
     applyColor: string;
+    applyToSelection: string;
     colorNoSelection: string;
+    defaultColor: string;
+    noHighlight: string;
+    useWhileTyping: string;
   };
   color: {
     alpha: string;
@@ -1004,7 +1008,11 @@ export const ptBR = {
     textColor: 'Texto',
     highlightColor: 'Destaque',
     applyColor: 'Aplicar cor',
+    applyToSelection: 'Aplicar à seleção',
     colorNoSelection: 'Selecione um texto para continuar.',
+    defaultColor: 'Default',
+    noHighlight: 'Sem destaque',
+    useWhileTyping: 'Usar ao digitar',
   },
   color: {
     alpha: 'Opacidade',
@@ -1973,7 +1981,11 @@ export const enUS = {
     textColor: 'Text',
     highlightColor: 'Highlight',
     applyColor: 'Apply colour',
+    applyToSelection: 'Apply to selection',
     colorNoSelection: 'Select some text to continue.',
+    defaultColor: 'Default',
+    noHighlight: 'No highlight',
+    useWhileTyping: 'Use while typing',
   },
   color: {
     alpha: 'Opacity',

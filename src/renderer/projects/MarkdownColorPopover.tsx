@@ -21,9 +21,10 @@ export interface MarkdownColorPopoverProps {
   anchorRef?: RefObject<HTMLElement | null>;
   hasSelection?: boolean;
   initialColor?: string;
+  initialDefault?: boolean;
   initialKind?: MarkdownInlineColorKind;
   kindLocked?: boolean;
-  onApply: (kind: MarkdownInlineColorKind, color: string) => void;
+  onApply: (kind: MarkdownInlineColorKind, color: string | null) => void;
   onClose: () => void;
   position?: { x: number; y: number };
   snapTo?: readonly string[];
@@ -34,7 +35,7 @@ function popoverStyle(
   position?: { x: number; y: number },
 ): CSSProperties {
   const width = 326;
-  const height = 400;
+  const height = 446;
   const gap = 8;
   const x = position?.x ?? gap;
   const preferredY = position?.y ?? gap;
@@ -51,6 +52,7 @@ export function MarkdownColorPopover({
   anchorRef,
   hasSelection = true,
   initialColor = ACCENT_COLOR_PRESETS[0] ?? '#8F4FC4',
+  initialDefault = false,
   initialKind = 'text',
   kindLocked = false,
   onApply,
@@ -63,6 +65,7 @@ export function MarkdownColorPopover({
   const { preferences, update } = useFlyoffPreferences();
   const [color, setColor] = useState(initialColor);
   const [kind, setKind] = useState<MarkdownInlineColorKind>(initialKind);
+  const [useDefault, setUseDefault] = useState(initialDefault);
   const close = useCallback(() => onClose(), [onClose]);
 
   function rememberColor(applied: string): void {
@@ -110,67 +113,80 @@ export function MarkdownColorPopover({
       role="dialog"
       style={popoverStyle(position)}
     >
-      {hasSelection ? (
-        <>
-          {kindLocked ? null : (
-            <div className="markdown-color-popover__modes">
-              {(['text', 'highlight'] as const).map((mode) => (
-                <button
-                  aria-pressed={kind === mode}
-                  key={mode}
-                  onClick={() => setKind(mode)}
-                  type="button"
-                >
-                  {translate(
-                    mode === 'text'
-                      ? 'toolbar.textColor'
-                      : 'toolbar.highlightColor',
-                  )}
-                </button>
-              ))}
-            </div>
-          )}
-          <ColorSwatchPicker
-            allowAlpha
-            customLabel={translate('projects.nodeColorCustom')}
-            label={translate('projects.nodeColorPresets')}
-            labels={{
-              alpha: translate('color.alpha'),
-              eyedropper: translate('color.eyedropper'),
-              format: translate('color.format'),
-              hue: translate('color.hue'),
-              loupeCancel: translate('color.loupeCancel'),
-              loupeHint: translate('color.loupeHint'),
-              loupeLocked: translate('color.loupeLocked'),
-              loupeScreen: translate('color.loupeScreen'),
-              recent: translate('color.recent'),
-            }}
-            onChange={setColor}
-            optionLabel={(preset) =>
-              `${translate('toolbar.color')}: ${preset}`
-            }
-            presets={ACCENT_COLOR_PRESETS}
-            recent={preferences.editor.colorRecent}
-            snapTo={snapTo}
-            value={color}
-          />
-          <button
-            className="markdown-color-popover__apply"
-            onClick={() => {
-              onApply(kind, color);
-              rememberColor(color);
-              close();
-            }}
-            type="button"
-          >
-            {translate('toolbar.applyColor')}
-          </button>
-        </>
-      ) : (
-        <p className="markdown-color-popover__hint">
-          {translate('toolbar.colorNoSelection')}
-        </p>
+      {kindLocked ? null : (
+        <div className="markdown-color-popover__modes">
+          {(['text', 'highlight'] as const).map((mode) => (
+            <button
+              aria-pressed={kind === mode}
+              key={mode}
+              onClick={() => setKind(mode)}
+              type="button"
+            >
+              {translate(
+                mode === 'text'
+                  ? 'toolbar.textColor'
+                  : 'toolbar.highlightColor',
+              )}
+            </button>
+          ))}
+        </div>
       )}
+      <button
+        aria-pressed={useDefault}
+        className="markdown-color-popover__default"
+        onClick={() => setUseDefault(true)}
+        type="button"
+      >
+        {translate(
+          kind === 'text'
+            ? 'toolbar.defaultColor'
+            : 'toolbar.noHighlight',
+        )}
+      </button>
+      <ColorSwatchPicker
+        allowAlpha
+        customLabel={translate('projects.nodeColorCustom')}
+        label={translate('projects.nodeColorPresets')}
+        labels={{
+          alpha: translate('color.alpha'),
+          eyedropper: translate('color.eyedropper'),
+          format: translate('color.format'),
+          hue: translate('color.hue'),
+          loupeCancel: translate('color.loupeCancel'),
+          loupeHint: translate('color.loupeHint'),
+          loupeLocked: translate('color.loupeLocked'),
+          loupeScreen: translate('color.loupeScreen'),
+          recent: translate('color.recent'),
+        }}
+        onChange={(nextColor) => {
+          setColor(nextColor);
+          setUseDefault(false);
+        }}
+        optionLabel={(preset) =>
+          `${translate('toolbar.color')}: ${preset}`
+        }
+        presets={ACCENT_COLOR_PRESETS}
+        recent={preferences.editor.colorRecent}
+        snapTo={snapTo}
+        value={color}
+      />
+      <button
+        className="markdown-color-popover__apply"
+        onClick={() => {
+          onApply(kind, useDefault ? null : color);
+          if (!useDefault) {
+            rememberColor(color);
+          }
+          close();
+        }}
+        type="button"
+      >
+        {translate(
+          hasSelection
+            ? 'toolbar.applyToSelection'
+            : 'toolbar.useWhileTyping',
+        )}
+      </button>
     </div>,
     document.body,
   );
