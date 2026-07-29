@@ -144,6 +144,12 @@ function replaceSplitRatio(
     : { ...node, first, second };
 }
 
+function normalizedSplitRatio(ratio = 0.5): number {
+  return Number.isFinite(ratio)
+    ? Math.min(0.9, Math.max(0.1, ratio))
+    : 0.5;
+}
+
 function collapsePane(
   node: WorkspaceLayoutSnapshot,
   paneId: string,
@@ -674,6 +680,7 @@ export function splitPaneWithTab(
   tabId: string,
   direction: WorkspaceSplitDirection,
   before: boolean,
+  ratio?: number,
 ): PaneWorkspaceState {
   if (collectPanes(workspace.root).length >= WORKSPACE_MAX_PANES) {
     return workspace;
@@ -704,7 +711,7 @@ export function splitPaneWithTab(
     kind: 'split',
     splitId: uniqueLayoutId(without, 'split'),
     direction,
-    ratio: 0.5,
+    ratio: normalizedSplitRatio(ratio),
     first: before ? newPane : currentTarget,
     second: before ? currentTarget : newPane,
   };
@@ -721,6 +728,7 @@ export function splitPaneWithTarget(
   direction: WorkspaceSplitDirection,
   before: boolean,
   initialPageState?: PageSessionState,
+  ratio?: number,
 ): PaneWorkspaceState {
   if (collectPanes(workspace.root).length >= WORKSPACE_MAX_PANES) {
     return workspace;
@@ -738,6 +746,7 @@ export function splitPaneWithTarget(
         existing.tabId,
         direction,
         before,
+        ratio,
       );
     }
   }
@@ -760,7 +769,7 @@ export function splitPaneWithTarget(
     kind: 'split',
     splitId: uniqueLayoutId(workspace, 'split'),
     direction,
-    ratio: 0.5,
+    ratio: normalizedSplitRatio(ratio),
     first: before ? newPane : targetPane,
     second: before ? targetPane : newPane,
   };

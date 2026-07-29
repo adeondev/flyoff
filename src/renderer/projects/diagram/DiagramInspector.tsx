@@ -209,6 +209,47 @@ function diagnosticMessage(
   return key ? translate(key) : item.message;
 }
 
+interface DiagnosticGroup {
+  key: string;
+  severity: DiagramDiagnostic['severity'];
+  message: string;
+  items: readonly DiagramDiagnostic[];
+}
+
+function groupDiagnostics(
+  diagnostics: readonly DiagramDiagnostic[],
+  translate: Translate,
+): readonly DiagnosticGroup[] {
+  const groups = new Map<string, DiagnosticGroup>();
+  for (const item of diagnostics) {
+    const message = diagnosticMessage(item, translate);
+    const key = `${item.severity}:${item.code}:${message}`;
+    const existing = groups.get(key);
+    groups.set(
+      key,
+      existing
+        ? { ...existing, items: [...existing.items, item] }
+        : { key, severity: item.severity, message, items: [item] },
+    );
+  }
+  return [...groups.values()];
+}
+
+function diagnosticTargetName(
+  document: DiagramDocument,
+  item: DiagramDiagnostic,
+  index: number,
+): string {
+  const element = document.elements.find(({ id }) => id === item.targetId);
+  if (element) {
+    return element.name || element.kind;
+  }
+  const relationship = document.relationships.find(
+    ({ id }) => id === item.targetId,
+  );
+  return relationship?.name || relationship?.kind || String(index + 1);
+}
+
 function parseList(value: string): readonly string[] {
   return value
     .split(',')
@@ -626,6 +667,7 @@ export function DiagramInspector({
     selection?.kind === 'relationship'
       ? document.relationships.find(({ id }) => id === selection.id)
       : undefined;
+  const diagnosticGroups = groupDiagnostics(diagnostics, translate);
   return (
     <aside aria-label={translate('diagram.inspector')} className="diagram-inspector">
       <h2>{translate('diagram.inspector')}</h2>
@@ -881,22 +923,56 @@ export function DiagramInspector({
       </div>
       <section aria-live="polite" className="diagram-diagnostics">
         <h3>{translate('diagram.diagnostics')}</h3>
-        {diagnostics.length === 0 ? (
+        {diagnosticGroups.length === 0 ? (
           <p>{translate('diagram.noDiagnostics')}</p>
         ) : (
           <ul>
-            {diagnostics.map((item, index) => (
-              <li data-severity={item.severity} key={`${item.code}:${item.targetId ?? index}`}>
-                <strong>{translate(severityKeys[item.severity])}: </strong>
-                {item.targetId ? (
-                  <button onClick={() => onSelectDiagnostic(item.targetId!)} type="button">
-                    {diagnosticMessage(item, translate)}
-                  </button>
-                ) : (
-                  diagnosticMessage(item, translate)
-                )}
-              </li>
-            ))}
+            {diagnosticGroups.map((group) => {
+              const targets = group.items.filter(
+                (item): item is DiagramDiagnostic & { targetId: string } =>
+                  item.targetId !== undefined,
+              );
+              const summary = (
+                <>
+                  <strong>{translate(severityKeys[group.severity])}: </strong>
+                  <span>{group.message}</span>
+                  {group.items.length > 1 ? (
+                    <span className="diagram-diagnostics__count">
+                      ×{group.items.length}
+                    </span>
+                  ) : null}
+                </>
+              );
+              return (
+                <li data-severity={group.severity} key={group.key}>
+                  {group.items.length > 1 && targets.length > 0 ? (
+                    <details>
+                      <summary>{summary}</summary>
+                      <div className="diagram-diagnostics__targets">
+                        {targets.map((item, index) => (
+                          <button
+                            key={item.targetId}
+                            onClick={() => onSelectDiagnostic(item.targetId)}
+                            type="button"
+                          >
+                            {diagnosticTargetName(document, item, index)}
+                          </button>
+                        ))}
+                      </div>
+                    </details>
+                  ) : targets[0] ? (
+                    <button
+                      onClick={() => onSelectDiagnostic(targets[0]!.targetId)}
+                      type="button"
+                    >
+                      {summary}
+                    </button>
+                  ) : (
+                    summary
+                  )}
+                </li>
+              );
+            })}
           </ul>
         )}
       </section>

@@ -117,6 +117,7 @@ export class DiagramController {
     nodeId: string,
     update: (document: DiagramDocument) => DiagramDocument,
     coalesceKey?: string,
+    continuousHistory = false,
   ): boolean {
     const entry = this.requireEntry(nodeId);
     const next = update(entry.snapshot.document);
@@ -126,7 +127,14 @@ export class DiagramController {
     if (!validateDiagramDocument(next).ok) {
       return false;
     }
-    this.history.record(nodeId, entry.snapshot.document, next, coalesceKey);
+    this.history.record(
+      nodeId,
+      entry.snapshot.document,
+      next,
+      coalesceKey,
+      Date.now(),
+      continuousHistory,
+    );
     this.applyDocument(entry, next);
     return true;
   }

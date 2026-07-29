@@ -5,8 +5,17 @@ import { MaskedIcon } from '../MaskedIcon';
 import { getTooltipTargetProps } from '../tooltip';
 import type { RailView } from './rail-views';
 
+export interface IconRailAction {
+  id: string;
+  label: string;
+  icon: string;
+  active?: boolean;
+  onSelect: () => void;
+}
+
 export interface IconRailProps {
   views: readonly RailView[];
+  actions?: readonly IconRailAction[];
   activeViewId: string;
   translate: Translate;
   onSelect: (railViewId: string) => void;
@@ -15,6 +24,7 @@ export interface IconRailProps {
 }
 
 export function IconRail({
+  actions = [],
   activeViewId,
   onSelect,
   onToggleSidebar,
@@ -66,6 +76,23 @@ export function IconRail({
           </button>
         );
       })}
+      {actions.length > 0 ? (
+        <div className="icon-rail__actions">
+          {actions.map((action) => (
+            <button
+              aria-label={action.label}
+              aria-pressed={action.active}
+              className="icon-rail__button"
+              key={action.id}
+              onClick={action.onSelect}
+              type="button"
+              {...getTooltipTargetProps(action.label, 'right')}
+            >
+              <MaskedIcon className="icon-rail__icon" icon={action.icon} />
+            </button>
+          ))}
+        </div>
+      ) : null}
     </nav>
   );
 }

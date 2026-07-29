@@ -1,3 +1,6 @@
+export * from './agent-operations';
+export * from './agent-types';
+export * from './agent-validation';
 export * from './factories';
 export * from './geometry';
 export * from './migrations';

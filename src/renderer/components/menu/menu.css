@@ -103,10 +103,25 @@
 }
 
 .flyoff-menu__item-label {
+  display: inline-flex;
+  min-width: 0;
   grid-column: 2;
+  align-items: center;
+  gap: 8px;
+}
+
+.flyoff-menu__item-label-text {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.flyoff-menu__item-image-icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  object-fit: contain;
 }
 
 .flyoff-menu__shortcut {

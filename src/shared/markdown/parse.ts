@@ -9,6 +9,45 @@ const THEMATIC_BREAK = /^ {0,3}([-*_])[ \t]*(?:\1[ \t]*){2,}$/;
 const BLOCKQUOTE = /^ {0,3}>[ ]?(.*)$/;
 const LIST_ITEM = /^( {0,3})([-*+]|\d{1,9}[.)])([ \t]+)(.*)$/;
 const TASK = /^\[([ xX])\][ \t]+(.*)$/;
+const TABLE_DIVIDER_CELL = /^:?-{3,}:?$/;
+
+function splitTableRow(line: string): string[] {
+  const trimmed = line.trim().replace(/^\|/, '').replace(/\|$/, '');
+  const cells: string[] = [];
+  let value = '';
+  let escaped = false;
+  for (const character of trimmed) {
+    if (escaped) {
+      value += character;
+      escaped = false;
+    } else if (character === '\\') {
+      escaped = true;
+    } else if (character === '|') {
+      cells.push(value.trim());
+      value = '';
+    } else {
+      value += character;
+    }
+  }
+  cells.push(value.trim());
+  return cells;
+}
+
+function tableAlignments(line: string) {
+  const cells = splitTableRow(line);
+  if (cells.length === 0 || !cells.every((cell) => TABLE_DIVIDER_CELL.test(cell))) {
+    return null;
+  }
+  return cells.map((cell) =>
+    cell.startsWith(':') && cell.endsWith(':')
+      ? ('center' as const)
+      : cell.endsWith(':')
+        ? ('right' as const)
+        : cell.startsWith(':')
+          ? ('left' as const)
+          : null,
+  );
+}
 
 function isBlockStart(line: string): boolean {
   return (
@@ -145,6 +184,30 @@ export function parseBlocks(lines: readonly string[]): BlockNode[] {
       const parsed = parseList(lines, index);
       blocks.push(parsed.block);
       index = parsed.end;
+      continue;
+    }
+
+    const alignments = index + 1 < lines.length
+      ? tableAlignments(lines[index + 1]!)
+      : null;
+    if (alignments && line.includes('|')) {
+      const headerCells = splitTableRow(line);
+      const rows: ReturnType<typeof parseInline>[][] = [];
+      index += 2;
+      while (
+        index < lines.length &&
+        !BLANK.test(lines[index]!) &&
+        lines[index]!.includes('|')
+      ) {
+        rows.push(splitTableRow(lines[index]!).map(parseInline));
+        index += 1;
+      }
+      blocks.push({
+        type: 'table',
+        alignments,
+        header: headerCells.map(parseInline),
+        rows,
+      });
       continue;
     }
 

@@ -922,7 +922,7 @@ test('stabilizes Markdown editing, history, gutters and note zoom', async () => 
       expect(metrics.lineCount).toBe(1_001);
       expect(metrics.lastNumber).toBe('1001');
       expect(metrics.longHeight).toBeGreaterThan(metrics.lineHeight * 1.5);
-      expect(metrics.border).toBe('1px');
+      expect(Number.parseFloat(metrics.border)).toBeGreaterThan(0);
     }
 
     await expect

@@ -114,6 +114,7 @@ export type WorkspaceAction =
       tabId: string;
       direction: WorkspaceSplitDirection;
       before: boolean;
+      ratio?: number;
     }
   | {
       type: 'split-pane-with-target';
@@ -122,6 +123,7 @@ export type WorkspaceAction =
       direction: WorkspaceSplitDirection;
       before: boolean;
       initialPageState?: PageSessionState;
+      ratio?: number;
     }
   | {
       type: 'split-pane-with-targets';
@@ -295,6 +297,7 @@ function reducePaneWorkspace(
         action.tabId,
         action.direction,
         action.before,
+        action.ratio,
       );
     case 'split-pane-with-target':
       return splitPaneWithTarget(
@@ -304,6 +307,7 @@ function reducePaneWorkspace(
         action.direction,
         action.before,
         action.initialPageState,
+        action.ratio,
       );
     case 'split-pane-with-targets':
       return splitPaneWithTargets(

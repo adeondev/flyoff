@@ -453,6 +453,62 @@ describe('workspace reducer', () => {
     ).toEqual(contentTarget);
   });
 
+  it.each(['markdown', 'diagram'] as const)(
+    'opens Twine beside an active %s project page and restores the split',
+    (pageType) => {
+      const projectTarget: TabTarget = {
+        type: 'project-content',
+        projectId: PROJECT_ID,
+        nodeId: NODE_ID,
+        pageType,
+      };
+      const opened = workspaceReducer(openProject(), {
+        type: 'open-target',
+        target: projectTarget,
+      });
+      const targetPaneId = selectActiveTabs(opened).paneId;
+      const split = workspaceReducer(opened, {
+        type: 'split-pane-with-target',
+        targetPaneId,
+        target: {
+          type: 'internal',
+          pageId: INTERNAL_PAGE_IDS.twine,
+        },
+        direction: 'row',
+        before: false,
+        ratio: 0.64,
+      });
+      const panes = collectPanes(split.project!.root);
+      const restored = adoptWorkspaceSnapshot(serializeWorkspace(split));
+
+      expect(panes).toHaveLength(2);
+      expect(split.project?.root).toMatchObject({
+        kind: 'split',
+        direction: 'row',
+        ratio: 0.64,
+      });
+      expect(
+        panes.flatMap(({ tabs }) =>
+          tabs.filter(
+            ({ target }) =>
+              target.type === 'internal' &&
+              target.pageId === INTERNAL_PAGE_IDS.twine,
+          ),
+        ),
+      ).toHaveLength(1);
+      expect(
+        panes.flatMap(({ tabs }) =>
+          tabs.filter(({ target }) => target === projectTarget),
+        ),
+      ).toHaveLength(1);
+      expect(restored.project?.root).toMatchObject({
+        kind: 'split',
+        direction: 'row',
+        ratio: 0.64,
+      });
+    },
+  );
+
   it('moves an existing sidebar target into the chosen pane', () => {
     const opened = workspaceReducer(openProject(), {
       type: 'open-target',

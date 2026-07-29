@@ -28,7 +28,9 @@ interface DiagramLabels {
   chooseLocation: string;
   colorRed: string;
   create: string;
+  currentPage: string;
   diagram: string;
+  documentAgent: string;
   diagramTypes: Record<'class' | 'use-case' | 'sequence' | 'activity', string>;
   addPartitionRight: string;
   elementClass: string;
@@ -38,10 +40,13 @@ interface DiagramLabels {
   fitView: string;
   importDiagram: string;
   importSelected: string;
+  keyLater: string;
   name: string;
   newProject: string;
   projectName: string;
   reload: string;
+  twine: string;
+  tools: string;
 }
 
 function labelsFor(locale: string): DiagramLabels {
@@ -51,7 +56,9 @@ function labelsFor(locale: string): DiagramLabels {
         chooseLocation: 'Choose location',
         colorRed: 'Red',
         create: 'Create',
+        currentPage: 'Current page only',
         diagram: 'UML diagram',
+        documentAgent: 'Notes and diagrams',
         diagramTypes: {
           class: 'Class',
           'use-case': 'Use case',
@@ -66,17 +73,22 @@ function labelsFor(locale: string): DiagramLabels {
         fitView: 'Fit to view',
         importDiagram: 'Import diagram',
         importSelected: 'Import selected',
+        keyLater: 'Not now',
         name: 'Name',
         newProject: 'New den',
         projectName: 'Den name',
         reload: 'Reload from disk',
+        twine: 'Twine',
+        tools: 'Add and configure',
       }
     : {
         addInstance: 'Adicionar instância',
         chooseLocation: 'Escolher local',
         colorRed: 'Vermelho',
         create: 'Criar',
+        currentPage: 'Somente a p\u00e1gina atual',
         diagram: 'Diagrama UML',
+        documentAgent: 'Notas e diagramas',
         diagramTypes: {
           class: 'Classes',
           'use-case': 'Casos de uso',
@@ -91,10 +103,13 @@ function labelsFor(locale: string): DiagramLabels {
         fitView: 'Ajustar à tela',
         importDiagram: 'Importar diagrama',
         importSelected: 'Importar selecionados',
+        keyLater: 'Agora n\u00e3o',
         name: 'Nome',
         newProject: 'Nova toca',
         projectName: 'Nome da toca',
         reload: 'Recarregar do disco',
+        twine: 'Twine',
+        tools: 'Adicionar e configurar',
       };
 }
 
@@ -261,6 +276,27 @@ test('creates, edits, saves, imports and exports native UML diagrams securely', 
         page.getByRole('tabpanel', { name }).locator('.diagram-page'),
       ).toBeVisible();
     }
+
+    await page.getByRole('button', { name: labels.twine, exact: true }).click();
+    const keyLater = page.getByRole('button', { name: labels.keyLater });
+    if (await keyLater.isVisible().catch(() => false)) {
+      await keyLater.click();
+    }
+    await expect(page.locator('.workspace-pane')).toHaveCount(2);
+    await expect(activityPanel).toBeVisible();
+    await expect(
+      page.getByRole('textbox', { name: /Twine/ }),
+    ).toBeVisible();
+    await page.getByRole('button', { name: labels.tools }).click();
+    await page
+      .getByRole('menuitem', { name: labels.documentAgent })
+      .click();
+    const currentPageContext = page.getByRole('menuitemcheckbox', {
+      name: labels.currentPage,
+    });
+    await expect(currentPageContext).toBeEnabled();
+    await currentPageContext.click();
+    await page.getByRole('tab', { name: 'Activity flow' }).click();
 
     await page.getByRole('button', { name: labels.fileActions }).click();
     await page

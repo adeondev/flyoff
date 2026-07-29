@@ -6,6 +6,7 @@ import {
   dialog,
   Menu,
   nativeTheme,
+  safeStorage,
   session,
 } from 'electron';
 
@@ -29,6 +30,7 @@ import {
   registerProjectNoteActivityHandlers,
   registerProjectHandlers,
   registerTabSessionHandlers,
+  registerTwineHandlers,
   registerUiStateHandlers,
   registerWindowControlHandlers,
   type SelectProjectDirectory,
@@ -62,6 +64,12 @@ import {
   ElectronSpellcheckService,
 } from './services/spellcheck';
 import { TabSessionStore } from './session';
+import {
+  TwineConversationStore,
+  TwineCredentialStore,
+  createTwineE2eModelClientFactory,
+  TwineGenerationService,
+} from './twine';
 import {
   createMainWindow,
   applyWindowTheme,
@@ -194,6 +202,7 @@ let removeDiagramHandlers: (() => void) | undefined;
 let removeProjectNoteActivityHandlers: (() => void) | undefined;
 let removeProjectHandlers: (() => void) | undefined;
 let removeTabSessionHandlers: (() => void) | undefined;
+let removeTwineHandlers: (() => void) | undefined;
 let removeUiStateHandlers: (() => void) | undefined;
 let removeWindowControlHandlers: (() => void) | undefined;
 let translator: FlyoffTranslator | undefined;
@@ -242,6 +251,8 @@ function cleanupApplication(): void {
   removeProjectHandlers = undefined;
   removeTabSessionHandlers?.();
   removeTabSessionHandlers = undefined;
+  removeTwineHandlers?.();
+  removeTwineHandlers = undefined;
   removeUiStateHandlers?.();
   removeUiStateHandlers = undefined;
   removeWindowControlHandlers?.();
@@ -401,6 +412,22 @@ async function startApplication(): Promise<void> {
   bootstrapState = state;
 
   const { isAllowedUrl } = getRendererLocation();
+  const twineCredentialStore = new TwineCredentialStore(
+    app.getPath('userData'),
+    safeStorage,
+  );
+  const twineConversationStore = new TwineConversationStore(
+    app.getPath('userData'),
+  );
+  const twineE2eModelClientFactory =
+    process.env.FLYOFF_E2E === '1'
+      ? createTwineE2eModelClientFactory(
+          process.env.FLYOFF_E2E_TWINE_MODEL_SCENARIO,
+        )
+      : undefined;
+  const twineGenerationService = twineE2eModelClientFactory
+    ? new TwineGenerationService(twineE2eModelClientFactory)
+    : new TwineGenerationService();
   closeCoordinator = new CloseCoordinator({
     isAllowedUrl,
     onShutdownApproved: markShutdownExpected,
@@ -477,6 +504,12 @@ async function startApplication(): Promise<void> {
     tabSessionStore,
     isAllowedUrl,
   );
+  removeTwineHandlers = registerTwineHandlers({
+    conversationStore: twineConversationStore,
+    credentialStore: twineCredentialStore,
+    generationService: twineGenerationService,
+    isAllowedUrl,
+  });
   removeUiStateHandlers = registerUiStateHandlers(uiStateStore, isAllowedUrl);
   removeWindowControlHandlers = registerWindowControlHandlers(isAllowedUrl);
 

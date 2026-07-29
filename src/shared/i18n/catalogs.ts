@@ -120,6 +120,104 @@ export interface TranslationCatalog {
     settings: string;
     update: string;
   };
+  twine: {
+    attachmentDuplicate: string;
+    attachmentLimit: string;
+    attachmentTooLarge: string;
+    attachmentsNotSent: string;
+    attachments: string;
+    attachFile: string;
+    apiKeyDialogDescription: string;
+    apiKeyDialogTitle: string;
+    apiKeyEncryptionUnavailable: string;
+    apiKeyInput: string;
+    apiKeyInputPlaceholder: string;
+    apiKeyLater: string;
+    apiKeyMissing: string;
+    apiKeySaveError: string;
+    audioComingSoon: string;
+    approvalAutomatic: string;
+    approvalFull: string;
+    approvalMode: string;
+    approvalRequest: string;
+    askPrompt: string;
+    beta: string;
+    cancel: string;
+    conversation: string;
+    documentAgent: string;
+    documentConsentNotice: string;
+    documentContextCurrent: string;
+    documentContextOff: string;
+    documentContextProject: string;
+    diagramAgent: string;
+    diagramApply: string;
+    diagramChanges: string;
+    diagramConsentNotice: string;
+    diagramContextCurrent: string;
+    diagramContextOff: string;
+    diagramContextProject: string;
+    diagramDestructiveWarning: string;
+    diagramDiagnostics: string;
+    diagramProposalTitle: string;
+    diagramReject: string;
+    diagramType: string;
+    noteAgent: string;
+    noteChanges: string;
+    noteDestructiveWarning: string;
+    noteProposalTitle: string;
+    createApiKey: string;
+    defaultModel: string;
+    dropFiles: string;
+    generating: string;
+    generationFailed: string;
+    hideApiKey: string;
+    messageInput: string;
+    messagePlaceholder: string;
+    modelUnavailable: string;
+    models: string;
+    newConversation: string;
+    newConversationDescription: string;
+    newConversationTitle: string;
+    panelLimit: string;
+    removeAttachment: string;
+    researchMode: string;
+    saveApiKey: string;
+    selectModel: string;
+    send: string;
+    savingApiKey: string;
+    showApiKey: string;
+    startNewConversation: string;
+    thinkingHigh: string;
+    thinkingHighChip: string;
+    thinkingLevel: string;
+    thinkingLow: string;
+    thinkingLowChip: string;
+    tools: string;
+    codeResult: string;
+    deleteMessage: string;
+    deleteMessageDescription: string;
+    deleteMessageTitle: string;
+    deleteConversation: string;
+    deleteConversationDescription: string;
+    deleteConversationTitle: string;
+    editMessage: string;
+    executedCode: string;
+    conversationHistory: string;
+    history: string;
+    jumpToLatest: string;
+    messageVersions: string;
+    nextVersion: string;
+    previousVersion: string;
+    regenerate: string;
+    responseReady: string;
+    rewindHere: string;
+    saveEdit: string;
+    searchedWeb: string;
+    sources: string;
+    thinkingNow: string;
+    thoughtFor: string;
+    untitledConversation: string;
+  };
   settings: {
     title: string;
     description: string;
@@ -625,6 +723,7 @@ export interface TranslationCatalog {
     bar: string;
     navigation: string;
     home: string;
+    twine: string;
     thisDevice: string;
     settings: string;
     help: string;
@@ -803,6 +902,114 @@ export const ptBR = {
     thisDevice: 'Este Dispositivo',
     settings: 'Configurações',
     update: 'Atualizar',
+  },
+  twine: {
+    attachmentDuplicate: 'Este arquivo j\u00e1 foi adicionado.',
+    attachmentLimit: 'Adicione no m\u00e1ximo 10 arquivos.',
+    attachmentTooLarge: 'O arquivo deve ter no m\u00e1ximo 100 MB.',
+    attachmentsNotSent: 'Anexos ainda n\u00e3o s\u00e3o enviados ao modelo.',
+    attachments: 'Anexos',
+    attachFile: 'Enviar anexo',
+    apiKeyDialogDescription:
+      'Cole sua API key do Google AI Studio. O Flyoff a salva criptografada neste dispositivo para os pr\u00f3ximos acessos.',
+    apiKeyDialogTitle: 'Conectar Gemini',
+    apiKeyEncryptionUnavailable:
+      'A criptografia de credenciais n\u00e3o est\u00e1 dispon\u00edvel neste dispositivo.',
+    apiKeyInput: 'API key do Gemini',
+    apiKeyInputPlaceholder: 'Cole sua chave aqui',
+    apiKeyLater: 'Agora n\u00e3o',
+    apiKeyMissing: 'Adicione uma API key do Gemini para enviar mensagens.',
+    apiKeySaveError: 'N\u00e3o foi poss\u00edvel salvar a API key.',
+    audioComingSoon: '\u00c1udio \u2014 Em breve',
+    approvalAutomatic: 'Aprovar automaticamente',
+    approvalFull: 'Acesso completo',
+    approvalMode: 'Modo de aprova\u00e7\u00e3o',
+    approvalRequest: 'Solicitar aprova\u00e7\u00e3o',
+    askPrompt: 'O que faremos hoje?',
+    beta: 'Beta',
+    cancel: 'Cancelar',
+    conversation: 'Conversa com o Twine',
+    documentAgent: 'Notas e diagramas',
+    documentConsentNotice:
+      'O conteúdo autorizado da página será enviado ao modelo quando necessário.',
+    documentContextCurrent: 'Somente a página atual',
+    documentContextOff: 'Não compartilhar documentos',
+    documentContextProject: 'Notas e diagramas do projeto',
+    diagramAgent: 'Diagramas UML',
+    diagramApply: 'Aplicar alterações',
+    diagramChanges: 'Alterações',
+    diagramConsentNotice:
+      'O conteúdo UML autorizado será enviado ao modelo quando necessário.',
+    diagramContextCurrent: 'Somente o diagrama atual',
+    diagramContextOff: 'Não compartilhar diagramas',
+    diagramContextProject: 'Todos os diagramas do projeto',
+    diagramDestructiveWarning:
+      'Esta proposta remove elementos ou relações do diagrama.',
+    diagramDiagnostics: 'Diagnósticos após a alteração',
+    diagramProposalTitle: 'Revisar proposta UML',
+    diagramReject: 'Rejeitar',
+    diagramType: 'Tipo de diagrama',
+    noteAgent: 'Notas',
+    noteChanges: 'Operações',
+    noteDestructiveWarning:
+      'Esta proposta remove conteúdo ou substitui toda a nota.',
+    noteProposalTitle: 'Revisar alteração da nota',
+    createApiKey: 'Criar API key',
+    defaultModel: 'Padr\u00e3o',
+    dropFiles: 'Solte os arquivos aqui',
+    generating: 'Gerando resposta',
+    generationFailed: 'N\u00e3o foi poss\u00edvel gerar a resposta do Twine.',
+    hideApiKey: 'Ocultar',
+    messageInput: 'Mensagem para o Twine',
+    messagePlaceholder: 'Pergunte ao Twine',
+    modelUnavailable: 'O modelo ainda n\u00e3o est\u00e1 conectado.',
+    models: 'Modelos',
+    newConversation: 'Nova conversa',
+    newConversationDescription:
+      'As mensagens e os anexos desta conversa ser\u00e3o removidos.',
+    newConversationTitle: 'Iniciar nova conversa?',
+    panelLimit:
+      'Feche um painel para abrir o Twine ao lado da p\u00e1gina atual.',
+    removeAttachment: 'Remover anexo',
+    researchMode: 'Modo Pesquisa',
+    saveApiKey: 'Salvar chave',
+    selectModel: 'Selecionar modelo',
+    send: 'Enviar mensagem',
+    savingApiKey: 'Salvando...',
+    showApiKey: 'Mostrar',
+    startNewConversation: 'Iniciar nova conversa',
+    thinkingHigh: 'Alto',
+    thinkingHighChip: 'Pensamento alto',
+    thinkingLevel: 'N\u00edvel de pensamento',
+    thinkingLow: 'Baixo',
+    thinkingLowChip: 'Pensamento baixo',
+    tools: 'Adicionar e configurar',
+    codeResult: 'Resultado do código',
+    deleteMessage: 'Excluir mensagem',
+    deleteMessageDescription:
+      'Esta mensagem e as mensagens seguintes sairão da versão atual da conversa.',
+    deleteMessageTitle: 'Excluir a partir desta mensagem?',
+    deleteConversation: 'Excluir conversa',
+    deleteConversationDescription:
+      'Esta conversa sairá do histórico do Twine.',
+    deleteConversationTitle: 'Excluir conversa?',
+    editMessage: 'Editar mensagem',
+    executedCode: 'Código executado',
+    conversationHistory: 'Histórico de conversas',
+    history: 'Histórico',
+    jumpToLatest: 'Ir para o fim',
+    messageVersions: 'Versões da conversa',
+    nextVersion: 'Próxima versão',
+    previousVersion: 'Versão anterior',
+    regenerate: 'Gerar outra resposta',
+    responseReady: 'Resposta concluída',
+    rewindHere: 'Voltar até aqui',
+    saveEdit: 'Salvar e enviar',
+    searchedWeb: 'Pesquisa na web',
+    sources: 'Fontes',
+    thinkingNow: 'Pensando…',
+    thoughtFor: 'Pensou por',
+    untitledConversation: 'Nova conversa',
   },
   settings: {
     title: 'Configura\u00e7\u00f5es',
@@ -1377,6 +1584,7 @@ export const ptBR = {
     bar: 'Páginas',
     navigation: 'Navegação',
     home: 'Início',
+    twine: 'Twine',
     thisDevice: 'Este dispositivo',
     settings: 'Configurações',
     help: 'Ajuda',
@@ -1547,6 +1755,113 @@ export const enUS = {
     thisDevice: 'This Device',
     settings: 'Settings',
     update: 'Update',
+  },
+  twine: {
+    attachmentDuplicate: 'This file has already been added.',
+    attachmentLimit: 'Add no more than 10 files.',
+    attachmentTooLarge: 'The file must be no larger than 100 MB.',
+    attachmentsNotSent: 'Attachments are not sent to the model yet.',
+    attachments: 'Attachments',
+    attachFile: 'Attach file',
+    apiKeyDialogDescription:
+      'Paste your Google AI Studio API key. Flyoff stores it encrypted on this device for future sessions.',
+    apiKeyDialogTitle: 'Connect Gemini',
+    apiKeyEncryptionUnavailable:
+      'Credential encryption is unavailable on this device.',
+    apiKeyInput: 'Gemini API key',
+    apiKeyInputPlaceholder: 'Paste your key here',
+    apiKeyLater: 'Not now',
+    apiKeyMissing: 'Add a Gemini API key to send messages.',
+    apiKeySaveError: 'Could not save the API key.',
+    audioComingSoon: 'Audio \u2014 Coming soon',
+    approvalAutomatic: 'Approve automatically',
+    approvalFull: 'Full access',
+    approvalMode: 'Approval mode',
+    approvalRequest: 'Request approval',
+    askPrompt: 'What will we do today?',
+    beta: 'Beta',
+    cancel: 'Cancel',
+    conversation: 'Conversation with Twine',
+    documentAgent: 'Notes and diagrams',
+    documentConsentNotice:
+      'Authorized page content will be sent to the model when needed.',
+    documentContextCurrent: 'Current page only',
+    documentContextOff: 'Do not share documents',
+    documentContextProject: 'Project notes and diagrams',
+    diagramAgent: 'UML diagrams',
+    diagramApply: 'Apply changes',
+    diagramChanges: 'Changes',
+    diagramConsentNotice:
+      'Authorized UML content will be sent to the model when needed.',
+    diagramContextCurrent: 'Current diagram only',
+    diagramContextOff: 'Do not share diagrams',
+    diagramContextProject: 'All project diagrams',
+    diagramDestructiveWarning:
+      'This proposal removes elements or relationships from the diagram.',
+    diagramDiagnostics: 'Diagnostics after changes',
+    diagramProposalTitle: 'Review UML proposal',
+    diagramReject: 'Reject',
+    diagramType: 'Diagram type',
+    noteAgent: 'Notes',
+    noteChanges: 'Operations',
+    noteDestructiveWarning:
+      'This proposal removes content or replaces the entire note.',
+    noteProposalTitle: 'Review note change',
+    createApiKey: 'Create API key',
+    defaultModel: 'Default',
+    dropFiles: 'Drop files here',
+    generating: 'Generating response',
+    generationFailed: 'Could not generate the Twine response.',
+    hideApiKey: 'Hide',
+    messageInput: 'Message Twine',
+    messagePlaceholder: 'Ask Twine',
+    modelUnavailable: 'The model is not connected yet.',
+    models: 'Models',
+    newConversation: 'New conversation',
+    newConversationDescription:
+      'The messages and attachments in this conversation will be removed.',
+    newConversationTitle: 'Start a new conversation?',
+    panelLimit: 'Close a pane to open Twine beside the current page.',
+    removeAttachment: 'Remove attachment',
+    researchMode: 'Research Mode',
+    saveApiKey: 'Save key',
+    selectModel: 'Select model',
+    send: 'Send message',
+    savingApiKey: 'Saving...',
+    showApiKey: 'Show',
+    startNewConversation: 'Start new conversation',
+    thinkingHigh: 'High',
+    thinkingHighChip: 'Thinking high',
+    thinkingLevel: 'Thinking level',
+    thinkingLow: 'Low',
+    thinkingLowChip: 'Thinking low',
+    tools: 'Add and configure',
+    codeResult: 'Code result',
+    deleteMessage: 'Delete message',
+    deleteMessageDescription:
+      'This message and all following messages will leave the current conversation version.',
+    deleteMessageTitle: 'Delete from this message?',
+    deleteConversation: 'Delete conversation',
+    deleteConversationDescription:
+      'This conversation will be removed from Twine history.',
+    deleteConversationTitle: 'Delete conversation?',
+    editMessage: 'Edit message',
+    executedCode: 'Executed code',
+    conversationHistory: 'Conversation history',
+    history: 'History',
+    jumpToLatest: 'Jump to latest',
+    messageVersions: 'Conversation versions',
+    nextVersion: 'Next version',
+    previousVersion: 'Previous version',
+    regenerate: 'Generate another response',
+    responseReady: 'Response complete',
+    rewindHere: 'Go back to here',
+    saveEdit: 'Save and send',
+    searchedWeb: 'Web search',
+    sources: 'Sources',
+    thinkingNow: 'Thinking…',
+    thoughtFor: 'Thought for',
+    untitledConversation: 'New conversation',
   },
   settings: {
     title: 'Settings',
@@ -2108,6 +2423,7 @@ export const enUS = {
     bar: 'Pages',
     navigation: 'Navigation',
     home: 'Home',
+    twine: 'Twine',
     thisDevice: 'This Device',
     settings: 'Settings',
     help: 'Help',

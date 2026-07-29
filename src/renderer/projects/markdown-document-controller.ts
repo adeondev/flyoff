@@ -213,6 +213,44 @@ export class MarkdownDocumentController {
     );
   }
 
+  applyAgentContent(
+    nodeId: string,
+    expectedContent: string,
+    content: string,
+    historyGroup: string,
+  ): boolean {
+    const entry = this.getEntry(nodeId);
+    if (
+      entry.snapshot.readOnly ||
+      this.mutationLocks.has(nodeId) ||
+      entry.snapshot.content !== expectedContent
+    ) {
+      return false;
+    }
+    if (content === expectedContent) {
+      return true;
+    }
+    const selection = clampSelection(
+      entry.snapshot.selection,
+      content.length,
+    );
+    this.history.record(
+      nodeId,
+      {
+        after: { content, selection },
+        before: {
+          content: expectedContent,
+          selection: entry.snapshot.selection,
+        },
+        inputType: 'insertReplacementText',
+        timestamp: Date.now(),
+      },
+      historyGroup,
+    );
+    this.updateContent(entry, content, selection);
+    return true;
+  }
+
   commitEditorTransaction(
     nodeId: string,
     transaction: SourceEditTransaction,

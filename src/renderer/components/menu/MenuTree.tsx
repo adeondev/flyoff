@@ -26,6 +26,7 @@ interface MenuTreeProps {
   anchor: HTMLElement;
   ariaLabel?: string;
   ariaLabelledBy?: string;
+  className?: string;
   id: string;
   initialFocus: InitialFocus;
   items: readonly MenuItem[];
@@ -145,6 +146,7 @@ function MenuSurface({
   anchor,
   ariaLabel,
   ariaLabelledBy,
+  className,
   id,
   initialFocus,
   items,
@@ -377,7 +379,7 @@ function MenuSurface({
     <div
       aria-label={ariaLabel}
       aria-labelledby={ariaLabelledBy}
-      className="flyoff-menu"
+      className={`flyoff-menu${className ? ` ${className}` : ''}`}
       data-positioned={positioned}
       id={id}
       ref={(element) => {
@@ -465,10 +467,20 @@ function MenuSurface({
                 />
               ) : null}
             </span>
-            <TwemojiText
-              className="flyoff-menu__item-label"
-              text={item.label}
-            />
+            <span className="flyoff-menu__item-label">
+              {item.imageIcon ? (
+                <img
+                  alt=""
+                  aria-hidden="true"
+                  className="flyoff-menu__item-image-icon"
+                  src={item.imageIcon}
+                />
+              ) : null}
+              <TwemojiText
+                className="flyoff-menu__item-label-text"
+                text={item.label}
+              />
+            </span>
             {item.kind === 'action' && item.shortcut ? (
               <span aria-hidden="true" className="flyoff-menu__shortcut">
                 {item.shortcut}
@@ -507,6 +519,7 @@ export function MenuTree({
   anchor,
   ariaLabel,
   ariaLabelledBy,
+  className,
   id,
   initialFocus,
   items,
@@ -563,6 +576,7 @@ export function MenuTree({
       anchor={anchor}
       ariaLabel={ariaLabel}
       ariaLabelledBy={ariaLabelledBy}
+      className={className}
       id={id}
       initialFocus={initialFocus}
       items={items}

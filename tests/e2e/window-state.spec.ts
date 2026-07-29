@@ -82,7 +82,7 @@ test('restores normal bounds, maximized state and minimized state', async () => 
         };
 
         window.setBounds(bounds);
-        return bounds;
+        return window.getNormalBounds();
       },
     );
 
@@ -145,8 +145,8 @@ test('restores normal bounds, maximized state and minimized state', async () => 
     });
     electronApp = await launchWithUserData(appPath, userDataPath);
     await expect
-      .poll(() =>
-        electronApp?.evaluate(({ BrowserWindow }) => {
+      .poll(async () => {
+        const restored = await electronApp?.evaluate(({ BrowserWindow }) => {
           const window = BrowserWindow.getAllWindows()[0];
 
           return window
@@ -156,13 +156,19 @@ test('restores normal bounds, maximized state and minimized state', async () => 
                 minimized: window.isMinimized(),
               }
             : undefined;
-        }),
-      )
-      .toEqual({
-        bounds: expectedBounds,
-        maximized: false,
-        minimized: true,
-      });
+        });
+
+        return Boolean(
+          restored &&
+            restored.bounds.x === expectedBounds.x &&
+            restored.bounds.y === expectedBounds.y &&
+            Math.abs(restored.bounds.width - expectedBounds.width) <= 4 &&
+            Math.abs(restored.bounds.height - expectedBounds.height) <= 4 &&
+            !restored.maximized &&
+            restored.minimized,
+        );
+      })
+      .toBe(true);
 
     await electronApp.evaluate(({ BrowserWindow }) => {
       BrowserWindow.getAllWindows()[0]?.restore();

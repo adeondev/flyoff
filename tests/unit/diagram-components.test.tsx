@@ -598,6 +598,39 @@ describe('diagram components', () => {
     expect(screen.getByRole('complementary', { name: 'diagram.inspector' })).toBeTruthy();
   });
 
+  it('groups repeated diagnostics and keeps every affected element selectable', () => {
+    const document = populated('activity');
+    const onSelectDiagnostic = vi.fn();
+    render(
+      <DiagramInspector
+        diagnostics={document.elements.map((element) => ({
+          code: 'element.incompatible',
+          severity: 'warning' as const,
+          message: 'Semantic warning',
+          targetId: element.id,
+        }))}
+        document={document}
+        onAddPartition={vi.fn()}
+        onResizeElement={vi.fn()}
+        onSelectDiagnostic={onSelectDiagnostic}
+        onUpdateAppearance={vi.fn()}
+        onUpdateElement={vi.fn()}
+        onUpdateRelationship={vi.fn()}
+        translate={translate}
+      />,
+    );
+
+    const count = screen.getByText('×2');
+    expect(
+      screen.getAllByText('diagram.diagnosticElementIncompatible'),
+    ).toHaveLength(1);
+    fireEvent.click(count.closest('summary')!);
+    fireEvent.click(
+      screen.getByRole('button', { name: document.elements[1]!.name }),
+    );
+    expect(onSelectDiagnostic).toHaveBeenCalledWith(document.elements[1]!.id);
+  });
+
   it('supports keyboard cancellation and all diagram choices', () => {
     const onCancel = vi.fn();
     const onSelect = vi.fn();

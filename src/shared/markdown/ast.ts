@@ -45,6 +45,13 @@ export interface ThematicBreak {
   type: 'thematicBreak';
 }
 
+export interface Table {
+  type: 'table';
+  alignments: Array<'center' | 'left' | 'right' | null>;
+  header: InlineNode[][];
+  rows: InlineNode[][][];
+}
+
 export interface Text {
   type: 'text';
   value: string;
@@ -106,6 +113,7 @@ export type BlockNode =
   | Blockquote
   | List
   | Code
+  | Table
   | ThematicBreak;
 
 export type InlineNode =

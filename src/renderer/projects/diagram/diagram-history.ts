@@ -24,6 +24,7 @@ export class DiagramHistoryStore {
     after: DiagramDocument,
     coalesceKey?: string,
     timestamp = Date.now(),
+    continuous = false,
   ): void {
     if (before === after) {
       return;
@@ -33,7 +34,7 @@ export class DiagramHistoryStore {
     if (
       coalesceKey &&
       previous?.coalesceKey === coalesceKey &&
-      timestamp - previous.timestamp <= COALESCE_WINDOW_MS
+      (continuous || timestamp - previous.timestamp <= COALESCE_WINDOW_MS)
     ) {
       previous.after = after;
       previous.timestamp = timestamp;

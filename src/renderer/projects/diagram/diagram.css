@@ -562,6 +562,30 @@
   padding-left: 7px;
 }
 
+.diagram-diagnostics summary {
+  align-items: baseline;
+  cursor: pointer;
+  display: flex;
+  gap: 3px;
+}
+
+.diagram-diagnostics__count {
+  color: var(--color-text-muted);
+  margin-left: auto;
+  padding-left: 6px;
+  white-space: nowrap;
+}
+
+.diagram-diagnostics__targets {
+  display: grid;
+  gap: 3px;
+  padding: 5px 0 2px 12px;
+}
+
+.diagram-diagnostics__targets button {
+  color: var(--color-text-muted);
+}
+
 .diagram-diagnostics li[data-severity='error'] {
   border-left-color: var(--color-danger-active);
 }

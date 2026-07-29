@@ -1521,8 +1521,26 @@ describe('project workspace integration', () => {
     const rail = screen.getByRole('navigation', {
       name: 'Den sections',
     });
-    expect(within(rail).getAllByRole('button')).toHaveLength(9);
+    expect(within(rail).getAllByRole('button')).toHaveLength(10);
+    expect(
+      within(rail)
+        .getByRole('button', { name: 'Twine' })
+        .getAttribute('aria-pressed'),
+    ).toBe('false');
     expect(screen.getByRole('searchbox', { name: 'Search this den' })).toBeTruthy();
+
+    fireEvent.click(within(rail).getByRole('button', { name: 'Twine' }));
+    const apiKeyLater = screen.queryByRole('button', { name: 'Not now' });
+    if (apiKeyLater) {
+      fireEvent.click(apiKeyLater);
+    }
+    await waitFor(() =>
+      expect(container.querySelectorAll('.workspace-pane')).toHaveLength(2),
+    );
+    expect(screen.getByRole('heading', { name: project.name })).toBeTruthy();
+    expect(
+      screen.getByRole('textbox', { name: 'Message Twine' }),
+    ).toBeTruthy();
 
     fireEvent.click(screen.getByRole('button', { name: 'About Flyoff' }));
     expect(api.executeMenuCommand).toHaveBeenCalledWith('help.about');
@@ -1536,5 +1554,37 @@ describe('project workspace integration', () => {
     fireEvent.click(within(rail).getByRole('button', { name: 'Den' }));
     expect(screen.queryByText('Coming soon.')).toBeNull();
     expect(screen.getByRole('heading', { name: project.name })).toBeTruthy();
+  });
+
+  it('keeps the active note authorized when Twine opens beside it', async () => {
+    installProjectApi();
+    render(<App />);
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Open den' }),
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'Roadmap' }));
+    const editor = await screen.findByRole('textbox', {
+      name: 'Markdown editor',
+    });
+    fireEvent.focus(editor);
+    const rail = screen.getByRole('navigation', { name: 'Den sections' });
+    fireEvent.click(within(rail).getByRole('button', { name: 'Twine' }));
+    const apiKeyLater = screen.queryByRole('button', { name: 'Not now' });
+    if (apiKeyLater) {
+      fireEvent.click(apiKeyLater);
+    }
+
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Add and configure' }),
+    );
+    fireEvent.click(
+      screen.getByRole('menuitem', { name: 'Notes and diagrams' }),
+    );
+    expect(
+      screen
+        .getByRole('menuitemcheckbox', { name: 'Current page only' })
+        .getAttribute('aria-disabled'),
+    ).not.toBe('true');
   });
 });

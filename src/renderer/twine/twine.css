@@ -1,0 +1,1098 @@
+.twine-page {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  container: twine-page / inline-size;
+  grid-template-rows: 48px minmax(0, 1fr);
+  background: var(--color-background);
+}
+
+.twine-page__toolbar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 12px;
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-titlebar);
+}
+
+.twine-model-selector,
+.twine-history-button,
+.twine-new-conversation {
+  display: inline-flex;
+  min-width: 0;
+  height: 36px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  outline: 0;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.twine-model-selector:hover,
+.twine-model-selector[aria-expanded='true'],
+.twine-history-button:hover,
+.twine-history-button[aria-expanded='true'],
+.twine-new-conversation:hover {
+  background: var(--color-surface-hover);
+}
+
+.twine-model-selector:focus-visible,
+.twine-history-button:focus-visible,
+.twine-new-conversation:focus-visible,
+.twine-composer button:focus-visible,
+.twine-attachment__remove:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--color-focus-ring);
+}
+
+.twine-model-selector > img {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  object-fit: contain;
+}
+
+.twine-model-selector > span:not(.home__icon) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.twine-page__toolbar-actions {
+  display: flex;
+  min-width: 0;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+}
+
+.twine-history-button {
+  color: var(--color-text-muted);
+}
+
+.twine-history-button > span:not(.home__icon) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.twine-model-selector__chevron {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  color: var(--color-text-muted);
+  transform: rotate(90deg);
+}
+
+.twine-new-conversation {
+  flex: none;
+  color: var(--color-text-muted);
+}
+
+.twine-new-conversation:hover {
+  color: var(--color-text);
+}
+
+.twine-new-conversation .home__icon {
+  width: 16px;
+  height: 16px;
+}
+
+.twine-page__body {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: minmax(0, 1fr) auto;
+  overflow: hidden;
+}
+
+.twine-page__body--empty {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 28px 0 clamp(76px, 13vh, 132px);
+  overflow-y: auto;
+}
+
+.twine-empty-state {
+  display: grid;
+  min-width: 0;
+  min-height: auto;
+  align-content: start;
+  justify-items: center;
+  gap: 10px;
+  padding: 0 20px 20px;
+  text-align: center;
+}
+
+.twine-empty-state__brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #d47df3;
+  font-size: 26px;
+  font-weight: 700;
+}
+
+.twine-empty-state__brand > img {
+  width: 56px;
+  height: 56px;
+  object-fit: contain;
+}
+
+.twine-messages {
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 28px 20px 12px;
+}
+
+.twine-conversation-shell {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.twine-messages__content {
+  display: flex;
+  width: min(100%, 820px);
+  min-width: 0;
+  flex-direction: column;
+  gap: 16px;
+  margin: 0 auto;
+}
+
+.twine-message {
+  position: relative;
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  max-width: min(76%, 620px);
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.twine-message--user {
+  align-self: flex-end;
+}
+
+.twine-message--assistant {
+  width: 100%;
+  max-width: 100%;
+  align-self: flex-start;
+  color: var(--color-text);
+}
+
+.twine-message--system {
+  align-self: flex-start;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.twine-message__body {
+  min-width: 0;
+}
+
+.twine-message--user .twine-message__body {
+  padding: 10px 13px;
+  border-radius: 15px 15px 4px 15px;
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.twine-message--system .twine-message__body {
+  padding: 3px 0 3px 10px;
+  border-left: 2px solid var(--color-border);
+}
+
+.twine-markdown.markdown-view {
+  min-height: 0;
+  flex: none;
+  overflow: visible;
+  padding: 0;
+  font-family: var(--font-interface);
+  font-size: inherit;
+  line-height: inherit;
+  white-space: normal;
+}
+
+.twine-markdown.markdown-view > :first-child {
+  margin-top: 0;
+}
+
+.twine-markdown.markdown-view > :last-child {
+  margin-bottom: 0;
+}
+
+.twine-markdown.markdown-view p,
+.twine-markdown.markdown-view ul,
+.twine-markdown.markdown-view ol,
+.twine-markdown.markdown-view blockquote,
+.twine-markdown.markdown-view pre,
+.twine-markdown.markdown-view .markdown-view__table-scroll {
+  margin: 0 0 9px;
+}
+
+.twine-message--user .twine-markdown.markdown-view p,
+.twine-message--user .twine-markdown.markdown-view ul,
+.twine-message--user .twine-markdown.markdown-view ol,
+.twine-message--user .twine-markdown.markdown-view blockquote,
+.twine-message--user .twine-markdown.markdown-view pre,
+.twine-message--user
+  .twine-markdown.markdown-view
+  .markdown-view__table-scroll {
+  margin-bottom: 6px;
+}
+
+.twine-markdown.markdown-view h1,
+.twine-markdown.markdown-view h2,
+.twine-markdown.markdown-view h3,
+.twine-markdown.markdown-view h4,
+.twine-markdown.markdown-view h5,
+.twine-markdown.markdown-view h6 {
+  margin: 14px 0 7px;
+  line-height: 1.25;
+}
+
+.twine-markdown.markdown-view h1 {
+  font-size: 1.45em;
+}
+
+.twine-markdown.markdown-view h2 {
+  font-size: 1.25em;
+}
+
+.twine-markdown.markdown-view h3 {
+  font-size: 1.1em;
+}
+
+.twine-markdown.markdown-view h4,
+.twine-markdown.markdown-view h5,
+.twine-markdown.markdown-view h6 {
+  font-size: 1em;
+}
+
+.twine-markdown.markdown-view ul,
+.twine-markdown.markdown-view ol {
+  padding-left: 1.35em;
+}
+
+.twine-markdown.markdown-view blockquote {
+  padding-left: 10px;
+  border-left: 2px solid var(--color-border);
+}
+
+.twine-markdown.markdown-view pre {
+  padding: 10px;
+  border-radius: 7px;
+  background: var(--color-code-surface);
+  white-space: pre;
+}
+
+.twine-message--user .twine-markdown.markdown-view pre {
+  background: var(--color-background);
+}
+
+.twine-markdown.markdown-view code {
+  border-radius: 5px;
+}
+
+.twine-markdown.markdown-view hr {
+  height: 1px;
+  margin: 12px 0;
+  background: var(--color-border);
+}
+
+.twine-markdown.markdown-view table {
+  min-width: min(100%, 360px);
+}
+
+.twine-markdown.markdown-view th,
+.twine-markdown.markdown-view td {
+  padding: 6px 8px;
+}
+
+.twine-message__stream-caret {
+  display: block;
+  width: 7px;
+  height: 18px;
+  border-radius: 2px;
+  background: var(--color-accent);
+}
+
+.twine-thought {
+  margin: 0 0 10px;
+  border-left: 2px solid var(--color-border);
+  color: var(--color-text-muted);
+}
+
+.twine-thought > summary {
+  display: flex;
+  width: fit-content;
+  min-height: 28px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px;
+  border-radius: 5px;
+  cursor: default;
+  font-size: 12px;
+  font-weight: 600;
+  list-style: none;
+}
+
+.twine-thought > summary::-webkit-details-marker {
+  display: none;
+}
+
+.twine-thought > summary:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.twine-thought > summary .home__icon {
+  width: 11px;
+  height: 11px;
+  transform: rotate(90deg);
+}
+
+.twine-thought[open] > summary .home__icon {
+  transform: rotate(-90deg);
+}
+
+.twine-thought > .twine-markdown {
+  max-height: 240px;
+  overflow: auto;
+  padding: 5px 10px 8px;
+  font-size: 12px;
+}
+
+.twine-message__tools {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 9px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.twine-message__tools details {
+  border-left: 2px solid var(--color-border);
+  padding-left: 8px;
+}
+
+.twine-message__tools summary {
+  cursor: default;
+  font-weight: 600;
+}
+
+.twine-message__tools pre {
+  max-height: 220px;
+  overflow: auto;
+  margin: 7px 0 0;
+  padding: 8px;
+  border-radius: 5px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: var(--font-code);
+  white-space: pre-wrap;
+}
+
+.twine-message__sources {
+  margin-top: 12px;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.twine-message__sources > strong {
+  color: var(--color-text);
+}
+
+.twine-message__sources ol {
+  display: grid;
+  gap: 3px;
+  margin: 5px 0 0;
+  padding-left: 22px;
+}
+
+.twine-message__sources button {
+  max-width: 100%;
+  padding: 2px 0;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  color: var(--color-accent-bright);
+  font: inherit;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.twine-message__actions,
+.twine-message__variants {
+  display: flex;
+  min-height: 28px;
+  align-items: center;
+  gap: 2px;
+  margin-top: 4px;
+}
+
+.twine-message__footer {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.twine-message--user .twine-message__footer {
+  justify-content: flex-end;
+}
+
+.twine-message--assistant .twine-message__footer {
+  justify-content: flex-start;
+}
+
+.twine-message__actions {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.twine-message:hover .twine-message__footer .twine-message__actions,
+.twine-message:focus-within .twine-message__footer .twine-message__actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.twine-message__actions button,
+.twine-message__variants button,
+.twine-conversation__jump {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  outline: 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  place-items: center;
+}
+
+.twine-message__actions button:hover,
+.twine-message__variants button:hover:not(:disabled),
+.twine-conversation__jump:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.twine-message__actions button:focus-visible,
+.twine-message__variants button:focus-visible,
+.twine-conversation__jump:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--color-focus-ring);
+}
+
+.twine-message__actions .home__icon,
+.twine-message__variants .home__icon,
+.twine-conversation__jump .home__icon {
+  width: 15px;
+  height: 15px;
+}
+
+.twine-message__variants {
+  color: var(--color-text-muted);
+  font-size: 11px;
+}
+
+.twine-message__variants button:first-child .home__icon {
+  transform: rotate(180deg);
+}
+
+.twine-message__variants button:disabled {
+  color: var(--color-text-disabled);
+}
+
+.twine-message__editor {
+  display: grid;
+  gap: 8px;
+}
+
+.twine-message__editor textarea {
+  width: min(560px, 100%);
+  min-height: 92px;
+  resize: vertical;
+  padding: 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  outline: 0;
+  background: var(--color-background);
+  color: var(--color-text);
+  font: inherit;
+}
+
+.twine-message__editor textarea:focus-visible {
+  border-color: var(--color-focus-ring);
+}
+
+.twine-message__editor > div {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.twine-message__editor button {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--color-text-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.twine-message__editor button:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.twine-message__editor .twine-message__save {
+  background: var(--color-accent);
+  color: var(--color-accent-ink);
+}
+
+.twine-conversation__jump {
+  position: absolute;
+  right: 22px;
+  bottom: 12px;
+  z-index: 2;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-overlay);
+}
+
+.twine-sr-status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.twine-message__attachments {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.twine-message__attachment {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 32px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  background: var(--color-surface);
+}
+
+.twine-message__attachment > img,
+.twine-message__attachment > .home__icon {
+  width: 32px;
+  height: 32px;
+  object-fit: cover;
+  border-radius: 3px;
+}
+
+.twine-message__attachment > span {
+  display: grid;
+  min-width: 0;
+}
+
+.twine-message__attachment strong,
+.twine-message__attachment small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.twine-message__attachment strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.twine-message__attachment small {
+  color: var(--color-text-muted);
+  font-size: 10px;
+}
+
+.twine-composer-area {
+  width: 100%;
+  padding: 10px 20px 14px;
+  background: var(--color-background);
+}
+
+.twine-page__body--empty .twine-composer-area {
+  padding-block: 0;
+}
+
+.twine-composer {
+  position: relative;
+  display: grid;
+  width: min(100%, 720px);
+  min-width: 0;
+  gap: 8px;
+  margin: 0 auto;
+  padding: 0;
+}
+
+.twine-composer__input-shell {
+  display: grid;
+  min-width: 0;
+  min-height: 112px;
+  grid-template-rows: minmax(48px, auto) 44px;
+  padding: 0 8px 8px;
+  border-radius: 22px;
+  background: var(--color-surface);
+}
+
+.twine-composer[data-drag-active] .twine-composer__input-shell {
+  background: var(--color-surface-hover);
+}
+
+.twine-composer__file-input {
+  display: none;
+}
+
+.twine-composer textarea {
+  width: 100%;
+  min-height: 26px;
+  max-height: 184px;
+  resize: none;
+  overflow-y: auto;
+  align-self: stretch;
+  padding: 16px 12px 4px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.twine-composer textarea::placeholder {
+  color: var(--color-text-muted);
+}
+
+.twine-composer__leading-action,
+.twine-composer__actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+}
+
+.twine-composer__footer {
+  display: flex;
+  min-width: 0;
+  align-items: flex-end;
+  justify-content: space-between;
+}
+
+.twine-composer__leading-action {
+  gap: 2px;
+  justify-content: flex-start;
+  overflow: hidden;
+}
+
+.twine-composer__actions {
+  align-items: center;
+  gap: 1px;
+}
+
+.twine-composer__icon-button,
+.twine-approval-trigger,
+.twine-composer__audio,
+.twine-composer__send,
+.twine-attachment__remove {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  outline: 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  place-items: center;
+}
+
+.twine-composer__icon-button:hover,
+.twine-approval-trigger:hover,
+.twine-approval-trigger[aria-expanded='true'],
+.twine-composer__audio:hover,
+.twine-attachment__remove:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.twine-composer__icon-button .home__icon,
+.twine-approval-trigger .home__icon,
+.twine-composer__audio .home__icon,
+.twine-composer__send .home__icon {
+  width: 18px;
+  height: 18px;
+}
+
+.twine-approval-trigger {
+  display: inline-flex;
+  width: auto;
+  max-width: min(260px, 40cqi);
+  padding: 0 9px;
+  gap: 7px;
+  color: var(--color-text-muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.twine-approval-trigger > span:not(.home__icon) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.twine-composer__audio {
+  color: var(--color-text-muted);
+}
+
+.twine-composer__audio[aria-disabled='true'] {
+  color: var(--color-text-disabled);
+  cursor: default;
+}
+
+.twine-thinking-trigger {
+  display: inline-flex;
+  min-width: 0;
+  height: 36px;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.twine-thinking-trigger:hover,
+.twine-thinking-trigger[aria-expanded='true'] {
+  color: var(--color-text);
+}
+
+.twine-thinking-trigger .home__icon {
+  width: 11px;
+  height: 11px;
+  transform: rotate(90deg);
+}
+
+.twine-composer__send {
+  width: 40px;
+  height: 40px;
+  margin-left: 3px;
+  background: var(--color-accent);
+  color: var(--color-accent-ink);
+}
+
+.twine-composer__send:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+  color: var(--color-text);
+}
+
+.twine-composer__send:disabled {
+  background: var(--color-background);
+  color: var(--color-text-disabled);
+}
+
+.twine-attachments {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.twine-attachment {
+  display: grid;
+  width: min(240px, 100%);
+  min-width: 0;
+  grid-template-columns: 36px minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 7px;
+  padding: 5px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: var(--color-surface);
+}
+
+.twine-attachment__preview,
+.twine-attachment__file-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 4px;
+}
+
+.twine-attachment__preview {
+  object-fit: cover;
+}
+
+.twine-attachment__file-icon {
+  color: var(--color-text-muted);
+}
+
+.twine-attachment__details {
+  display: grid;
+  min-width: 0;
+}
+
+.twine-attachment__name,
+.twine-attachment__size {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.twine-attachment__name {
+  color: var(--color-text);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.twine-attachment__size {
+  color: var(--color-text-muted);
+  font-size: 10px;
+}
+
+.twine-attachment__remove {
+  width: 28px;
+  height: 28px;
+}
+
+.twine-attachment__remove .home__icon {
+  width: 14px;
+  height: 14px;
+}
+
+.twine-composer__drop-label {
+  position: absolute;
+  z-index: 2;
+  display: grid;
+  inset: 0;
+  border-radius: 22px;
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 600;
+  pointer-events: none;
+  place-items: center;
+}
+
+.twine-composer__notice {
+  width: min(100%, 720px);
+  min-height: 16px;
+  margin: 4px auto 0;
+  color: var(--color-text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+  text-align: center;
+}
+
+.twine-api-key-dialog {
+  display: grid;
+  gap: 12px;
+}
+
+.twine-api-key-dialog__field {
+  display: grid;
+  gap: 7px;
+  color: var(--color-text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.twine-api-key-dialog__input-row {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.twine-api-key-dialog input {
+  min-width: 0;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  outline: 0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+}
+
+.twine-api-key-dialog input:focus-visible,
+.twine-api-key-dialog button:focus-visible {
+  box-shadow: inset 0 0 0 1px var(--color-focus-ring);
+}
+
+.twine-api-key-dialog__input-row button,
+.twine-api-key-dialog__link {
+  height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  outline: 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.twine-api-key-dialog__input-row button:hover,
+.twine-api-key-dialog__link:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.twine-api-key-dialog__link {
+  justify-self: start;
+}
+
+.twine-api-key-dialog__error {
+  margin: 0;
+  color: var(--color-danger-active);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+@container twine-page (max-width: 520px) {
+  .twine-page__toolbar {
+    padding-inline: 8px;
+  }
+
+  .twine-new-conversation > span:not(.home__icon) {
+    display: none;
+  }
+
+  .twine-new-conversation {
+    width: 36px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .twine-messages {
+    padding-inline: 12px;
+  }
+
+  .twine-message {
+    max-width: 88%;
+  }
+
+  .twine-composer-area {
+    padding-inline: 10px;
+  }
+}
+
+@container twine-page (max-width: 340px) {
+  .twine-model-selector {
+    max-width: calc(100% - 44px);
+  }
+
+  .twine-empty-state__brand > img {
+    width: 44px;
+    height: 44px;
+  }
+
+  .twine-composer__input-shell {
+    padding-left: 3px;
+  }
+
+  .twine-thinking-trigger {
+    padding-inline: 4px;
+    font-size: 11px;
+  }
+
+  .twine-approval-trigger {
+    max-width: 160px;
+    padding-inline: 6px;
+    font-size: 11px;
+  }
+
+  .twine-composer__audio {
+    width: 28px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .twine-page *,
+  .twine-page *::before,
+  .twine-page *::after {
+    scroll-behavior: auto;
+    transition: none;
+  }
+
+}
+.twine-document-proposal {
+  display: grid;
+  gap: 14px;
+}
+
+.twine-document-proposal dl {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.twine-document-proposal dl > div {
+  align-items: center;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  display: flex;
+  justify-content: space-between;
+  min-height: 36px;
+  padding: 0 12px;
+}
+
+.twine-document-proposal dt {
+  color: var(--color-text-muted);
+}
+
+.twine-document-proposal dd {
+  color: var(--color-text);
+  font-weight: 600;
+  margin: 0;
+}
+
+.twine-document-proposal p {
+  color: var(--color-text);
+  margin: 0;
+}

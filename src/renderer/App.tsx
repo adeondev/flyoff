@@ -36,6 +36,7 @@ import {
   RAIL_WIDTH_MIN,
   SIDEBAR_WIDTH_MAX,
   SIDEBAR_WIDTH_MIN,
+  WORKSPACE_MAX_PANES,
   type ApplicationMenuEntryDefinition,
   type CloseRequest,
   type CloseResponse,
@@ -113,6 +114,7 @@ import {
   useFlyoffPreferencesController,
 } from './preferences';
 import { HomePage } from './pages/HomePage';
+import { TwinePage } from './pages/TwinePage';
 import {
   NewTabPage,
   type NewTabNoteItem,
@@ -154,6 +156,13 @@ import {
   type EditorMode,
 } from './projects/editor-mode';
 import { DiagramController } from './projects/diagram/diagram-controller';
+import {
+  createTwineDocumentAgent,
+  createTwineDiagramAgent,
+  createTwineNoteAgent,
+  type TwineDocumentAgent,
+  type TwineDocumentTarget,
+} from './twine';
 
 function translateCatalog(
   catalog: TranslationCatalog,
@@ -433,6 +442,32 @@ function activeProjectNodeId(state: WorkspaceState): string | undefined {
     : undefined;
 }
 
+function activeProjectDocumentTarget(
+  state: WorkspaceState,
+): TwineDocumentTarget | undefined {
+  const workspace = state.project;
+  if (!workspace) {
+    return undefined;
+  }
+  const pane = collectPanes(workspace.root).find(
+    ({ paneId }) => paneId === workspace.activePaneId,
+  );
+  const activeTab = pane?.tabs.find(
+    ({ tabId }) => tabId === pane.activeTabId,
+  );
+  if (
+    activeTab?.target.type !== 'project-content' ||
+    (activeTab.target.pageType !== 'markdown' &&
+      activeTab.target.pageType !== 'diagram')
+  ) {
+    return undefined;
+  }
+  return {
+    nodeId: activeTab.target.nodeId,
+    pageType: activeTab.target.pageType,
+  };
+}
+
 function projectDocumentNodeIds(state: WorkspaceState): ReadonlySet<string> {
   return new Set(
     state.project
@@ -543,6 +578,9 @@ export function App() {
   const lastEditableTargetRef = useRef<
     { kind: 'markdown'; nodeId: string } | { kind: 'native' }
   >(undefined);
+  const [lastDocumentTarget, setLastDocumentTarget] = useState<
+    TwineDocumentTarget & { projectId: string }
+  >();
   const layout = useWorkspaceLayout();
   const [railSelection, setRailSelection] = useState<{
     tabId: string | null;
@@ -926,6 +964,19 @@ export function App() {
       const current = applyPendingWorkspaceScroll(workspaceStateRef.current);
       workspaceStateRef.current = current;
       const next = workspaceReducer(current, resolvedAction);
+      const documentTarget =
+        activeProjectDocumentTarget(next) ??
+        activeProjectDocumentTarget(current);
+      const activeProjectId = projectRef.current?.projectId;
+      if (documentTarget && activeProjectId) {
+        setLastDocumentTarget((known) =>
+          known?.nodeId === documentTarget.nodeId &&
+          known.pageType === documentTarget.pageType &&
+          known.projectId === activeProjectId
+            ? known
+            : { ...documentTarget, projectId: activeProjectId },
+        );
+      }
 
       if (next === current) {
         if (hadPendingScroll) {
@@ -1213,6 +1264,73 @@ export function App() {
     },
     [dispatchGuardedTabAction, setRailViewId],
   );
+
+  const openTwineCompanion = useCallback(() => {
+    const current = workspaceStateRef.current;
+    const projectWorkspace = current.project;
+    if (!projectWorkspace) {
+      void dispatchGuardedTabAction({
+        type: 'open-page',
+        pageId: INTERNAL_PAGE_IDS.twine,
+      });
+      return;
+    }
+
+    const panes = collectPanes(projectWorkspace.root);
+    const activePane =
+      panes.find(({ paneId }) => paneId === projectWorkspace.activePaneId) ??
+      panes[0];
+    if (!activePane) {
+      return;
+    }
+    const existing = panes.flatMap((pane) => {
+      const tab = pane.tabs.find(
+        ({ target }) =>
+          target.type === 'internal' &&
+          target.pageId === INTERNAL_PAGE_IDS.twine,
+      );
+      return tab ? [{ pane, tab }] : [];
+    })[0];
+
+    if (existing && existing.pane.paneId !== activePane.paneId) {
+      void dispatchGuardedTabAction({
+        type: 'select-tab',
+        paneId: existing.pane.paneId,
+        tabId: existing.tab.tabId,
+      });
+      return;
+    }
+    if (existing?.tab.tabId === activePane.activeTabId) {
+      return;
+    }
+    if (panes.length >= WORKSPACE_MAX_PANES) {
+      notifyProjectInfo(translate('twine.panelLimit'));
+      return;
+    }
+    if (existing) {
+      void dispatchGuardedTabAction({
+        type: 'split-pane-with-tab',
+        fromPaneId: activePane.paneId,
+        targetPaneId: activePane.paneId,
+        tabId: existing.tab.tabId,
+        direction: 'row',
+        before: false,
+        ratio: 0.64,
+      });
+      return;
+    }
+    void dispatchGuardedTabAction({
+      type: 'split-pane-with-target',
+      targetPaneId: activePane.paneId,
+      target: {
+        type: 'internal',
+        pageId: INTERNAL_PAGE_IDS.twine,
+      },
+      direction: 'row',
+      before: false,
+      ratio: 0.64,
+    });
+  }, [dispatchGuardedTabAction, notifyProjectInfo, translate]);
 
   const activateProject = useCallback(
     (summary: ProjectSummary): Promise<boolean> =>
@@ -2110,6 +2228,64 @@ export function App() {
     ],
   );
 
+  const twineDocumentAgent = useMemo<TwineDocumentAgent>(
+    () => {
+      const currentTarget =
+        lastDocumentTarget &&
+        lastDocumentTarget.projectId === project?.projectId
+          ? {
+              nodeId: lastDocumentTarget.nodeId,
+              pageType: lastDocumentTarget.pageType,
+            }
+          : undefined;
+      const currentDiagramNodeId =
+        currentTarget?.pageType === 'diagram'
+          ? currentTarget.nodeId
+          : undefined;
+      const currentNoteNodeId =
+        currentTarget?.pageType === 'markdown'
+          ? currentTarget.nodeId
+          : undefined;
+      return {
+        available: Boolean(project),
+        currentTarget,
+        execute: (call, options) =>
+          createTwineDocumentAgent({
+            currentTarget,
+            diagram: createTwineDiagramAgent({
+              controller: diagramController,
+              createDocument: createDiagramDocument,
+              getCurrentDiagramNodeId: () => currentDiagramNodeId,
+              listChildren: (parentId) =>
+                listProjectChildren({ parentId }),
+              onCreated: (node) => handleImportedDiagramNodes([node]),
+              projectAvailable: Boolean(project),
+              readDocument: readDiagramDocument,
+            }),
+            note: createTwineNoteAgent({
+              controller: documentController,
+              getCurrentNoteNodeId: () => currentNoteNodeId,
+              listChildren: (parentId) =>
+                listProjectChildren({ parentId }),
+              projectAvailable: Boolean(project),
+              readDocument: readMarkdownDocument,
+            }),
+          }).execute(call, options),
+      };
+    },
+    [
+      createDiagramDocument,
+      diagramController,
+      documentController,
+      handleImportedDiagramNodes,
+      listProjectChildren,
+      lastDocumentTarget,
+      project,
+      readDiagramDocument,
+      readMarkdownDocument,
+    ],
+  );
+
   useEffect(() => {
     if (!project) {
       return;
@@ -2576,6 +2752,16 @@ export function App() {
       const nodeId = markdownEditor?.dataset.markdownNodeId;
       if (nodeId) {
         lastEditableTargetRef.current = { kind: 'markdown', nodeId };
+        const projectId = projectRef.current?.projectId;
+        if (projectId) {
+          setLastDocumentTarget((known) =>
+            known?.nodeId === nodeId &&
+            known.pageType === 'markdown' &&
+            known.projectId === projectId
+              ? known
+              : { nodeId, pageType: 'markdown', projectId },
+          );
+        }
         return;
       }
 
@@ -2906,6 +3092,20 @@ export function App() {
               {...(props as InternalPageProps)}
               onNewProject={openCreateProjectDialog}
               onOpenProject={() => void openProject()}
+              onOpenTwine={() =>
+                void dispatchGuardedTabAction({
+                  type: 'open-page',
+                  pageId: INTERNAL_PAGE_IDS.twine,
+                })
+              }
+            />
+          );
+        }
+        if (target.pageId === INTERNAL_PAGE_IDS.twine) {
+          return (
+            <TwinePage
+              {...(props as InternalPageProps)}
+              documentAgent={twineDocumentAgent}
             />
           );
         }
@@ -2978,6 +3178,7 @@ export function App() {
       );
     },
     [
+      dispatchGuardedTabAction,
       graphRefreshSignal,
       loadProjectGraph,
       notifyProjectError,
@@ -2995,6 +3196,7 @@ export function App() {
       recentNewTabNotes,
       searchNewTab,
       translate,
+      twineDocumentAgent,
     ],
   );
 
@@ -3009,6 +3211,16 @@ export function App() {
       : INTERNAL_PAGE_IDS.home;
   const activeProjectTarget =
     activeTab?.target.type !== 'internal' ? activeTab?.target : undefined;
+  const twineOpenInProject = Boolean(
+    workspaceState.project &&
+      collectPanes(workspaceState.project.root).some((pane) =>
+        pane.tabs.some(
+          ({ target }) =>
+            target.type === 'internal' &&
+            target.pageId === INTERNAL_PAGE_IDS.twine,
+        ),
+      ),
+  );
   const graphTabActive = activeProjectTarget?.type === 'project-graph';
   const activeRailViewId =
     railSelection && railSelection.tabId === activeTab?.tabId
@@ -3072,6 +3284,15 @@ export function App() {
           />
         ) : (
           <IconRail
+            actions={[
+              {
+                id: 'twine',
+                label: translate('pages.twine'),
+                icon: getPageDefinition(INTERNAL_PAGE_IDS.twine).icon,
+                active: twineOpenInProject,
+                onSelect: openTwineCompanion,
+              },
+            ]}
             activeViewId={activeRailViewId}
             onSelect={selectRailView}
             onToggleSidebar={layout.toggleCollapsed}

@@ -18,6 +18,7 @@ interface HistoryEntry {
   deleted: string;
   inputType: string;
   inserted: string;
+  groupKey?: string;
   start: number;
   timestamp: number;
 }
@@ -41,7 +42,10 @@ function entryBytes(entry: HistoryEntry): number {
   return (entry.deleted.length + entry.inserted.length) * 2;
 }
 
-function deriveEntry(transaction: SourceEditTransaction): HistoryEntry | undefined {
+function deriveEntry(
+  transaction: SourceEditTransaction,
+  groupKey?: string,
+): HistoryEntry | undefined {
   const before = transaction.before.content;
   const after = transaction.after.content;
   if (before === after) {
@@ -72,6 +76,7 @@ function deriveEntry(transaction: SourceEditTransaction): HistoryEntry | undefin
     deleted: before.slice(start, before.length - suffix),
     inputType: transaction.inputType,
     inserted: after.slice(start, after.length - suffix),
+    ...(groupKey ? { groupKey } : {}),
     start,
     timestamp: transaction.timestamp,
   };
@@ -193,14 +198,34 @@ class DocumentHistory {
     return this.redoStack.length > 0;
   }
 
-  record(transaction: SourceEditTransaction): void {
-    const entry = deriveEntry(transaction);
+  record(transaction: SourceEditTransaction, groupKey?: string): void {
+    const entry = deriveEntry(transaction, groupKey);
     if (!entry) {
       return;
     }
 
     const previous = this.undoStack.at(-1);
-    const merged = previous && !this.mergeBarrier
+    if (groupKey && previous?.groupKey === groupKey) {
+      const groupStart = applyEntry(transaction.before, previous, 'undo');
+      if (groupStart) {
+        const grouped = deriveEntry(
+          {
+            ...transaction,
+            before: groupStart,
+          },
+          groupKey,
+        );
+        if (grouped) {
+          this.undoStack[this.undoStack.length - 1] = grouped;
+        } else {
+          this.undoStack.pop();
+        }
+        this.mergeBarrier = false;
+        this.redoStack.length = 0;
+        return;
+      }
+    }
+    const merged = !groupKey && previous && !this.mergeBarrier
       ? mergeEntries(previous, entry)
       : undefined;
     if (merged) {
@@ -274,9 +299,13 @@ export class MarkdownHistoryStore {
 
   constructor(private readonly maxBytes = DEFAULT_HISTORY_BYTES) {}
 
-  record(nodeId: string, transaction: SourceEditTransaction): void {
+  record(
+    nodeId: string,
+    transaction: SourceEditTransaction,
+    groupKey?: string,
+  ): void {
     const history = this.get(nodeId);
-    history.record(transaction);
+    history.record(transaction, groupKey);
     this.touch(history);
     this.trim();
   }
