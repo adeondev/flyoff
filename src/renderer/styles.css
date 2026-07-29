@@ -335,108 +335,38 @@ img {
   }
 }
 
-.workspace-split {
-  display: grid;
-  width: 100%;
-  height: 100%;
-  min-width: 0;
-  min-height: 0;
-}
-
-.workspace-split--row {
-  grid-template-columns:
-    minmax(0, var(--workspace-split-ratio))
-    5px
-    minmax(0, calc(100% - var(--workspace-split-ratio) - 5px));
-}
-
-.workspace-split--column {
-  grid-template-rows:
-    minmax(0, var(--workspace-split-ratio))
-    5px
-    minmax(0, calc(100% - var(--workspace-split-ratio) - 5px));
-}
-
-.workspace-split[data-split-entry],
-.workspace-split[data-split-exit] {
-  animation-duration: var(--workspace-pane-exit-duration, 120ms);
-  animation-fill-mode: both;
-  animation-timing-function: var(--ease-out);
-}
-
-.workspace-split--row[data-split-entry='row-start'],
-.workspace-split--row[data-split-exit='row-start'] {
-  animation-name: workspace-split-enter-row-start;
-}
-
-.workspace-split--row[data-split-entry='row-end'],
-.workspace-split--row[data-split-exit='row-end'] {
-  animation-name: workspace-split-enter-row-end;
-}
-
-.workspace-split--column[data-split-entry='column-start'],
-.workspace-split--column[data-split-exit='column-start'] {
-  animation-name: workspace-split-enter-column-start;
-}
-
-.workspace-split--column[data-split-entry='column-end'],
-.workspace-split--column[data-split-exit='column-end'] {
-  animation-name: workspace-split-enter-column-end;
-}
-
-.workspace-split[data-split-exit] {
-  animation-direction: reverse;
-  animation-timing-function: var(--ease-in);
-  pointer-events: none;
-}
-
-.workspace-split[data-split-entry] > .workspace-pane,
-.workspace-split[data-split-exit] > .workspace-pane {
+/*
+ * Panes and dividers are absolutely positioned siblings of the host, so a
+ * split or a close only moves boxes around. Nesting them inside split
+ * elements used to remount every pane — and every editor inside it — whenever
+ * the tree changed shape.
+ */
+.workspace-pane-host[data-workspace-motion] .workspace-pane,
+.workspace-pane-host[data-workspace-motion] .workspace-split__divider {
   overflow: hidden;
+  transition:
+    top var(--workspace-pane-motion-duration, 120ms) var(--ease-out),
+    left var(--workspace-pane-motion-duration, 120ms) var(--ease-out),
+    width var(--workspace-pane-motion-duration, 120ms) var(--ease-out),
+    height var(--workspace-pane-motion-duration, 120ms) var(--ease-out);
+}
+
+.workspace-pane-host[data-workspace-motion='exit'] .workspace-pane,
+.workspace-pane-host[data-workspace-motion='exit']
+  .workspace-split__divider {
+  transition-timing-function: var(--ease-in);
+}
+
+.workspace-pane[data-pane-exiting] {
+  pointer-events: none;
 }
 
 .workspace-pane[data-pane-exiting] > .page-host {
   display: none;
 }
 
-@keyframes workspace-split-enter-row-start {
-  from {
-    grid-template-columns:
-      minmax(0, 0%)
-      5px
-      minmax(0, calc(100% - 5px));
-  }
-}
-
-@keyframes workspace-split-enter-row-end {
-  from {
-    grid-template-columns:
-      minmax(0, calc(100% - 5px))
-      5px
-      minmax(0, 0%);
-  }
-}
-
-@keyframes workspace-split-enter-column-start {
-  from {
-    grid-template-rows:
-      minmax(0, 0%)
-      5px
-      minmax(0, calc(100% - 5px));
-  }
-}
-
-@keyframes workspace-split-enter-column-end {
-  from {
-    grid-template-rows:
-      minmax(0, calc(100% - 5px))
-      5px
-      minmax(0, 0%);
-  }
-}
-
 .workspace-split__divider {
-  position: relative;
+  position: absolute;
   z-index: 4;
   background: transparent;
   outline: 0;
@@ -450,22 +380,22 @@ img {
   pointer-events: none;
 }
 
-.workspace-split--row > .workspace-split__divider {
+.workspace-split__divider[data-direction='row'] {
   cursor: col-resize;
 }
 
-.workspace-split--row > .workspace-split__divider::after {
+.workspace-split__divider[data-direction='row']::after {
   top: 0;
   bottom: 0;
   left: 2px;
   width: 1px;
 }
 
-.workspace-split--column > .workspace-split__divider {
+.workspace-split__divider[data-direction='column'] {
   cursor: row-resize;
 }
 
-.workspace-split--column > .workspace-split__divider::after {
+.workspace-split__divider[data-direction='column']::after {
   right: 0;
   bottom: 2px;
   left: 0;
@@ -482,23 +412,21 @@ img {
   background: var(--color-accent);
 }
 
-.workspace-split--row > .workspace-split__divider:hover::after,
-.workspace-split--row > .workspace-split__divider:focus-visible::after {
+.workspace-split__divider[data-direction='row']:hover::after,
+.workspace-split__divider[data-direction='row']:focus-visible::after {
   left: 1px;
   width: 2px;
 }
 
-.workspace-split--column > .workspace-split__divider:hover::after,
-.workspace-split--column > .workspace-split__divider:focus-visible::after {
+.workspace-split__divider[data-direction='column']:hover::after,
+.workspace-split__divider[data-direction='column']:focus-visible::after {
   bottom: 1px;
   height: 2px;
 }
 
 .workspace-pane {
-  position: relative;
+  position: absolute;
   display: grid;
-  width: 100%;
-  height: 100%;
   min-width: 0;
   min-height: 0;
   container: workspace-pane / inline-size;
@@ -1747,8 +1675,12 @@ html[data-workspace-dragging] *::after {
     transition: none;
   }
 
-  :root:not([data-motion='full']) .workspace-split[data-split-entry],
-  :root:not([data-motion='full']) .workspace-split[data-split-exit] {
-    animation: none;
+  :root:not([data-motion='full'])
+    .workspace-pane-host[data-workspace-motion]
+    .workspace-pane,
+  :root:not([data-motion='full'])
+    .workspace-pane-host[data-workspace-motion]
+    .workspace-split__divider {
+    transition: none;
   }
 }

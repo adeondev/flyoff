@@ -1285,7 +1285,7 @@ test.describe('Flyoff desktop shell', () => {
       .click();
     await expect(page.locator('.workspace-pane')).toHaveCount(2);
     await expect(
-      page.locator('.workspace-split[data-split-entry]'),
+      page.locator('.workspace-pane-host[data-workspace-motion]'),
     ).toHaveCount(0);
     const destinationPane = page.locator('.workspace-pane--active');
     const destinationPaneBounds = await destinationPane.boundingBox();
@@ -2121,31 +2121,44 @@ test.describe('Flyoff desktop shell', () => {
       page.locator('.workspace-pane[data-pane-entry="row-end"]'),
     ).toHaveCount(1);
     await expect(
-      page.locator('.workspace-split[data-split-entry="row-end"]'),
+      page.locator('.workspace-pane-host[data-workspace-motion="entry"]'),
     ).toHaveCount(1);
     const splitMotionHandle = await page.waitForFunction(() => {
-      const split = document.querySelector('.workspace-split');
-      const animation = split?.getAnimations().find(
-        (candidate) =>
-          (candidate as CSSAnimation).animationName ===
-            'workspace-split-enter-row-end' &&
-          candidate.effect?.getTiming().duration === 120,
-      );
-      if (!split || !animation) {
+      const panes = [
+        ...document.querySelectorAll<HTMLElement>('.workspace-pane'),
+      ];
+      const [first, second] = panes;
+      if (!first || !second) {
+        return null;
+      }
+      const transitions = panes
+        .flatMap((pane) => pane.getAnimations())
+        .filter(
+          (candidate) =>
+            (candidate as CSSTransition).transitionProperty === 'width' &&
+            candidate.effect?.getTiming().duration === 120,
+        );
+      if (transitions.length < 2) {
         return null;
       }
       const widthsAt = (time: number) => {
-        animation.currentTime = time;
+        for (const transition of transitions) {
+          transition.currentTime = time;
+        }
         return {
-          first: split.children[0]?.getBoundingClientRect().width ?? 0,
-          second: split.children[2]?.getBoundingClientRect().width ?? 0,
+          first: first.getBoundingClientRect().width,
+          second: second.getBoundingClientRect().width,
         };
       };
-      animation.pause();
+      for (const transition of transitions) {
+        transition.pause();
+      }
       const start = widthsAt(0);
       const middle = widthsAt(60);
       const end = widthsAt(120);
-      animation.play();
+      for (const transition of transitions) {
+        transition.play();
+      }
       return { end, middle, start };
     });
     const splitMotion = await splitMotionHandle.jsonValue();
@@ -2165,33 +2178,34 @@ test.describe('Flyoff desktop shell', () => {
         .locator('.workspace-pane:not(.workspace-pane--active)')
         .getByRole('tab', { name: labels.newTab }),
     ).toHaveCount(0);
-    await expect(page.locator('.workspace-split--row')).toHaveCount(1);
+    await expect(
+      page.locator('.workspace-split__divider[data-direction="row"]'),
+    ).toHaveCount(1);
     await page.evaluate(() => {
       const observer = new MutationObserver(() => {
-        const split = document.querySelector<HTMLElement>(
-          '.workspace-split[data-split-exit]',
+        const host = document.querySelector<HTMLElement>(
+          '.workspace-pane-host[data-workspace-motion="exit"]',
         );
-        if (!split) {
+        if (!host) {
           return;
         }
         requestAnimationFrame(() => {
-          const closingPane = split.querySelector<HTMLElement>(
+          const closingPane = host.querySelector<HTMLElement>(
             '.workspace-pane[data-pane-exiting="true"]',
           );
-          const animation = split
-            .getAnimations()
+          const transition = closingPane
+            ?.getAnimations()
             .find(
               (candidate) =>
-                (candidate as CSSAnimation).animationName ===
-                'workspace-split-enter-row-end',
+                (candidate as CSSTransition).transitionProperty === 'width',
             );
-          animation?.pause();
+          transition?.pause();
           const widthAt = (time: number) => {
-            if (!animation) {
+            if (!transition || !closingPane) {
               return 0;
             }
-            animation.currentTime = time;
-            return split.children[2]?.getBoundingClientRect().width ?? 0;
+            transition.currentTime = time;
+            return closingPane.getBoundingClientRect().width;
           };
           const widths = [0, 20, 60, 80].map(widthAt);
           document.documentElement.dataset.testPaneExit = JSON.stringify({
@@ -2203,18 +2217,19 @@ test.describe('Flyoff desktop shell', () => {
                   closingPane.querySelector('.page-host')!,
                 ).display
               : '',
-            direction: animation?.effect?.getTiming().direction,
-            duration: animation?.effect?.getTiming().duration,
-            easing: getComputedStyle(split).animationTimingFunction,
-            placement: split.dataset.splitExit,
+            duration: transition?.effect?.getTiming().duration,
+            easing: closingPane
+              ? getComputedStyle(closingPane).transitionTimingFunction
+              : '',
+            motion: host.dataset.workspaceMotion,
             widths,
           });
-          animation?.play();
+          transition?.play();
         });
         observer.disconnect();
       });
       observer.observe(document.body, {
-        attributeFilter: ['data-split-exit'],
+        attributeFilter: ['data-workspace-motion'],
         attributes: true,
         subtree: true,
       });
@@ -2224,7 +2239,7 @@ test.describe('Flyoff desktop shell', () => {
       .click();
     await expect(page.locator('html')).toHaveAttribute(
       'data-test-pane-exit',
-      /"placement":"row-end"/,
+      /"motion":"exit"/,
     );
     const closingSplitMotion = await page.locator('html').evaluate((root) =>
       JSON.parse(root.dataset.testPaneExit ?? '{}'),
@@ -2232,20 +2247,16 @@ test.describe('Flyoff desktop shell', () => {
     expect(closingSplitMotion).toMatchObject({
       closingTabMounted: true,
       contentDisplay: 'none',
-      direction: 'reverse',
       duration: 80,
       easing: 'cubic-bezier(0.7, 0, 0.84, 0)',
-      placement: 'row-end',
+      motion: 'exit',
     });
     const widths = closingSplitMotion.widths as number[];
     expect(widths).toHaveLength(4);
     const startWidth = widths[0]!;
-    const earlyWidth = widths[1]!;
-    const lateWidth = widths[2]!;
     const endWidth = widths[3]!;
-    expect(Math.abs(startWidth - earlyWidth)).toBeGreaterThan(
-      Math.abs(lateWidth - endWidth),
-    );
+    expect(startWidth).toBeGreaterThan(endWidth);
+    expect(endWidth).toBeLessThanOrEqual(1);
     await expect(page.locator('.workspace-pane-exit-clone')).toHaveCount(0);
     await expect(page.locator('.workspace-pane')).toHaveCount(1);
 
@@ -2300,7 +2311,7 @@ test.describe('Flyoff desktop shell', () => {
     await activePaneMenu().click();
     await menuItem('split-right').click();
     await expect(
-      page.locator('.workspace-split[data-split-entry]'),
+      page.locator('.workspace-pane-host[data-workspace-motion]'),
     ).toHaveCount(0);
     const duplicateSource = page.locator(
       '.workspace-pane--active .page-tab--active',
@@ -2366,7 +2377,9 @@ test.describe('Flyoff desktop shell', () => {
     await activePaneMenu().click();
     await menuItem('split-below').click();
     await expect(page.locator('.workspace-pane')).toHaveCount(3);
-    await expect(page.locator('.workspace-split--column')).toHaveCount(1);
+    await expect(
+      page.locator('.workspace-split__divider[data-direction="column"]'),
+    ).toHaveCount(1);
 
     await activePaneMenu().click();
     await menuItem('split-right').click();

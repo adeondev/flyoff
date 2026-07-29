@@ -672,18 +672,23 @@ describe('tab components', () => {
       'utf8',
     );
 
+    // Every pane and divider travels to its new box, so the whole split moves
+    // rather than the entering pane sliding over its neighbours.
     expect(styles).toMatch(
-      /\.workspace-split\[data-split-entry\],[\s\S]*?\.workspace-split\[data-split-exit\]\s*{[^}]*animation-duration:\s*var\(--workspace-pane-exit-duration, 120ms\);[^}]*animation-timing-function:\s*var\(--ease-out\);/s,
+      /\.workspace-pane-host\[data-workspace-motion\] \.workspace-pane,[\s\S]*?\.workspace-split__divider\s*{[^}]*transition:\s*top var\(--workspace-pane-motion-duration, 120ms\) var\(--ease-out\),\s*left var\(--workspace-pane-motion-duration, 120ms\) var\(--ease-out\),\s*width var\(--workspace-pane-motion-duration, 120ms\) var\(--ease-out\),\s*height var\(--workspace-pane-motion-duration, 120ms\) var\(--ease-out\);/s,
     );
     expect(styles).toMatch(
-      /\.workspace-split\[data-split-exit\]\s*{[^}]*animation-direction:\s*reverse;[^}]*animation-timing-function:\s*var\(--ease-in\);[^}]*pointer-events:\s*none;/s,
+      /\.workspace-pane-host\[data-workspace-motion='exit'\] \.workspace-pane,[\s\S]*?\.workspace-split__divider\s*{[^}]*transition-timing-function:\s*var\(--ease-in\);/s,
     );
     expect(styles).toMatch(
-      /@keyframes workspace-split-enter-row-end\s*{[^}]*grid-template-columns:[^}]*calc\(100% - 5px\)[^}]*0%\);/s,
+      /\.workspace-pane\[data-pane-exiting\]\s*{[^}]*pointer-events:\s*none;/s,
     );
+    // Panes are laid out flat so a split never reparents — and so never
+    // remounts — the pane it grows out of.
     expect(styles).toMatch(
-      /@keyframes workspace-split-enter-column-end\s*{[^}]*grid-template-rows:[^}]*calc\(100% - 5px\)[^}]*0%\);/s,
+      /\.workspace-pane\s*{[^}]*position:\s*absolute;/s,
     );
+    expect(styles).not.toContain('@keyframes workspace-split-enter-row-end');
     expect(styles).not.toContain('@keyframes workspace-pane-enter-right');
   });
 

@@ -39,6 +39,17 @@ import { PageHost } from './PageHost';
 import { collectPanes, findPane } from './pane-state';
 import { TabBar, type TabBarHandle } from './TabBar';
 import {
+  collapsedWorkspaceRatios,
+  flattenWorkspaceLayout,
+  minimumWorkspaceSize,
+  resolveWorkspaceLength,
+  workspaceBoxStyle,
+  WORKSPACE_MIN_PANE_SIZE,
+  WORKSPACE_SPLIT_DIVIDER_SIZE,
+  type WorkspaceDividerLayout,
+  type WorkspacePaneLayout,
+} from './workspace-layout';
+import {
   consumeWorkspaceDrag,
   consumeWorkspacePointerDrag,
   hasWorkspaceDrag,
@@ -50,8 +61,9 @@ import {
 } from './workspace-drag';
 import { animateWorkspaceTabToSplit } from './workspace-drag-motion';
 import {
-  animateWorkspacePaneExit,
+  PANE_EXIT_DURATION_MS,
   waitForWorkspaceMotion,
+  workspaceMotionReduced,
 } from './workspace-pane-motion';
 
 type PaneDropEdge = 'center' | 'left' | 'right' | 'top' | 'bottom';
@@ -62,8 +74,13 @@ type PaneEntryPlacement =
   | 'column-end';
 const PANE_DROP_EDGE_RATIO = 0.25;
 const PANE_TAB_BAR_HEIGHT = 48;
-export const WORKSPACE_MIN_PANE_SIZE = 240;
-const WORKSPACE_SPLIT_DIVIDER_SIZE = 5;
+const PANE_ENTRY_DURATION_MS = 120;
+const PANE_MOTION_RELEASE_MS = 320;
+// A transition only starts on the frame after its geometry lands, so both the
+// close and the entry clean-up wait a couple of frames past their duration
+// rather than cutting the last few percent of the travel.
+const PANE_MOTION_TAIL_MS = 32;
+export { WORKSPACE_MIN_PANE_SIZE };
 
 export function canSplitWorkspacePane(
   size: Pick<DOMRect, 'height' | 'width'>,
@@ -97,6 +114,19 @@ interface HostDropOverlay {
 interface ResolvedHostDrop {
   intent: HostDropIntent;
   target: HTMLElement;
+}
+
+/**
+ * Every pane and divider renders as an absolutely positioned sibling of the
+ * host rather than nested inside `.workspace-split` elements. Splitting or
+ * closing a pane then only changes geometry, so React keeps each pane — and
+ * the editor inside it — mounted instead of tearing it down and rebuilding it.
+ */
+interface WorkspaceMotionState {
+  durationMs: number;
+  kind: 'entry' | 'exit';
+  paneIds: readonly string[];
+  ratios?: ReadonlyMap<string, number>;
 }
 
 interface WorkspacePaneHostProps {
@@ -167,18 +197,12 @@ export interface WorkspacePaneHostHandle {
   animateTabExit: (paneId: string, tabId: string) => Promise<void>;
 }
 
-interface PaneTreeProps extends WorkspacePaneHostProps {
-  left: boolean;
+interface PaneLeafProps extends WorkspacePaneHostProps {
+  entryPlacement?: PaneEntryPlacement;
+  exiting: boolean;
+  layout: WorkspacePaneLayout;
   paneCount: number;
-  paneEntry?: {
-    paneId: string;
-    placement: PaneEntryPlacement;
-    splitId: string;
-  };
-  right: boolean;
   tabBars: Map<string, TabBarHandle>;
-  top: boolean;
-  node: WorkspaceLayoutSnapshot;
 }
 
 function containsPane(
@@ -189,20 +213,6 @@ function containsPane(
     return node.paneId === paneId;
   }
   return containsPane(node.first, paneId) || containsPane(node.second, paneId);
-}
-
-function minimumWorkspaceSize(
-  node: WorkspaceLayoutSnapshot,
-  axis: WorkspaceSplitDirection,
-): number {
-  if (node.kind === 'pane') {
-    return WORKSPACE_MIN_PANE_SIZE;
-  }
-  const first = minimumWorkspaceSize(node.first, axis);
-  const second = minimumWorkspaceSize(node.second, axis);
-  return node.direction === axis
-    ? first + WORKSPACE_SPLIT_DIVIDER_SIZE + second
-    : Math.max(first, second);
 }
 
 export function findNewWorkspaceTabIds(
@@ -219,10 +229,7 @@ export function findNewWorkspaceTabIds(
 function findPaneEntryPlacement(
   node: WorkspaceLayoutSnapshot,
   paneId: string,
-): Pick<
-  NonNullable<PaneTreeProps['paneEntry']>,
-  'placement' | 'splitId'
-> | undefined {
+): PaneEntryPlacement | undefined {
   if (node.kind === 'pane') {
     return undefined;
   }
@@ -230,10 +237,7 @@ function findPaneEntryPlacement(
   const branch = inFirst ? node.first : node.second;
   return (
     findPaneEntryPlacement(branch, paneId) ??
-    {
-      placement: `${node.direction}-${inFirst ? 'start' : 'end'}`,
-      splitId: node.splitId,
-    }
+    (`${node.direction}-${inFirst ? 'start' : 'end'}` as PaneEntryPlacement)
   );
 }
 
@@ -395,10 +399,9 @@ function performWorkspaceDrop(
   );
 }
 
-function PaneLeaf(props: PaneTreeProps & {
-  node: Extract<WorkspaceLayoutSnapshot, { kind: 'pane' }>;
-}) {
-  const { node } = props;
+function PaneLeaf(props: PaneLeafProps) {
+  const { layout } = props;
+  const node = layout.node;
   const [tabMenu, setTabMenu] = useState<{
     tabId: string;
     x: number;
@@ -478,15 +481,12 @@ function PaneLeaf(props: PaneTreeProps & {
       className={`workspace-pane${
         props.activePaneId === node.paneId ? ' workspace-pane--active' : ''
       }`}
+      data-pane-entry={props.entryPlacement}
+      data-pane-exiting={props.exiting || undefined}
       data-pane-id={node.paneId}
-      data-pane-entry={
-        props.paneEntry?.paneId === node.paneId
-          ? props.paneEntry.placement
-          : undefined
-      }
-      data-top={props.top || undefined}
-      data-top-left={(props.top && props.left) || undefined}
-      data-top-right={(props.top && props.right) || undefined}
+      data-top={layout.top || undefined}
+      data-top-left={(layout.top && layout.left) || undefined}
+      data-top-right={(layout.top && layout.right) || undefined}
       onClick={(event) => {
         if (
           event.target instanceof Node &&
@@ -505,6 +505,7 @@ function PaneLeaf(props: PaneTreeProps & {
           dragged?.kind === 'project-node' ? 'copy' : 'move';
       }}
       ref={paneRef}
+      style={workspaceBoxStyle(layout.box)}
     >
       <div className="workspace-pane__bar">
         <TabBar
@@ -652,28 +653,29 @@ function PaneLeaf(props: PaneTreeProps & {
   );
 }
 
-function SplitDivider(
-  props: PaneTreeProps & {
-    node: Extract<WorkspaceLayoutSnapshot, { kind: 'split' }>;
-  },
-) {
-  const { node } = props;
+function SplitDivider(props: {
+  layout: WorkspaceDividerLayout;
+  onResizeSplit: (splitId: string, ratio: number) => void;
+  translate: Translate;
+}) {
+  const { layout } = props;
+  const node = layout.node;
   const vertical = node.direction === 'row';
 
-  function clampRatio(parent: HTMLElement, ratio: number): number {
-    const bounds = parent.getBoundingClientRect();
-    const available = Math.max(
+  function regionSize(host: HTMLElement): number {
+    const bounds = host.getBoundingClientRect();
+    return Math.max(
       1,
-      vertical ? bounds.width : bounds.height,
+      resolveWorkspaceLength(
+        vertical ? layout.region.width : layout.region.height,
+        vertical ? bounds.width : bounds.height,
+      ),
     );
-    const firstMinimum = minimumWorkspaceSize(
-      node.first,
-      node.direction,
-    );
-    const secondMinimum = minimumWorkspaceSize(
-      node.second,
-      node.direction,
-    );
+  }
+
+  function clampRatio(available: number, ratio: number): number {
+    const firstMinimum = minimumWorkspaceSize(node.first, node.direction);
+    const secondMinimum = minimumWorkspaceSize(node.second, node.direction);
     if (
       available <
       firstMinimum + WORKSPACE_SPLIT_DIVIDER_SIZE + secondMinimum
@@ -687,16 +689,23 @@ function SplitDivider(
   }
 
   function updateFromPointer(event: PointerEvent<HTMLDivElement>): void {
-    const parent = event.currentTarget.parentElement;
-    if (!parent) {
+    const host = event.currentTarget.parentElement;
+    if (!host) {
       return;
     }
-    const bounds = parent.getBoundingClientRect();
-    const size = Math.max(1, vertical ? bounds.width : bounds.height);
-    const ratio = vertical
-      ? (event.clientX - bounds.left) / size
-      : (event.clientY - bounds.top) / size;
-    props.onResizeSplit(node.splitId, clampRatio(parent, ratio));
+    const bounds = host.getBoundingClientRect();
+    const available = regionSize(host);
+    const start = resolveWorkspaceLength(
+      vertical ? layout.region.left : layout.region.top,
+      vertical ? bounds.width : bounds.height,
+    );
+    const pointer = vertical
+      ? event.clientX - bounds.left
+      : event.clientY - bounds.top;
+    props.onResizeSplit(
+      node.splitId,
+      clampRatio(available, (pointer - start) / available),
+    );
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
@@ -715,11 +724,11 @@ function SplitDivider(
       return;
     }
     event.preventDefault();
-    const parent = event.currentTarget.parentElement;
-    if (parent) {
+    const host = event.currentTarget.parentElement;
+    if (host) {
       props.onResizeSplit(
         node.splitId,
-        clampRatio(parent, node.ratio + direction * 0.02),
+        clampRatio(regionSize(host), node.ratio + direction * 0.02),
       );
     }
   }
@@ -732,10 +741,14 @@ function SplitDivider(
       aria-valuemin={10}
       aria-valuenow={Math.round(node.ratio * 100)}
       className="workspace-split__divider"
+      data-direction={node.direction}
       onDoubleClick={(event) => {
-        const parent = event.currentTarget.parentElement;
-        if (parent) {
-          props.onResizeSplit(node.splitId, clampRatio(parent, 0.5));
+        const host = event.currentTarget.parentElement;
+        if (host) {
+          props.onResizeSplit(
+            node.splitId,
+            clampRatio(regionSize(host), 0.5),
+          );
         }
       }}
       onKeyDown={handleKeyDown}
@@ -749,50 +762,9 @@ function SplitDivider(
         }
       }}
       role="separator"
+      style={workspaceBoxStyle(layout.box)}
       tabIndex={0}
     />
-  );
-}
-
-function PaneTree(props: PaneTreeProps): ReactNode {
-  if (props.node.kind === 'pane') {
-    return <PaneLeaf {...props} node={props.node} />;
-  }
-
-  const firstTop = props.top;
-  const secondTop = props.top && props.node.direction === 'row';
-  const firstLeft = props.left;
-  const secondLeft = props.node.direction === 'row' ? false : props.left;
-  const firstRight = props.node.direction === 'row' ? false : props.right;
-  const secondRight = props.right;
-  return (
-    <div
-      className={`workspace-split workspace-split--${props.node.direction}`}
-      data-split-entry={
-        props.paneEntry?.splitId === props.node.splitId
-          ? props.paneEntry.placement
-          : undefined
-      }
-      style={{
-        '--workspace-split-ratio': `${props.node.ratio * 100}%`,
-      } as CSSProperties}
-    >
-      <PaneTree
-        {...props}
-        left={firstLeft}
-        node={props.node.first}
-        right={firstRight}
-        top={firstTop}
-      />
-      <SplitDivider {...props} node={props.node} />
-      <PaneTree
-        {...props}
-        left={secondLeft}
-        node={props.node.second}
-        right={secondRight}
-        top={secondTop}
-      />
-    </div>
   );
 }
 
@@ -801,7 +773,11 @@ export const WorkspacePaneHost = forwardRef<
   WorkspacePaneHostProps
 >(function WorkspacePaneHost(props, ref) {
   const [dropOverlay, setDropOverlay] = useState<HostDropOverlay>();
-  const [paneEntry, setPaneEntry] = useState<PaneTreeProps['paneEntry']>();
+  const [paneEntry, setPaneEntry] = useState<{
+    paneId: string;
+    placement: PaneEntryPlacement;
+  }>();
+  const [motion, setMotion] = useState<WorkspaceMotionState>();
   const dropIntentRef = useRef<HostDropIntent | undefined>(undefined);
   const dropExitTimerRef = useRef<number | undefined>(undefined);
   const dragLeaveFrameRef = useRef<number | undefined>(undefined);
@@ -809,14 +785,82 @@ export const WorkspacePaneHost = forwardRef<
   const [tabBars] = useState(() => new Map<string, TabBarHandle>());
   const panes = collectPanes(props.root);
   const paneCount = panes.length;
-  const paneIdsKey = panes.map(({ paneId }) => paneId).join('\u0000');
-  const previousPaneIdsRef = useRef(
-    new Set(panes.map(({ paneId }) => paneId)),
+  const paneIds = panes.map(({ paneId }) => paneId);
+  const paneIdsKey = paneIds.join('\u0000');
+  const [settledPaneIds, setSettledPaneIds] = useState<ReadonlySet<string>>(
+    () => new Set(paneIds),
   );
+  // Derived while rendering, not in an effect: a pane written to the DOM at
+  // its settled size and only collapsed afterwards animates backwards the
+  // moment anything forces a layout in between.
+  const enteringPaneId = paneIds.find(
+    (paneId) => !settledPaneIds.has(paneId),
+  );
+  const activeMotion =
+    motion?.kind === 'exit' &&
+    !paneIds.some((paneId) => motion.paneIds.includes(paneId))
+      ? undefined
+      : motion;
   const previousTabIdsRef = useRef(
     new Set(panes.flatMap(({ tabs }) => tabs.map(({ tabId }) => tabId))),
   );
   const paneEntryTimerRef = useRef<number | undefined>(undefined);
+  const motionFrameRef = useRef<number | undefined>(undefined);
+  const motionTimerRef = useRef<number | undefined>(undefined);
+
+  const clearMotionTimers = useCallback((includePaneEntry = false): void => {
+    if (motionFrameRef.current !== undefined) {
+      window.cancelAnimationFrame(motionFrameRef.current);
+      motionFrameRef.current = undefined;
+    }
+    if (motionTimerRef.current !== undefined) {
+      window.clearTimeout(motionTimerRef.current);
+      motionTimerRef.current = undefined;
+    }
+    if (includePaneEntry && paneEntryTimerRef.current !== undefined) {
+      window.clearTimeout(paneEntryTimerRef.current);
+      paneEntryTimerRef.current = undefined;
+    }
+  }, []);
+
+  const beginPaneExit = useCallback(
+    (
+      paneIds: readonly string[],
+      durationMs: number,
+    ): Promise<void> => {
+      if (paneIds.length === 0 || workspaceMotionReduced()) {
+        return Promise.resolve();
+      }
+      const ratios = collapsedWorkspaceRatios(props.root, new Set(paneIds));
+      if (ratios.size === 0) {
+        return Promise.resolve();
+      }
+      clearMotionTimers();
+      // Arm the transitions a frame before anything moves. Panes whose box
+      // changes in the very commit that enables the transition are only
+      // sometimes picked up by the style engine, and the ones that miss out
+      // snap to their new size.
+      setMotion({ durationMs, kind: 'exit', paneIds });
+      return new Promise((resolve) => {
+        motionFrameRef.current = window.requestAnimationFrame(() => {
+          motionFrameRef.current = undefined;
+          setMotion((current) =>
+            current?.kind === 'exit' ? { ...current, ratios } : current,
+          );
+          // Release the collapsed geometry even if the close never lands, so a
+          // rejected close cannot leave the workspace stuck mid-animation.
+          motionTimerRef.current = window.setTimeout(() => {
+            motionTimerRef.current = undefined;
+            setMotion((current) =>
+              current?.kind === 'exit' ? undefined : current,
+            );
+          }, durationMs + PANE_MOTION_RELEASE_MS);
+          window.setTimeout(resolve, durationMs + PANE_MOTION_TAIL_MS);
+        });
+      });
+    },
+    [clearMotionTimers, props.root],
+  );
 
   useImperativeHandle(
     ref,
@@ -831,41 +875,28 @@ export const WorkspacePaneHost = forwardRef<
           ),
         );
         const paneExit = waitForWorkspaceMotion(45).then(() =>
-          Promise.all(
+          beginPaneExit(
             currentPanes
               .filter(({ paneId }) => paneId !== props.activePaneId)
-              .map((pane) => {
-                const element = [...(hostRef.current?.querySelectorAll<HTMLElement>(
-                  '.workspace-pane[data-pane-id]',
-                ) ?? [])].find(
-                  (candidate) => candidate.dataset.paneId === pane.paneId,
-                );
-                return animateWorkspacePaneExit(element ?? null, 80);
-              }),
+              .map(({ paneId }) => paneId),
+            80,
           ),
         );
         await Promise.all([...tabExits, paneExit]);
       },
-      animatePaneExit: (paneId, durationMs) => {
-        const pane = [...(hostRef.current?.querySelectorAll<HTMLElement>(
-          '.workspace-pane[data-pane-id]',
-        ) ?? [])].find((candidate) => candidate.dataset.paneId === paneId);
-        return animateWorkspacePaneExit(pane ?? null, durationMs);
-      },
+      animatePaneExit: (paneId, durationMs = PANE_EXIT_DURATION_MS) =>
+        beginPaneExit([paneId], durationMs),
       animateTabAndPaneExit: async (paneId, tabId) => {
-        const pane = [...(hostRef.current?.querySelectorAll<HTMLElement>(
-          '.workspace-pane[data-pane-id]',
-        ) ?? [])].find((candidate) => candidate.dataset.paneId === paneId);
-        const tabExit =
-          tabBars.get(paneId)?.animateTabExit(tabId) ?? Promise.resolve();
-        const paneExit = animateWorkspacePaneExit(pane ?? null, 80);
-        await Promise.all([tabExit, paneExit]);
+        await Promise.all([
+          tabBars.get(paneId)?.animateTabExit(tabId) ?? Promise.resolve(),
+          beginPaneExit([paneId], 80),
+        ]);
       },
       animateTabExit: (paneId, tabId) =>
         tabBars.get(paneId)?.animateTabExit(tabId) ??
         Promise.resolve(),
     }),
-    [props.activePaneId, props.root, tabBars],
+    [beginPaneExit, props.activePaneId, props.root, tabBars],
   );
 
   const cancelDropExit = useCallback((): void => {
@@ -915,41 +946,51 @@ export const WorkspacePaneHost = forwardRef<
       unsubscribe();
       removeLifecycle();
       cancelDropExit();
+      clearMotionTimers(true);
       if (dragLeaveFrameRef.current !== undefined) {
         window.cancelAnimationFrame(dragLeaveFrameRef.current);
       }
-      if (paneEntryTimerRef.current !== undefined) {
-        window.clearTimeout(paneEntryTimerRef.current);
-      }
     };
-  }, [cancelDropExit, clearHostDropIntent]);
+  }, [cancelDropExit, clearHostDropIntent, clearMotionTimers]);
 
   useLayoutEffect(() => {
-    if (paneEntryTimerRef.current !== undefined) {
-      window.clearTimeout(paneEntryTimerRef.current);
-      paneEntryTimerRef.current = undefined;
-    }
-    const currentPanes = collectPanes(props.root);
-    const currentPaneIds = new Set(
-      currentPanes.map(({ paneId }) => paneId),
-    );
-    const enteringPane = currentPanes.find(
-      ({ paneId }) => !previousPaneIdsRef.current.has(paneId),
-    );
-    previousPaneIdsRef.current = currentPaneIds;
-    const entry = enteringPane
-      ? findPaneEntryPlacement(props.root, enteringPane.paneId)
-      : undefined;
-    if (!enteringPane || !entry) {
-      setPaneEntry(undefined);
+    if (!enteringPaneId) {
       return;
     }
-    setPaneEntry({ paneId: enteringPane.paneId, ...entry });
-    paneEntryTimerRef.current = window.setTimeout(() => {
-      paneEntryTimerRef.current = undefined;
-      setPaneEntry(undefined);
-    }, 140);
-  }, [paneIdsKey, props.root]);
+    const settled = new Set(
+      collectPanes(props.root).map(({ paneId }) => paneId),
+    );
+    const placement = findPaneEntryPlacement(props.root, enteringPaneId);
+    if (!placement || workspaceMotionReduced()) {
+      // Still before paint, so the collapsed frame is never shown.
+      queueMicrotask(() => setSettledPaneIds(settled));
+      return;
+    }
+    clearMotionTimers(true);
+    // The entering pane paints collapsed against the split edge, then the
+    // transitions are armed, and only on the frame after that does the layout
+    // settle — which is what turns the geometry change into a transition
+    // rather than a jump.
+    motionFrameRef.current = window.requestAnimationFrame(() => {
+      setPaneEntry({ paneId: enteringPaneId, placement });
+      setMotion({
+        durationMs: PANE_ENTRY_DURATION_MS,
+        kind: 'entry',
+        paneIds: [enteringPaneId],
+      });
+      motionFrameRef.current = window.requestAnimationFrame(() => {
+        motionFrameRef.current = undefined;
+        setSettledPaneIds(settled);
+        motionTimerRef.current = window.setTimeout(() => {
+          motionTimerRef.current = undefined;
+          setMotion((current) =>
+            current?.kind === 'entry' ? undefined : current,
+          );
+          setPaneEntry(undefined);
+        }, PANE_ENTRY_DURATION_MS + PANE_MOTION_TAIL_MS);
+      });
+    });
+  }, [clearMotionTimers, enteringPaneId, paneIdsKey, props.root]);
 
   useLayoutEffect(() => {
     const currentPanes = collectPanes(props.root);
@@ -1117,9 +1158,17 @@ export const WorkspacePaneHost = forwardRef<
     );
   }
 
+  const entries = flattenWorkspaceLayout(
+    props.root,
+    enteringPaneId
+      ? collapsedWorkspaceRatios(props.root, new Set([enteringPaneId]))
+      : activeMotion?.ratios,
+  );
+
   return (
     <div
       className="workspace-pane-host"
+      data-workspace-motion={activeMotion?.kind}
       onDragCapture={(event) => {
         cancelDragLeaveFrame();
         updateHostDropIntent(event);
@@ -1151,17 +1200,42 @@ export const WorkspacePaneHost = forwardRef<
       }}
       onDropCapture={handleHostDrop}
       ref={hostRef}
+      style={
+        activeMotion
+          ? ({
+              '--workspace-pane-motion-duration': `${activeMotion.durationMs}ms`,
+            } as CSSProperties)
+          : undefined
+      }
     >
-      <PaneTree
-        {...props}
-        node={props.root}
-        left
-        paneCount={paneCount}
-        paneEntry={paneEntry}
-        right
-        tabBars={tabBars}
-        top
-      />
+      {entries.map((entry) =>
+        entry.kind === 'pane' ? (
+          <PaneLeaf
+            {...props}
+            entryPlacement={
+              paneEntry?.paneId === entry.node.paneId
+                ? paneEntry.placement
+                : undefined
+            }
+            exiting={
+              activeMotion?.kind === 'exit' &&
+              activeMotion.ratios !== undefined &&
+              activeMotion.paneIds.includes(entry.node.paneId)
+            }
+            key={entry.node.paneId}
+            layout={entry}
+            paneCount={paneCount}
+            tabBars={tabBars}
+          />
+        ) : (
+          <SplitDivider
+            key={entry.node.splitId}
+            layout={entry}
+            onResizeSplit={props.onResizeSplit}
+            translate={props.translate}
+          />
+        ),
+      )}
       {dropOverlay ? (
         <div
           aria-hidden="true"
@@ -1187,7 +1261,7 @@ export const WorkspacePaneHost = forwardRef<
             {dropOverlay.intent.edge === 'center' ? (
               <span>
                 {dropOverlay.intent.count > 1
-                  ? `${dropOverlay.intent.count} \u00b7 `
+                  ? `${dropOverlay.intent.count} · `
                   : ''}
                 {props.translate('pages.openInPane')}
               </span>
