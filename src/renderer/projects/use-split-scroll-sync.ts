@@ -130,9 +130,9 @@ export function useSplitScrollSync({
       mode === 'split' &&
       driverRef.current === 'source'
     ) {
-      scheduleSync(true);
+      measurePendingRef.current = true;
     }
-  }, [content, enabled, mode, scheduleSync]);
+  }, [content, enabled, mode]);
 
   useEffect(() => {
     if (
@@ -159,6 +159,27 @@ export function useSplitScrollSync({
 
     return () => observer.disconnect();
   }, [enabled, mode, readingRef, scheduleSync, sourceRef]);
+
+  useEffect(() => {
+    if (
+      !enabled ||
+      mode !== 'split' ||
+      typeof MutationObserver === 'undefined'
+    ) {
+      return;
+    }
+    const reading = readingRef.current;
+    if (!reading) {
+      return;
+    }
+    const observer = new MutationObserver(() => {
+      if (driverRef.current === 'source') {
+        scheduleSync(true);
+      }
+    });
+    observer.observe(reading, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }, [enabled, mode, readingRef, scheduleSync]);
 
   useEffect(
     () => () => {

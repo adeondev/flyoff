@@ -24,6 +24,8 @@ const TEXT_COLOR_RUN =
   /\[([^\]\n]*)\]\{color\s*=\s*(?:"(#[0-9a-fA-F]{3,8})"|'(#[0-9a-fA-F]{3,8})'|(#[0-9a-fA-F]{3,8}))\s*\}/g;
 const HIGHLIGHT_COLOR_RUN =
   /==([^\n]*?)==(?:\{color\s*=\s*(?:"(#[0-9a-fA-F]{3,8})"|'(#[0-9a-fA-F]{3,8})'|(#[0-9a-fA-F]{3,8}))\s*\})?/g;
+const EMPTY_COLOR_RUN =
+  /\[\]\{color\s*=\s*(?:"#[0-9a-fA-F]{3,8}"|'#[0-9a-fA-F]{3,8}'|#[0-9a-fA-F]{3,8})\s*\}|====(?:\{color\s*=\s*(?:"#[0-9a-fA-F]{3,8}"|'#[0-9a-fA-F]{3,8}'|#[0-9a-fA-F]{3,8})\s*\})?/g;
 
 function collectRuns(
   value: string,
@@ -249,32 +251,47 @@ function formatReplacement(
 }
 
 function cleanupEmptyRuns(state: SourceEditorState): SourceEditorState {
-  const emptyRun =
-    /\[\]\{color\s*=\s*(?:"#[0-9a-fA-F]{3,8}"|'#[0-9a-fA-F]{3,8}'|#[0-9a-fA-F]{3,8})\s*\}|====(?:\{color\s*=\s*(?:"#[0-9a-fA-F]{3,8}"|'#[0-9a-fA-F]{3,8}'|#[0-9a-fA-F]{3,8})\s*\})?/g;
-  let content = '';
-  let sourceOffset = 0;
+  const focus = Math.min(
+    Math.max(0, state.selection.start),
+    state.content.length,
+  );
+  const scanStart =
+    focus === 0 ? 0 : state.content.lastIndexOf('\n', focus - 1) + 1;
+  const nextBreak = state.content.indexOf('\n', focus);
+  const scanEnd = nextBreak === -1 ? state.content.length : nextBreak;
+  const line = state.content.slice(scanStart, scanEnd);
+  if (!line.includes('[]') && !line.includes('====')) {
+    return state;
+  }
+
+  let cleaned = '';
+  let lineOffset = 0;
   let removedBeforeStart = 0;
   let removedBeforeEnd = 0;
 
-  for (const match of state.content.matchAll(emptyRun)) {
-    content += state.content.slice(sourceOffset, match.index);
-    const matchEnd = match.index + match[0].length;
-    if (match.index < state.selection.start) {
+  for (const match of line.matchAll(EMPTY_COLOR_RUN)) {
+    cleaned += line.slice(lineOffset, match.index);
+    const matchStart = scanStart + match.index;
+    const matchEnd = matchStart + match[0].length;
+    if (matchStart < state.selection.start) {
       removedBeforeStart +=
-        Math.min(matchEnd, state.selection.start) - match.index;
+        Math.min(matchEnd, state.selection.start) - matchStart;
     }
-    if (match.index < state.selection.end) {
+    if (matchStart < state.selection.end) {
       removedBeforeEnd +=
-        Math.min(matchEnd, state.selection.end) - match.index;
+        Math.min(matchEnd, state.selection.end) - matchStart;
     }
-    sourceOffset = matchEnd;
+    lineOffset = match.index + match[0].length;
   }
-  if (sourceOffset === 0) {
+  if (lineOffset === 0) {
     return state;
   }
-  content += state.content.slice(sourceOffset);
+  cleaned += line.slice(lineOffset);
   return {
-    content,
+    content:
+      state.content.slice(0, scanStart) +
+      cleaned +
+      state.content.slice(scanEnd),
     selection: {
       direction: state.selection.direction,
       end: state.selection.end - removedBeforeEnd,

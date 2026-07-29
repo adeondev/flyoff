@@ -16,8 +16,13 @@ import {
   isLargeMarkdownDocument,
   SPLIT_PREVIEW_IDLE_MS,
   SPLIT_PREVIEW_MAX_LAG_MS,
+  VIRTUAL_SPLIT_PREVIEW_IDLE_MS,
 } from './editor-performance';
-import { renderMarkdownInto } from './markdown-render';
+import { shouldVirtualizeSource } from './source-viewport';
+import {
+  renderMarkdownInto,
+  renderMarkdownIntoCooperatively,
+} from './markdown-render';
 import {
   MEDIA_LIBRARY_CHANGED_EVENT,
   removedMediaAssetIds,
@@ -78,10 +83,13 @@ export function MarkdownReadingView({
   const fallbackRef = useRef<HTMLDivElement>(null);
   const containerRef = viewRef ?? fallbackRef;
   const renderedContentRef = useRef<string | undefined>(undefined);
+  const renderedProjectIdRef = useRef<string | undefined>(undefined);
   const latestContentRef = useRef(content);
+  const latestProjectIdRef = useRef(projectId);
   const frameRef = useRef<number | undefined>(undefined);
   const idleTimerRef = useRef<number | undefined>(undefined);
   const maxTimerRef = useRef<number | undefined>(undefined);
+  const renderGenerationRef = useRef(0);
   const [pendingLink, setPendingLink] = useState<{
     anchor: HTMLAnchorElement;
     url: string;
@@ -89,16 +97,56 @@ export function MarkdownReadingView({
 
   useEffect(() => {
     latestContentRef.current = content;
+    latestProjectIdRef.current = projectId;
+    renderGenerationRef.current += 1;
+    const scheduledContainer = containerRef.current;
+    const virtualScale = shouldVirtualizeSource(content);
+    if (
+      scheduledContainer &&
+      (updatePolicy === 'split' || virtualScale) &&
+      (renderedContentRef.current !== content ||
+        renderedProjectIdRef.current !== projectId)
+    ) {
+      scheduledContainer.setAttribute('aria-busy', 'true');
+    }
 
     const renderLatest = (): void => {
       cancelScheduledRender(frameRef, idleTimerRef, maxTimerRef);
       const container = containerRef.current;
       const latest = latestContentRef.current;
-      if (!container || renderedContentRef.current === latest) {
+      const latestProjectId = latestProjectIdRef.current;
+      const generation = renderGenerationRef.current;
+      if (!container) {
         return;
       }
-      renderMarkdownInto(container, latest, { projectId });
+      if (
+        renderedContentRef.current === latest &&
+        renderedProjectIdRef.current === latestProjectId
+      ) {
+        container.removeAttribute('aria-busy');
+        return;
+      }
+      if (shouldVirtualizeSource(latest)) {
+        void renderMarkdownIntoCooperatively(container, latest, {
+          cancelled: () => renderGenerationRef.current !== generation,
+          projectId: latestProjectId,
+        }).then((rendered) => {
+          if (!rendered || renderGenerationRef.current !== generation) {
+            return;
+          }
+          renderedContentRef.current = latest;
+          renderedProjectIdRef.current = latestProjectId;
+          container.removeAttribute('aria-busy');
+          setPendingLink(undefined);
+        });
+        return;
+      }
+      renderMarkdownInto(container, latest, {
+        projectId: latestProjectId,
+      });
+      container.removeAttribute('aria-busy');
       renderedContentRef.current = latest;
+      renderedProjectIdRef.current = latestProjectId;
       setPendingLink(undefined);
     };
 
@@ -125,8 +173,11 @@ export function MarkdownReadingView({
     }
     idleTimerRef.current = window.setTimeout(
       renderLatest,
-      SPLIT_PREVIEW_IDLE_MS,
+      virtualScale ? VIRTUAL_SPLIT_PREVIEW_IDLE_MS : SPLIT_PREVIEW_IDLE_MS,
     );
+    if (virtualScale) {
+      return;
+    }
     if (maxTimerRef.current === undefined) {
       maxTimerRef.current = window.setTimeout(
         renderLatest,
@@ -136,7 +187,10 @@ export function MarkdownReadingView({
   }, [containerRef, content, projectId, updatePolicy]);
 
   useEffect(
-    () => () => cancelScheduledRender(frameRef, idleTimerRef, maxTimerRef),
+    () => () => {
+      renderGenerationRef.current += 1;
+      cancelScheduledRender(frameRef, idleTimerRef, maxTimerRef);
+    },
     [],
   );
 

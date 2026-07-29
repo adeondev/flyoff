@@ -3,6 +3,20 @@ import {
   highlightSourceLines,
   type HighlightedSourceLine,
 } from './markdown-highlight';
+import {
+  isSourceTextChangeApplicable,
+  type SourceTextChange,
+} from './source-change';
+import {
+  createSourceLineIndex,
+  replaceSourceLineIndex,
+  sourceLineIndexAtIndexedOffset,
+} from './source-line-index';
+
+export {
+  isSourceTextChangeApplicable,
+  type SourceTextChange,
+} from './source-change';
 
 export interface SourceChangeRange {
   endLine: number;
@@ -17,7 +31,7 @@ export interface SourceDocumentModel {
   source: string;
 }
 
-function lineStarts(lines: readonly HighlightedSourceLine[]): number[] {
+function lineStarts(lines: readonly HighlightedSourceLine[]): readonly number[] {
   const starts = new Array<number>(lines.length);
   let offset = 0;
 
@@ -26,7 +40,30 @@ function lineStarts(lines: readonly HighlightedSourceLine[]): number[] {
     offset += lines[index]!.source.length + 1;
   }
 
-  return starts;
+  return createSourceLineIndex(starts);
+}
+
+function replaceLineStarts(
+  current: readonly number[],
+  startLine: number,
+  removedLines: number,
+  insertedLines: readonly string[],
+  startOffset: number,
+  delta: number,
+): readonly number[] | undefined {
+  const starts = new Array<number>(insertedLines.length);
+  let offset = startOffset;
+  for (let line = 0; line < insertedLines.length; line += 1) {
+    starts[line] = offset;
+    offset += insertedLines[line]!.length + 1;
+  }
+  return replaceSourceLineIndex(
+    current,
+    startLine,
+    removedLines,
+    starts,
+    delta,
+  );
 }
 
 export function createSourceDocumentModel(
@@ -44,9 +81,75 @@ export function createSourceDocumentModel(
 export function updateSourceDocumentModel(
   current: SourceDocumentModel,
   source: string,
+  change?: SourceTextChange,
 ): SourceDocumentModel {
   if (source === current.source) {
     return current;
+  }
+
+  if (
+    change &&
+    isSourceTextChangeApplicable(current.source, source, change)
+  ) {
+    const oldLines = current.lines;
+    const startLine = sourceLineIndexAtOffset(current, change.from);
+    const endLine = sourceLineIndexAtOffset(current, change.to);
+    const startOffset = current.lineStarts[startLine]!;
+    const nextLineStart = current.lineStarts[endLine + 1];
+    const endOffset =
+      nextLineStart === undefined ? current.source.length : nextLineStart - 1;
+    const rawChangedLines = (
+      current.source.slice(startOffset, change.from) +
+      change.insert +
+      current.source.slice(change.to, endOffset)
+    ).split('\n');
+    const changedLines: HighlightedSourceLine[] = [];
+    let fenceState =
+      startLine === 0 ? false : oldLines[startLine - 1]!.fenceAfter;
+
+    for (const rawLine of rawChangedLines) {
+      const highlighted = highlightSourceLine(rawLine, fenceState);
+      changedLines.push(highlighted);
+      fenceState = highlighted.fenceAfter;
+    }
+
+    let oldIndex = endLine + 1;
+    while (oldIndex < oldLines.length) {
+      const reusable = oldLines[oldIndex]!;
+      if (reusable.fenceBefore === fenceState) {
+        break;
+      }
+      const highlighted = highlightSourceLine(reusable.source, fenceState);
+      changedLines.push(highlighted);
+      fenceState = highlighted.fenceAfter;
+      oldIndex += 1;
+    }
+    const nextLines = oldLines.slice();
+    nextLines.splice(
+      startLine,
+      oldIndex - startLine,
+      ...changedLines,
+    );
+    const reusedFrom = startLine + changedLines.length;
+
+    const nextLineStarts = replaceLineStarts(
+      current.lineStarts,
+      startLine,
+      endLine - startLine + 1,
+      rawChangedLines,
+      startOffset,
+      source.length - current.source.length,
+    );
+    return {
+      change: {
+        endLine: Math.max(startLine + 1, reusedFrom),
+        full: false,
+        startLine,
+      },
+      lines: nextLines,
+      lineStarts: nextLineStarts ?? lineStarts(nextLines),
+      source,
+    };
   }
 
   const rawLines = source.split('\n');
@@ -112,6 +215,10 @@ export function sourceLineIndexAtOffset(
   offset: number,
 ): number {
   const target = Math.min(Math.max(0, offset), model.source.length);
+  const indexed = sourceLineIndexAtIndexedOffset(model.lineStarts, target);
+  if (indexed !== undefined) {
+    return indexed;
+  }
   let low = 0;
   let high = model.lineStarts.length - 1;
 

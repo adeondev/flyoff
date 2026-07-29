@@ -30,6 +30,19 @@ export interface MarkdownBlockSource extends SourceRange {
   source: string;
 }
 
+export interface CooperativeMarkdownSplitOptions {
+  cancelled?: () => boolean;
+  now?: () => number;
+  sliceMs?: number;
+  yieldControl: () => Promise<void>;
+}
+
+interface CooperativeMarkdownSplitState {
+  now: () => number;
+  sliceMs: number;
+  sliceStartedAt: number;
+}
+
 function splitSourceLines(source: string): SourceLine[] {
   const lines: SourceLine[] = [];
   let start = 0;
@@ -490,6 +503,233 @@ export function splitMarkdownBlocks(source: string): MarkdownBlockSource[] {
   }
 
   return blocks;
+}
+
+function yieldMarkdownSplitIfDue(
+  options: CooperativeMarkdownSplitOptions,
+  state: CooperativeMarkdownSplitState,
+): boolean | Promise<boolean> {
+  if (options.cancelled?.()) {
+    return false;
+  }
+  if (state.now() - state.sliceStartedAt < state.sliceMs) {
+    return true;
+  }
+  return options.yieldControl().then(() => {
+    state.sliceStartedAt = state.now();
+    return !options.cancelled?.();
+  });
+}
+
+async function splitSourceLinesCooperatively(
+  source: string,
+  options: CooperativeMarkdownSplitOptions,
+  state: CooperativeMarkdownSplitState,
+): Promise<SourceLine[] | null> {
+  const lines: SourceLine[] = [];
+  let start = 0;
+
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index];
+    if (character === '\n' || character === '\r') {
+      lines.push({ end: index, start, text: source.slice(start, index) });
+      if (character === '\r' && source[index + 1] === '\n') {
+        index += 1;
+      }
+      start = index + 1;
+    }
+    if ((index & 4_095) === 0) {
+      const checkpoint = yieldMarkdownSplitIfDue(options, state);
+      if (
+        checkpoint === false ||
+        (checkpoint !== true && !(await checkpoint))
+      ) {
+        return null;
+      }
+    }
+  }
+
+  lines.push({
+    end: source.length,
+    start,
+    text: source.slice(start),
+  });
+  return lines;
+}
+
+async function advanceMarkdownLinesCooperatively(
+  lines: readonly SourceLine[],
+  start: number,
+  predicate: (line: string) => boolean,
+  options: CooperativeMarkdownSplitOptions,
+  state: CooperativeMarkdownSplitState,
+): Promise<number | null> {
+  let index = start;
+  while (index < lines.length && predicate(lines[index]!.text)) {
+    index += 1;
+    if ((index & 31) === 0) {
+      const checkpoint = yieldMarkdownSplitIfDue(options, state);
+      if (
+        checkpoint === false ||
+        (checkpoint !== true && !(await checkpoint))
+      ) {
+        return null;
+      }
+    }
+  }
+  return index;
+}
+
+async function findFenceEndCooperatively(
+  lines: readonly SourceLine[],
+  start: number,
+  closing: RegExp,
+  options: CooperativeMarkdownSplitOptions,
+  state: CooperativeMarkdownSplitState,
+): Promise<number | null> {
+  let index = start;
+  while (index < lines.length) {
+    const closesFence = closing.test(lines[index]!.text);
+    index += 1;
+    if ((index & 31) === 0) {
+      const checkpoint = yieldMarkdownSplitIfDue(options, state);
+      if (
+        checkpoint === false ||
+        (checkpoint !== true && !(await checkpoint))
+      ) {
+        return null;
+      }
+    }
+    if (closesFence) {
+      return index;
+    }
+  }
+  return index;
+}
+
+function cooperativeBlockEnd(
+  lines: readonly SourceLine[],
+  start: number,
+  options: CooperativeMarkdownSplitOptions,
+  state: CooperativeMarkdownSplitState,
+): number | null | Promise<number | null> {
+  const line = lines[start]!.text;
+  const image = IMAGE_DIRECTIVE.test(line)
+    ? parseImageDirective(line)
+    : null;
+  const fence = FENCE.exec(line);
+  if (fence) {
+    const marker = fence[1]!;
+    const closing = new RegExp(
+      `^ {0,3}${marker[0]}{${marker.length},}[ \\t]*$`,
+    );
+    return findFenceEndCooperatively(
+      lines,
+      start + 1,
+      closing,
+      options,
+      state,
+    );
+  }
+  if (
+    DIVIDED_ATX.test(line) ||
+    ATX.test(line) ||
+    THEMATIC_BREAK.test(line) ||
+    (MEDIA_DIRECTIVE.test(line) && parseMediaDirective(line) !== null) ||
+    Boolean(image && image.mode !== 'inline')
+  ) {
+    return start + 1;
+  }
+
+  let index = start + 1;
+  const advanceWhile = (
+    predicate: (line: string) => boolean,
+  ): number | Promise<number | null> => {
+    if (index >= lines.length || !predicate(lines[index]!.text)) {
+      return index;
+    }
+    return advanceMarkdownLinesCooperatively(
+      lines,
+      index,
+      predicate,
+      options,
+      state,
+    );
+  };
+
+  if (BLOCKQUOTE.test(line)) {
+    return advanceWhile((nextLine) => !BLANK.test(nextLine));
+  }
+  const list = LIST_ITEM.exec(line);
+  if (list) {
+    const ordered = /\d/.test(list[2]!);
+    return advanceWhile((nextLine) => {
+      const match = LIST_ITEM.exec(nextLine);
+      return Boolean(match && /\d/.test(match[2]!) === ordered);
+    });
+  }
+
+  const alignments =
+    start + 1 < lines.length
+      ? tableAlignments(lines[start + 1]!.text)
+      : null;
+  if (alignments && line.includes('|')) {
+    index = start + 2;
+    return advanceWhile(
+      (nextLine) => !BLANK.test(nextLine) && nextLine.includes('|'),
+    );
+  }
+
+  return advanceWhile(
+    (nextLine) => !BLANK.test(nextLine) && !isBlockStart(nextLine),
+  );
+}
+
+export async function splitMarkdownBlocksCooperatively(
+  source: string,
+  options: CooperativeMarkdownSplitOptions,
+): Promise<MarkdownBlockSource[] | null> {
+  const now = options.now ?? performance.now.bind(performance);
+  const state = {
+    now,
+    sliceMs: Math.max(2, options.sliceMs ?? 8),
+    sliceStartedAt: now(),
+  };
+  const lines = await splitSourceLinesCooperatively(source, options, state);
+  if (!lines) {
+    return null;
+  }
+  const blocks: MarkdownBlockSource[] = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    if (BLANK.test(lines[index]!.text)) {
+      index += 1;
+    } else {
+      const pendingEnd = cooperativeBlockEnd(lines, index, options, state);
+      const end =
+        typeof pendingEnd === 'number' || pendingEnd === null
+          ? pendingEnd
+          : await pendingEnd;
+      if (end === null) {
+        return null;
+      }
+      const range = sourceRange(lines, index, end);
+      blocks.push({ ...range, source: source.slice(range.start, range.end) });
+      index = end;
+    }
+    if ((index & 31) === 0) {
+      const checkpoint = yieldMarkdownSplitIfDue(options, state);
+      if (
+        checkpoint === false ||
+        (checkpoint !== true && !(await checkpoint))
+      ) {
+        return null;
+      }
+    }
+  }
+
+  return options.cancelled?.() ? null : blocks;
 }
 
 export function parseBlocks(lines: readonly string[]): BlockNode[] {

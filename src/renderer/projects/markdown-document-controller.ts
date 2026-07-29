@@ -47,6 +47,7 @@ interface MarkdownBufferEntry {
   snapshot: MarkdownBufferSnapshot;
   savedContent: string;
   listeners: Set<() => void>;
+  saveDueAt?: number;
   timer?: ReturnType<typeof setTimeout>;
   savePromise?: Promise<boolean>;
 }
@@ -179,7 +180,7 @@ export class MarkdownDocumentController {
     }
     this.debounceMs = nextDelay;
     for (const entry of this.buffers.values()) {
-      if (!entry.timer) {
+      if (entry.timer === undefined) {
         continue;
       }
       this.clearTimer(entry);
@@ -262,12 +263,13 @@ export class MarkdownDocumentController {
     const key = this.viewSelectionKey(nodeId, viewId);
     const previous = this.viewSelections.get(key) ?? entry.snapshot.selection;
     if (
-      previous.start !== next.start ||
-      previous.end !== next.end ||
-      previous.direction !== next.direction
+      previous.start === next.start &&
+      previous.end === next.end &&
+      previous.direction === next.direction
     ) {
-      this.history.breakCoalescing(nodeId);
+      return;
     }
+    this.history.breakCoalescing(nodeId);
     this.viewSelections.set(key, next);
     if (viewId === nodeId) {
       entry.snapshot = { ...entry.snapshot, selection: next };
@@ -329,7 +331,13 @@ export class MarkdownDocumentController {
     const blockedByConflict = entry.snapshot.status === 'conflict';
     const saveInProgress = Boolean(entry.savePromise);
     const dirty = blockedByConflict || content !== entry.savedContent;
+    const nodeId = entry.snapshot.nodeId;
 
+    this.editorStates.set(nodeId, { content, selection });
+    this.viewSelections.set(
+      this.viewSelectionKey(nodeId, viewId),
+      selection,
+    );
     this.setSnapshot(entry, {
       ...entry.snapshot,
       content,
@@ -346,15 +354,11 @@ export class MarkdownDocumentController {
         ? { error: entry.snapshot.error }
         : {}),
     });
-    this.editorStates.set(entry.snapshot.nodeId, { content, selection });
-    this.viewSelections.set(
-      this.viewSelectionKey(entry.snapshot.nodeId, viewId),
-      selection,
-    );
 
-    this.clearTimer(entry);
     if (dirty && !blockedByConflict && !saveInProgress) {
       this.scheduleSave(entry);
+    } else {
+      this.clearTimer(entry);
     }
   }
 
@@ -565,10 +569,30 @@ export class MarkdownDocumentController {
       return;
     }
 
+    entry.saveDueAt = Date.now() + this.debounceMs;
+    if (entry.timer !== undefined) {
+      return;
+    }
+    this.armSaveTimer(entry);
+  }
+
+  private armSaveTimer(entry: MarkdownBufferEntry): void {
+    const delay = Math.max(
+      0,
+      (entry.saveDueAt ?? Date.now()) - Date.now(),
+    );
     entry.timer = setTimeout(() => {
       entry.timer = undefined;
+      if (
+        entry.saveDueAt !== undefined &&
+        entry.saveDueAt > Date.now()
+      ) {
+        this.armSaveTimer(entry);
+        return;
+      }
+      entry.saveDueAt = undefined;
       void this.performSave(entry, false);
-    }, this.debounceMs);
+    }, delay);
   }
 
   private async performSave(
@@ -748,10 +772,11 @@ export class MarkdownDocumentController {
   }
 
   private clearTimer(entry: MarkdownBufferEntry): void {
-    if (entry.timer) {
+    if (entry.timer !== undefined) {
       clearTimeout(entry.timer);
       entry.timer = undefined;
     }
+    entry.saveDueAt = undefined;
   }
 
   private setSnapshot(

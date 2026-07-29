@@ -1,3 +1,12 @@
+import {
+  sourceLineIndexAtOffset,
+  type SourceDocumentModel,
+} from './source-document-model';
+import {
+  getSourceDocumentModel,
+  getSourceLineElement,
+} from './source-renderer';
+
 const BLOCK_ELEMENTS = new Set([
   'ADDRESS',
   'ARTICLE',
@@ -24,9 +33,54 @@ export interface SourceSelection {
   direction: SourceSelectionDirection;
 }
 
+export interface SourceCaretAdapter {
+  focus?(options?: FocusOptions): void;
+  readSelection?(): SourceSelection;
+  readSource?(): string;
+  sourceDocumentModel?(): SourceDocumentModel;
+  sourceCaretRect?(target: number): DOMRect | undefined;
+  sourceOffsetAtPoint?(x: number, y: number): number | undefined;
+  writeSelection?(selection: SourceSelection): void;
+}
+
 interface Position {
   node: Node;
   offset: number;
+}
+
+const sourceCaretAdapters = new WeakMap<HTMLElement, SourceCaretAdapter>();
+
+export function registerSourceCaretAdapter(
+  root: HTMLElement,
+  adapter: SourceCaretAdapter,
+): () => void {
+  sourceCaretAdapters.set(root, adapter);
+  return () => {
+    if (sourceCaretAdapters.get(root) === adapter) {
+      sourceCaretAdapters.delete(root);
+    }
+  };
+}
+
+export function focusSource(
+  root: HTMLElement,
+  options?: FocusOptions,
+): void {
+  const adapter = sourceCaretAdapters.get(root);
+  if (adapter?.focus) {
+    adapter.focus(options);
+    return;
+  }
+  root.focus(options);
+}
+
+export function readSourceDocumentModel(
+  root: HTMLElement,
+): SourceDocumentModel | undefined {
+  return (
+    sourceCaretAdapters.get(root)?.sourceDocumentModel?.() ??
+    getSourceDocumentModel(root)
+  );
 }
 
 function isLine(element: Element): boolean {
@@ -34,6 +88,13 @@ function isLine(element: Element): boolean {
 }
 
 function lineContent(line: Element): Element {
+  const last = line.lastElementChild;
+  if (
+    last?.parentElement === line &&
+    last.classList.contains('md-line__content')
+  ) {
+    return last;
+  }
   const content = line.querySelector(':scope > .md-line__content');
   return content ?? line;
 }
@@ -118,7 +179,15 @@ function serializeRoot(root: ParentNode): string {
     : serializeChildren(root);
 }
 
+export function sourceTextLength(root: ParentNode): number {
+  return serializeRoot(root).length;
+}
+
 export function readSource(root: HTMLElement): string {
+  const adapter = sourceCaretAdapters.get(root);
+  if (adapter?.readSource) {
+    return adapter.readSource();
+  }
   return serializeRoot(root).replace(/\r\n?/g, '\n');
 }
 
@@ -130,18 +199,12 @@ function clampOffset(container: Node, offset: number): number {
   return Math.min(Math.max(0, offset), limit);
 }
 
-function rootChildOffset(
+function fallbackRootChildOffset(
   root: HTMLElement,
   offset: number,
   lines: readonly Element[],
 ): number {
   const clamped = Math.min(Math.max(0, offset), lines.length);
-  const model = getSourceDocumentModel(root);
-  if (model && model.lines.length === lines.length) {
-    return clamped >= model.lines.length
-      ? model.source.length
-      : model.lineStarts[clamped]!;
-  }
   let length = 0;
 
   for (let index = 0; index < clamped; index += 1) {
@@ -154,6 +217,50 @@ function rootChildOffset(
   return length;
 }
 
+function modelLine(
+  root: HTMLElement,
+  model: SourceDocumentModel,
+  index: number,
+): Element | undefined {
+  if (
+    index < 0 ||
+    index >= model.lines.length ||
+    root.childElementCount !== model.lines.length
+  ) {
+    return undefined;
+  }
+  const line = getSourceLineElement(root, index);
+  return line &&
+    isLine(line) &&
+    Number(line.getAttribute('data-line')) === index + 1
+    ? line
+    : undefined;
+}
+
+function modelRootChildOffset(
+  root: HTMLElement,
+  model: SourceDocumentModel,
+  offset: number,
+): number | undefined {
+  if (
+    root.childElementCount !== model.lines.length ||
+    root.childNodes.length !== model.lines.length
+  ) {
+    return undefined;
+  }
+  const clamped = Math.min(Math.max(0, offset), model.lines.length);
+  if (
+    (clamped < model.lines.length &&
+      !modelLine(root, model, clamped)) ||
+    (clamped > 0 && !modelLine(root, model, clamped - 1))
+  ) {
+    return undefined;
+  }
+  return clamped === model.lines.length
+    ? model.source.length
+    : model.lineStarts[clamped];
+}
+
 function outsideOffset(root: HTMLElement, container: Node): number {
   const relation = root.compareDocumentPosition(container);
   if (relation & Node.DOCUMENT_POSITION_DISCONNECTED) {
@@ -161,28 +268,29 @@ function outsideOffset(root: HTMLElement, container: Node): number {
   }
   return relation & Node.DOCUMENT_POSITION_PRECEDING
     ? 0
-    : (getSourceDocumentModel(root)?.source.length ?? readSource(root).length);
+    : (readSourceDocumentModel(root)?.source.length ?? readSource(root).length);
 }
 
 function canonicalLineOffset(
   root: HTMLElement,
+  model: SourceDocumentModel,
   container: Node,
   containerOffset: number,
 ): number | undefined {
-  const model = getSourceDocumentModel(root);
   const element =
     container.nodeType === Node.ELEMENT_NODE
       ? (container as Element)
       : container.parentElement;
   const line = element?.closest<HTMLElement>('.md-line');
-  if (!model || !line || line.parentElement !== root) {
+  if (!line || line.parentElement !== root) {
     return undefined;
   }
   const index = Number(line.dataset.line) - 1;
   if (
     !Number.isInteger(index) ||
     index < 0 ||
-    index >= model.lines.length
+    index >= model.lines.length ||
+    modelLine(root, model, index) !== line
   ) {
     return undefined;
   }
@@ -217,22 +325,34 @@ function offsetOf(
   container: Node,
   containerOffset: number,
 ): number {
-  const lines = canonicalLines(root);
-  if (container === root && lines) {
-    return rootChildOffset(root, containerOffset, lines);
+  const model = readSourceDocumentModel(root);
+  if (container === root) {
+    if (model) {
+      const offset = modelRootChildOffset(root, model, containerOffset);
+      if (offset !== undefined) {
+        return offset;
+      }
+    }
+    const lines = canonicalLines(root);
+    if (lines) {
+      return fallbackRootChildOffset(root, containerOffset, lines);
+    }
   }
 
   if (container !== root && !root.contains(container)) {
     return outsideOffset(root, container);
   }
 
-  const lineOffset = canonicalLineOffset(
-    root,
-    container,
-    containerOffset,
-  );
-  if (lineOffset !== undefined) {
-    return lineOffset;
+  if (model) {
+    const lineOffset = canonicalLineOffset(
+      root,
+      model,
+      container,
+      containerOffset,
+    );
+    if (lineOffset !== undefined) {
+      return lineOffset;
+    }
   }
 
   const range = root.ownerDocument.createRange();
@@ -282,6 +402,10 @@ export function sourceOffsetAtPoint(
   x: number,
   y: number,
 ): number | undefined {
+  const adapter = sourceCaretAdapters.get(root);
+  if (adapter?.sourceOffsetAtPoint) {
+    return adapter.sourceOffsetAtPoint(x, y);
+  }
   const direct = pointOffset(root, x, y);
   if (direct !== undefined) {
     return direct;
@@ -308,6 +432,10 @@ function selectionDirection(
 }
 
 export function readSelection(root: HTMLElement): SourceSelection {
+  const adapter = sourceCaretAdapters.get(root);
+  if (adapter?.readSelection) {
+    return adapter.readSelection();
+  }
   const selection = root.ownerDocument.getSelection();
 
   if (!selection || selection.rangeCount === 0) {
@@ -317,9 +445,13 @@ export function readSelection(root: HTMLElement): SourceSelection {
   const anchor = selection.anchorNode
     ? offsetOf(root, selection.anchorNode, selection.anchorOffset)
     : 0;
-  const focus = selection.focusNode
-    ? offsetOf(root, selection.focusNode, selection.focusOffset)
-    : anchor;
+  const focus =
+    selection.focusNode === selection.anchorNode &&
+    selection.focusOffset === selection.anchorOffset
+      ? anchor
+      : selection.focusNode
+        ? offsetOf(root, selection.focusNode, selection.focusOffset)
+        : anchor;
 
   return {
     start: Math.min(anchor, focus),
@@ -338,6 +470,14 @@ function positionInLine(line: Element, offset: number): Position {
   const walker = line.ownerDocument.createTreeWalker(
     content,
     NodeFilter.SHOW_TEXT,
+    {
+      acceptNode(node) {
+        const parent = node.parentElement;
+        return parent?.closest('[data-md-decoration], [data-md-gutter]')
+          ? NodeFilter.FILTER_REJECT
+          : NodeFilter.FILTER_ACCEPT;
+      },
+    },
   );
   let remaining = Math.max(0, offset);
   let node = walker.nextNode();
@@ -358,22 +498,41 @@ function positionInLine(line: Element, offset: number): Position {
     : { node: content, offset: 0 };
 }
 
+export function sourceCaretRectInLine(
+  line: Element,
+  offset: number,
+): DOMRect | undefined {
+  const position = positionInLine(line, offset);
+  const range = line.ownerDocument.createRange();
+  try {
+    range.setStart(position.node, position.offset);
+    range.collapse(true);
+    const rect = range.getClientRects()[0] ?? range.getBoundingClientRect();
+    return rect.width || rect.height ? rect : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function positionAt(root: HTMLElement, target: number): Position {
+  const model = readSourceDocumentModel(root);
+  if (model) {
+    const index = sourceLineIndexAtOffset(model, target);
+    const line = modelLine(root, model, index);
+    if (line) {
+      return positionInLine(
+        line,
+        Math.min(
+          model.lines[index]!.source.length,
+          Math.max(0, target - model.lineStarts[index]!),
+        ),
+      );
+    }
+  }
+
   const lines = canonicalLines(root);
   if (!lines) {
     return { node: root, offset: root.childNodes.length };
-  }
-
-  const model = getSourceDocumentModel(root);
-  if (model && model.lines.length === lines.length) {
-    const index = sourceLineIndexAtOffset(model, target);
-    return positionInLine(
-      lines[index]!,
-      Math.min(
-        model.lines[index]!.source.length,
-        Math.max(0, target - model.lineStarts[index]!),
-      ),
-    );
   }
 
   let remaining = Math.max(0, target);
@@ -416,14 +575,21 @@ export function writeSelection(
   startOrSelection: number | SourceSelection,
   end?: number,
 ): void {
+  const sourceSelection = normalizeSelection(startOrSelection, end);
+  const adapter = sourceCaretAdapters.get(root);
+  if (adapter?.writeSelection) {
+    adapter.writeSelection(sourceSelection);
+    return;
+  }
   const selection = root.ownerDocument.getSelection();
   if (!selection) {
     return;
   }
-
-  const sourceSelection = normalizeSelection(startOrSelection, end);
   const from = positionAt(root, sourceSelection.start);
-  const to = positionAt(root, sourceSelection.end);
+  const to =
+    sourceSelection.start === sourceSelection.end
+      ? from
+      : positionAt(root, sourceSelection.end);
   const range = root.ownerDocument.createRange();
   range.setStart(from.node, from.offset);
   range.setEnd(to.node, to.offset);
@@ -450,6 +616,10 @@ export function sourceCaretRect(
   root: HTMLElement,
   target: number,
 ): DOMRect | undefined {
+  const adapter = sourceCaretAdapters.get(root);
+  if (adapter?.sourceCaretRect) {
+    return adapter.sourceCaretRect(target);
+  }
   const position = positionAt(root, target);
   const range = root.ownerDocument.createRange();
   try {
@@ -470,5 +640,3 @@ export function replaceRange(
 ): string {
   return source.slice(0, start) + inserted + source.slice(end);
 }
-import { sourceLineIndexAtOffset } from './source-document-model';
-import { getSourceDocumentModel } from './source-renderer';

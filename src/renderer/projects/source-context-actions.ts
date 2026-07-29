@@ -79,10 +79,16 @@ export function sourceSpellingAtOffset(
   source: string,
   offset: number,
 ): SourceContextSpelling | undefined {
-  for (const match of source.matchAll(SPELLING_WORD)) {
-    const start = match.index;
+  const target = clampOffset(source, offset);
+  const startOffset =
+    target === 0 ? 0 : source.lastIndexOf('\n', target - 1) + 1;
+  const nextBreak = source.indexOf('\n', target);
+  const endOffset = nextBreak === -1 ? source.length : nextBreak;
+  const line = source.slice(startOffset, endOffset);
+  for (const match of line.matchAll(SPELLING_WORD)) {
+    const start = startOffset + match.index;
     const end = start + match[0].length;
-    if (offset >= start && offset <= end) {
+    if (target >= start && target <= end) {
       return { end, start, word: match[0] };
     }
   }
@@ -182,21 +188,26 @@ function lineContext(
   content: string,
   selection: SourceSelection,
 ): SourceLineCapabilities {
-  const lines = content.split('\n');
-  const range = selectedLines(content, selection);
+  const start = clampOffset(content, selection.start);
+  let end = clampOffset(content, selection.end);
+  if (end > start && content[end - 1] === '\n') {
+    end -= 1;
+  }
 
   return {
     canDelete: content.length > 0,
-    canMoveDown: range.end < lines.length - 1,
-    canMoveUp: range.start > 0,
+    canMoveDown: content.indexOf('\n', end) !== -1,
+    canMoveUp:
+      start > 0 && content.lastIndexOf('\n', start - 1) !== -1,
   };
 }
 
 function taskContext(
   content: string,
-  lineIndex: number,
+  start: number,
+  end: number,
 ): SourceContextTask | undefined {
-  const line = content.split('\n')[lineIndex];
+  const line = content.slice(start, end);
   const match = line ? TASK_PREFIX.exec(line) : null;
   if (!match) {
     return undefined;
@@ -204,8 +215,25 @@ function taskContext(
 
   return {
     checked: match[2]!.toLocaleLowerCase() === 'x',
-    markerOffset: lineStart(content, lineIndex) + match[1]!.length,
+    markerOffset: start + match[1]!.length,
   };
+}
+
+function taskContextAtOffset(
+  content: string,
+  start: number,
+  end: number,
+  offset: number,
+): SourceContextTask | undefined {
+  const match = TASK_PREFIX.exec(content.slice(start, end));
+  if (!match) {
+    return undefined;
+  }
+  const tokenStart = start + match[1]!.length - 1;
+  const tokenEnd = start + match[0].length;
+  return offset >= tokenStart && offset <= tokenEnd
+    ? taskContext(content, start, end)
+    : undefined;
 }
 
 function linkDestination(
@@ -241,13 +269,11 @@ function linkDestination(
 
 function linkContext(
   content: string,
-  lineIndex: number,
+  lineStartOffset: number,
+  lineEndOffset: number,
   linkIndex: number,
 ): SourceContextLink | undefined {
-  const line = content.split('\n')[lineIndex];
-  if (line === undefined) {
-    return undefined;
-  }
+  const line = content.slice(lineStartOffset, lineEndOffset);
 
   const matches = [
     ...[...line.matchAll(INLINE_LINK)].map((match) => ({
@@ -278,7 +304,7 @@ function linkContext(
       (aliasAt === -1 ? inside : inside.slice(0, aliasAt)).length -
       (aliasAt === -1 ? inside : inside.slice(0, aliasAt)).trimStart().length;
     const start =
-      lineStart(content, lineIndex) + match.index + 2 + leading;
+      lineStartOffset + match.index + 2 + leading;
     const internal = parseInternalLinkDestination(destination, 'wikilink');
     return {
       end: start + destination.length,
@@ -293,7 +319,7 @@ function linkContext(
 
   const raw = match[1]!;
   const destinationStart =
-    lineStart(content, lineIndex) +
+    lineStartOffset +
     match.index +
     match[0].indexOf('(') +
     1;
@@ -311,6 +337,24 @@ function linkContext(
   };
 }
 
+function linkIndexAtOffset(
+  content: string,
+  lineStartOffset: number,
+  lineEndOffset: number,
+  offset: number,
+): number {
+  const line = content.slice(lineStartOffset, lineEndOffset);
+  const relative = offset - lineStartOffset;
+  const matches = [
+    ...line.matchAll(INLINE_LINK),
+    ...line.matchAll(WIKI_LINK),
+  ].sort((left, right) => (left.index ?? 0) - (right.index ?? 0));
+  return matches.findIndex((match) => {
+    const start = match.index ?? -1;
+    return start >= 0 && relative >= start && relative <= start + match[0].length;
+  });
+}
+
 export function createSourceMenuRequest(
   root: HTMLElement,
   target: EventTarget | null,
@@ -321,15 +365,49 @@ export function createSourceMenuRequest(
   const element = target instanceof Element ? target : undefined;
   const line = element?.closest<HTMLElement>('.md-line');
   const lineIndex = Math.max(0, Number(line?.dataset.line ?? 1) - 1);
+  const pointOffset = sourceOffsetAtPoint(root, position.x, position.y);
+  const fallbackOffset = Math.min(
+    source.length,
+    selection.direction === 'backward'
+      ? selection.start
+      : selection.end,
+  );
+  const lineOffset =
+    pointOffset ??
+    (line
+      ? lineStart(source, lineIndex)
+      : fallbackOffset);
+  const lineStartOffset =
+    lineOffset === 0
+      ? 0
+      : source.lastIndexOf('\n', lineOffset - 1) + 1;
+  const lineBreak = source.indexOf('\n', lineOffset);
+  const lineEndOffset =
+    lineBreak === -1 ? source.length : lineBreak;
   const task = element?.closest('.md-tok-task')
-    ? taskContext(source, lineIndex)
-    : undefined;
+    ? taskContext(source, lineStartOffset, lineEndOffset)
+    : pointOffset === undefined
+      ? undefined
+      : taskContextAtOffset(
+          source,
+          lineStartOffset,
+          lineEndOffset,
+          pointOffset,
+        );
   const linkElement = element?.closest('.md-source-link');
   const linkElements = line
     ? [...line.querySelectorAll('.md-source-link')]
     : [];
-  const linkIndex = linkElement ? linkElements.indexOf(linkElement) : -1;
-  const pointOffset = sourceOffsetAtPoint(root, position.x, position.y);
+  const linkIndex = linkElement
+    ? linkElements.indexOf(linkElement)
+    : pointOffset === undefined
+      ? -1
+      : linkIndexAtOffset(
+          source,
+          lineStartOffset,
+          lineEndOffset,
+          pointOffset,
+        );
   const spelling =
     pointOffset === undefined
       ? undefined
@@ -337,7 +415,15 @@ export function createSourceMenuRequest(
 
   return {
     content: source,
-    link: linkIndex >= 0 ? linkContext(source, lineIndex, linkIndex) : undefined,
+    link:
+      linkIndex >= 0
+        ? linkContext(
+            source,
+            lineStartOffset,
+            lineEndOffset,
+            linkIndex,
+          )
+        : undefined,
     lines: lineContext(source, selection),
     position,
     selection,

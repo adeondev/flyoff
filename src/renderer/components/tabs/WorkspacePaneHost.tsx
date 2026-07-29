@@ -123,10 +123,16 @@ interface ResolvedHostDrop {
  * the editor inside it — mounted instead of tearing it down and rebuilding it.
  */
 interface WorkspaceMotionState {
+  contentBounds: ReadonlyMap<string, WorkspaceContentBounds>;
   durationMs: number;
   kind: 'entry' | 'exit';
   paneIds: readonly string[];
   ratios?: ReadonlyMap<string, number>;
+}
+
+interface WorkspaceContentBounds {
+  height: number;
+  width: number;
 }
 
 interface WorkspacePaneHostProps {
@@ -198,9 +204,11 @@ export interface WorkspacePaneHostHandle {
 }
 
 interface PaneLeafProps extends WorkspacePaneHostProps {
+  contentBounds?: WorkspaceContentBounds;
   entryPlacement?: PaneEntryPlacement;
   exiting: boolean;
   layout: WorkspacePaneLayout;
+  pageMounted: boolean;
   paneCount: number;
   tabBars: Map<string, TabBarHandle>;
 }
@@ -573,22 +581,38 @@ function PaneLeaf(props: PaneLeafProps) {
           />
         </div>
       </div>
-      <PageHost
-        activePane={props.activePaneId === node.paneId}
-        activeTabId={node.activeTabId}
-        emptyState={props.emptyState?.(node.paneId)}
-        getPresentation={props.getPresentation}
-        onPageStateChange={(tabId, state) =>
-          props.onPageStateChange(node.paneId, tabId, state)
+      <div
+        aria-busy={!props.pageMounted || undefined}
+        className="workspace-pane__content"
+        data-motion-locked={props.contentBounds ? '' : undefined}
+        style={
+          props.contentBounds
+            ? {
+                height: props.contentBounds.height,
+                width: props.contentBounds.width,
+              }
+            : undefined
         }
-        onScrollChange={(tabId, scrollTop, settled) =>
-          props.onScrollChange(node.paneId, tabId, scrollTop, settled)
-        }
-        paneId={node.paneId}
-        renderPage={props.renderPage}
-        tabs={node.tabs}
-        translate={props.translate}
-      />
+      >
+        {props.pageMounted ? (
+          <PageHost
+            activePane={props.activePaneId === node.paneId}
+            activeTabId={node.activeTabId}
+            emptyState={props.emptyState?.(node.paneId)}
+            getPresentation={props.getPresentation}
+            onPageStateChange={(tabId, state) =>
+              props.onPageStateChange(node.paneId, tabId, state)
+            }
+            onScrollChange={(tabId, scrollTop, settled) =>
+              props.onScrollChange(node.paneId, tabId, scrollTop, settled)
+            }
+            paneId={node.paneId}
+            renderPage={props.renderPage}
+            tabs={node.tabs}
+            translate={props.translate}
+          />
+        ) : null}
+      </div>
       {tabMenu ? (
         <ContextMenu
           ariaLabel={props.translate('pages.tabMenu')}
@@ -787,28 +811,45 @@ export const WorkspacePaneHost = forwardRef<
   const paneCount = panes.length;
   const paneIds = panes.map(({ paneId }) => paneId);
   const paneIdsKey = paneIds.join('\u0000');
+  const [mountedPaneIds, setMountedPaneIds] = useState<ReadonlySet<string>>(
+    () => new Set(paneIds),
+  );
   const [settledPaneIds, setSettledPaneIds] = useState<ReadonlySet<string>>(
     () => new Set(paneIds),
   );
   // Derived while rendering, not in an effect: a pane written to the DOM at
   // its settled size and only collapsed afterwards animates backwards the
   // moment anything forces a layout in between.
-  const enteringPaneId = paneIds.find(
+  const unsettledPaneIds = paneIds.filter(
     (paneId) => !settledPaneIds.has(paneId),
   );
+  const hasSettledPane = paneIds.some((paneId) =>
+    settledPaneIds.has(paneId),
+  );
+  const enteringPaneId =
+    unsettledPaneIds.length === 1 && hasSettledPane
+      ? unsettledPaneIds[0]
+      : undefined;
+  const mountWorkspaceImmediately =
+    unsettledPaneIds.length > 0 && !enteringPaneId;
+  const unsettledPaneIdsKey = unsettledPaneIds.join('\u0000');
+  const unmountedPaneIdsKey = paneIds
+    .filter((paneId) => !mountedPaneIds.has(paneId))
+    .join('\u0000');
   const activeMotion =
-    motion?.kind === 'exit' &&
-    !paneIds.some((paneId) => motion.paneIds.includes(paneId))
-      ? undefined
-      : motion;
+    motion &&
+    paneIds.some((paneId) => motion.paneIds.includes(paneId))
+      ? motion
+      : undefined;
   const previousTabIdsRef = useRef(
     new Set(panes.flatMap(({ tabs }) => tabs.map(({ tabId }) => tabId))),
   );
-  const paneEntryTimerRef = useRef<number | undefined>(undefined);
+  const pageMountFrameRef = useRef<number | undefined>(undefined);
   const motionFrameRef = useRef<number | undefined>(undefined);
   const motionTimerRef = useRef<number | undefined>(undefined);
+  const motionResolveRef = useRef<(() => void) | undefined>(undefined);
 
-  const clearMotionTimers = useCallback((includePaneEntry = false): void => {
+  const clearMotionTimers = useCallback((includePageMount = false): void => {
     if (motionFrameRef.current !== undefined) {
       window.cancelAnimationFrame(motionFrameRef.current);
       motionFrameRef.current = undefined;
@@ -817,11 +858,39 @@ export const WorkspacePaneHost = forwardRef<
       window.clearTimeout(motionTimerRef.current);
       motionTimerRef.current = undefined;
     }
-    if (includePaneEntry && paneEntryTimerRef.current !== undefined) {
-      window.clearTimeout(paneEntryTimerRef.current);
-      paneEntryTimerRef.current = undefined;
+    if (includePageMount && pageMountFrameRef.current !== undefined) {
+      window.cancelAnimationFrame(pageMountFrameRef.current);
+      pageMountFrameRef.current = undefined;
     }
+    motionResolveRef.current?.();
+    motionResolveRef.current = undefined;
   }, []);
+
+  const captureContentBounds = useCallback(
+    (excludedPaneIds: ReadonlySet<string> = new Set()) => {
+      const bounds = new Map<string, WorkspaceContentBounds>();
+      for (const pane of hostRef.current?.querySelectorAll<HTMLElement>(
+        '.workspace-pane[data-pane-id]',
+      ) ?? []) {
+        const paneId = pane.dataset.paneId;
+        const content = pane.querySelector<HTMLElement>(
+          ':scope > .workspace-pane__content',
+        );
+        if (!paneId || excludedPaneIds.has(paneId) || !content) {
+          continue;
+        }
+        const rect = content.getBoundingClientRect();
+        if (rect.width > 0 && rect.height > 0) {
+          bounds.set(paneId, {
+            height: rect.height,
+            width: rect.width,
+          });
+        }
+      }
+      return bounds;
+    },
+    [],
+  );
 
   const beginPaneExit = useCallback(
     (
@@ -835,13 +904,26 @@ export const WorkspacePaneHost = forwardRef<
       if (ratios.size === 0) {
         return Promise.resolve();
       }
-      clearMotionTimers();
+      clearMotionTimers(true);
+      const contentBounds = captureContentBounds(new Set(paneIds));
       // Arm the transitions a frame before anything moves. Panes whose box
       // changes in the very commit that enables the transition are only
       // sometimes picked up by the style engine, and the ones that miss out
       // snap to their new size.
-      setMotion({ durationMs, kind: 'exit', paneIds });
+      setMotion({
+        contentBounds,
+        durationMs,
+        kind: 'exit',
+        paneIds,
+      });
       return new Promise((resolve) => {
+        const finish = (): void => {
+          if (motionResolveRef.current === finish) {
+            motionResolveRef.current = undefined;
+          }
+          resolve();
+        };
+        motionResolveRef.current = finish;
         motionFrameRef.current = window.requestAnimationFrame(() => {
           motionFrameRef.current = undefined;
           setMotion((current) =>
@@ -855,11 +937,11 @@ export const WorkspacePaneHost = forwardRef<
               current?.kind === 'exit' ? undefined : current,
             );
           }, durationMs + PANE_MOTION_RELEASE_MS);
-          window.setTimeout(resolve, durationMs + PANE_MOTION_TAIL_MS);
+          window.setTimeout(finish, durationMs + PANE_MOTION_TAIL_MS);
         });
       });
     },
-    [clearMotionTimers, props.root],
+    [captureContentBounds, clearMotionTimers, props.root],
   );
 
   useImperativeHandle(
@@ -962,11 +1044,18 @@ export const WorkspacePaneHost = forwardRef<
     );
     const placement = findPaneEntryPlacement(props.root, enteringPaneId);
     if (!placement || workspaceMotionReduced()) {
+      clearMotionTimers(true);
       // Still before paint, so the collapsed frame is never shown.
-      queueMicrotask(() => setSettledPaneIds(settled));
+      queueMicrotask(() => {
+        setMotion(undefined);
+        setPaneEntry(undefined);
+        setSettledPaneIds(settled);
+        setMountedPaneIds(settled);
+      });
       return;
     }
     clearMotionTimers(true);
+    const contentBounds = captureContentBounds(new Set([enteringPaneId]));
     // The entering pane paints collapsed against the split edge, then the
     // transitions are armed, and only on the frame after that does the layout
     // settle — which is what turns the geometry change into a transition
@@ -974,6 +1063,7 @@ export const WorkspacePaneHost = forwardRef<
     motionFrameRef.current = window.requestAnimationFrame(() => {
       setPaneEntry({ paneId: enteringPaneId, placement });
       setMotion({
+        contentBounds,
         durationMs: PANE_ENTRY_DURATION_MS,
         kind: 'entry',
         paneIds: [enteringPaneId],
@@ -987,10 +1077,79 @@ export const WorkspacePaneHost = forwardRef<
             current?.kind === 'entry' ? undefined : current,
           );
           setPaneEntry(undefined);
+          pageMountFrameRef.current = window.requestAnimationFrame(() => {
+            pageMountFrameRef.current = undefined;
+            setMountedPaneIds((current) => {
+              const next = new Set(
+                [...current].filter((paneId) => settled.has(paneId)),
+              );
+              next.add(enteringPaneId);
+              return next;
+            });
+          });
         }, PANE_ENTRY_DURATION_MS + PANE_MOTION_TAIL_MS);
       });
     });
-  }, [clearMotionTimers, enteringPaneId, paneIdsKey, props.root]);
+  }, [
+    captureContentBounds,
+    clearMotionTimers,
+    enteringPaneId,
+    paneIdsKey,
+    props.root,
+  ]);
+
+  useLayoutEffect(() => {
+    if (!mountWorkspaceImmediately) {
+      return;
+    }
+    clearMotionTimers(true);
+    const currentPaneIds = new Set(
+      paneIdsKey ? paneIdsKey.split('\u0000') : [],
+    );
+    queueMicrotask(() => {
+      setMotion(undefined);
+      setPaneEntry(undefined);
+      setSettledPaneIds(currentPaneIds);
+      setMountedPaneIds(currentPaneIds);
+    });
+  }, [
+    clearMotionTimers,
+    mountWorkspaceImmediately,
+    paneIdsKey,
+    unsettledPaneIdsKey,
+  ]);
+
+  useLayoutEffect(() => {
+    if (
+      activeMotion ||
+      enteringPaneId ||
+      mountWorkspaceImmediately ||
+      !unmountedPaneIdsKey ||
+      pageMountFrameRef.current !== undefined
+    ) {
+      return;
+    }
+    const currentPaneIds = new Set(
+      paneIdsKey ? paneIdsKey.split('\u0000') : [],
+    );
+    const frameId = window.requestAnimationFrame(() => {
+      pageMountFrameRef.current = undefined;
+      setMountedPaneIds(currentPaneIds);
+    });
+    pageMountFrameRef.current = frameId;
+    return () => {
+      if (pageMountFrameRef.current === frameId) {
+        window.cancelAnimationFrame(frameId);
+        pageMountFrameRef.current = undefined;
+      }
+    };
+  }, [
+    activeMotion,
+    enteringPaneId,
+    mountWorkspaceImmediately,
+    paneIdsKey,
+    unmountedPaneIdsKey,
+  ]);
 
   useLayoutEffect(() => {
     const currentPanes = collectPanes(props.root);
@@ -1212,6 +1371,7 @@ export const WorkspacePaneHost = forwardRef<
         entry.kind === 'pane' ? (
           <PaneLeaf
             {...props}
+            contentBounds={activeMotion?.contentBounds.get(entry.node.paneId)}
             entryPlacement={
               paneEntry?.paneId === entry.node.paneId
                 ? paneEntry.placement
@@ -1224,6 +1384,10 @@ export const WorkspacePaneHost = forwardRef<
             }
             key={entry.node.paneId}
             layout={entry}
+            pageMounted={
+              mountWorkspaceImmediately ||
+              mountedPaneIds.has(entry.node.paneId)
+            }
             paneCount={paneCount}
             tabBars={tabBars}
           />

@@ -22,7 +22,11 @@ import {
   type SourceLineAction,
   type SourceMenuRequest,
 } from './source-context-actions';
-import { writeSelection, type SourceSelection } from './source-caret';
+import {
+  focusSource,
+  writeSelection,
+  type SourceSelection,
+} from './source-caret';
 import { PERSONAL_DICTIONARY_CHANGED_EVENT } from './source-spellcheck';
 
 interface UseMarkdownSourceMenuOptions {
@@ -79,8 +83,8 @@ export function useMarkdownSourceMenu({
 
   function restoreSelection(selection: SourceSelection): HTMLDivElement | undefined {
     const editor = editorRef.current ?? undefined;
-    editor?.focus({ preventScroll: true });
     if (editor) {
+      focusSource(editor, { preventScroll: true });
       writeSelection(editor, selection);
     }
     return editor;
@@ -163,11 +167,19 @@ export function useMarkdownSourceMenu({
         return;
       case SOURCE_MENU_ACTION.undo:
         controller.undo(nodeId, viewId);
-        requestAnimationFrame(() => editorRef.current?.focus());
+        requestAnimationFrame(() => {
+          if (editorRef.current) {
+            focusSource(editorRef.current);
+          }
+        });
         return;
       case SOURCE_MENU_ACTION.redo:
         controller.redo(nodeId, viewId);
-        requestAnimationFrame(() => editorRef.current?.focus());
+        requestAnimationFrame(() => {
+          if (editorRef.current) {
+            focusSource(editorRef.current);
+          }
+        });
         return;
       case SOURCE_MENU_ACTION.cut:
         executeNativeEdit(APPLICATION_MENU_COMMANDS.cut, context.selection);

@@ -1,14 +1,19 @@
 // @vitest-environment jsdom
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { highlightSource } from '../../src/renderer/projects/markdown-highlight';
 import {
+  focusSource,
   readSelection,
   readSource,
+  registerSourceCaretAdapter,
   replaceRange,
+  sourceCaretRect,
+  sourceOffsetAtPoint,
   writeSelection,
 } from '../../src/renderer/projects/source-caret';
+import { reconcileSource } from '../../src/renderer/projects/source-renderer';
 
 function mount(source: string): HTMLDivElement {
   const root = document.createElement('div');
@@ -17,11 +22,58 @@ function mount(source: string): HTMLDivElement {
   return root;
 }
 
+function mountReconciled(source: string): HTMLDivElement {
+  const root = document.createElement('div');
+  reconcileSource(root, source);
+  document.body.append(root);
+  return root;
+}
+
 afterEach(() => {
+  vi.restoreAllMocks();
   document.body.replaceChildren();
 });
 
 describe('rich source caret mapping', () => {
+  it('routes caret operations through an optional surface adapter', () => {
+    const root = mount('fallback');
+    const write = vi.fn();
+    const focus = vi.fn();
+    const rect = new DOMRect(1, 2, 3, 4);
+    const unregister = registerSourceCaretAdapter(root, {
+      focus,
+      readSelection: () => ({
+        start: 2,
+        end: 5,
+        direction: 'forward',
+      }),
+      readSource: () => 'virtual source',
+      sourceCaretRect: () => rect,
+      sourceOffsetAtPoint: () => 7,
+      writeSelection: write,
+    });
+
+    expect(readSource(root)).toBe('virtual source');
+    expect(readSelection(root)).toEqual({
+      start: 2,
+      end: 5,
+      direction: 'forward',
+    });
+    expect(sourceOffsetAtPoint(root, 10, 20)).toBe(7);
+    expect(sourceCaretRect(root, 3)).toBe(rect);
+    writeSelection(root, 5, 2);
+    expect(write).toHaveBeenCalledWith({
+      start: 2,
+      end: 5,
+      direction: 'backward',
+    });
+    focusSource(root, { preventScroll: true });
+    expect(focus).toHaveBeenCalledWith({ preventScroll: true });
+
+    unregister();
+    expect(readSource(root)).toBe('fallback');
+  });
+
   it('reads back the exact source from the rendered lines', () => {
     const source = '# Hi there\n\n- [ ] task\n**bold** and `code`';
 
@@ -149,6 +201,49 @@ describe('rich source caret mapping', () => {
       end: 3,
       direction: 'none',
     });
+  });
+
+  it('ignores decoration text when writing a modeled selection', () => {
+    const root = mountReconciled('abc');
+    const content = root.querySelector('.md-line__content')!;
+    content.innerHTML =
+      'a<span data-md-decoration>transient</span>bc';
+
+    writeSelection(root, 2);
+
+    expect(readSelection(root)).toEqual({
+      start: 2,
+      end: 2,
+      direction: 'none',
+    });
+    expect(document.getSelection()?.focusNode?.textContent).toBe('bc');
+    expect(document.getSelection()?.focusOffset).toBe(1);
+  });
+
+  it('maps a modeled multi-thousand-line selection without materializing every row', () => {
+    const source = Array.from(
+      { length: 2_000 },
+      (_, index) => `line ${index}`,
+    ).join('\n');
+    const root = mountReconciled(source);
+    const rootChildNodes = root.childNodes;
+    const arrayFrom = vi.spyOn(Array, 'from');
+    const target = source.length - 4;
+
+    writeSelection(root, {
+      start: target - 3,
+      end: target,
+      direction: 'backward',
+    });
+    expect(readSelection(root)).toEqual({
+      start: target - 3,
+      end: target,
+      direction: 'backward',
+    });
+
+    expect(
+      arrayFrom.mock.calls.some(([value]) => value === rootChildNodes),
+    ).toBe(false);
   });
 
   it('maps a caret after a transient internal br', () => {

@@ -1,9 +1,15 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import { renderMarkdownInto } from '../../src/renderer/projects/markdown-render';
-import { serializeImageDirective } from '../../src/shared/markdown';
+import {
+  renderMarkdownInto,
+  renderMarkdownIntoCooperatively,
+} from '../../src/renderer/projects/markdown-render';
+import {
+  serializeImageDirective,
+  serializeMediaDirective,
+} from '../../src/shared/markdown';
 
 function render(source: string): HTMLDivElement {
   const container = document.createElement('div');
@@ -12,6 +18,379 @@ function render(source: string): HTMLDivElement {
 }
 
 describe('markdown DOM renderer', () => {
+  it('builds a large preview cooperatively and publishes it once complete', async () => {
+    const source = Array.from(
+      { length: 500 },
+      (_, index) => `## Section ${index}\n\nParagraph **${index}**`,
+    ).join('\n\n');
+    const container = render('stable');
+    const completed = await renderMarkdownIntoCooperatively(container, source, {
+      sliceMs: 2,
+    });
+
+    expect(completed).toBe(true);
+    expect(container.querySelectorAll('h2')).toHaveLength(500);
+    expect(container.textContent).toContain('Paragraph 499');
+  });
+
+  it('repairs externally changed children even when the source is unchanged', async () => {
+    const container = render('# Stable');
+    container.replaceChildren(document.createTextNode('external mutation'));
+
+    const completed = await renderMarkdownIntoCooperatively(
+      container,
+      '# Stable',
+    );
+
+    expect(completed).toBe(true);
+    expect(container.querySelector('h1')?.textContent).toBe('Stable');
+  });
+
+  it('keeps the published preview stable when cooperative work is cancelled', async () => {
+    const container = render('stable');
+    const completed = await renderMarkdownIntoCooperatively(
+      container,
+      'replacement',
+      { cancelled: () => true },
+    );
+
+    expect(completed).toBe(false);
+    expect(container.textContent).toBe('stable');
+  });
+
+  it('does not mutate the published preview when work is cancelled after a yield', async () => {
+    const frames: FrameRequestCallback[] = [];
+    let now = 0;
+    let cancelled = false;
+    const nowSpy = vi
+      .spyOn(performance, 'now')
+      .mockImplementation(() => (now += 3));
+    const frameSpy = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback) => {
+        frames.push(callback);
+        return frames.length;
+      });
+    const container = render('stable');
+
+    try {
+      const completion = renderMarkdownIntoCooperatively(
+        container,
+        Array.from(
+          { length: 100 },
+          (_, index) => `## Section ${index}\n\nParagraph ${index}`,
+        ).join('\n\n'),
+        {
+          cancelled: () => cancelled,
+          sliceMs: 2,
+        },
+      );
+
+      expect(frames).toHaveLength(1);
+      expect(container.textContent).toBe('stable');
+      cancelled = true;
+      frames.shift()!(now);
+
+      await expect(completion).resolves.toBe(false);
+      expect(container.textContent).toBe('stable');
+    } finally {
+      frameSpy.mockRestore();
+      nowSpy.mockRestore();
+    }
+  });
+
+  it('reuses unchanged DOM around a cooperative block update', async () => {
+    const media = serializeMediaDirective({
+      version: 1,
+      id: '323e4567-e89b-42d3-a456-426614174002',
+      path: 'Media/clip.mp4',
+      description: 'Clipe',
+      placement: 'block',
+      span: 8,
+      offset: 2,
+      fit: 'contain',
+      ratio: 16 / 9,
+      lock: false,
+      caption: true,
+    });
+    const prefixSource = '😀 [Link](https://example.com)';
+    const imageSource = '![Cover](https://example.com/cover.png)';
+    const container = render(
+      [prefixSource, 'before', imageSource, media].join('\n\n'),
+    );
+    container.scrollLeft = 7;
+    container.scrollTop = 180;
+    const [prefix, changed, imageBlock, mediaBlock] = [...container.children];
+    const link = prefix!.querySelector('a');
+    const twemoji = prefix!.querySelector('.twemoji');
+    const image = imageBlock!.querySelector('img');
+    const mediaElement = mediaBlock!.querySelector('.markdown-media__content');
+
+    const completed = await renderMarkdownIntoCooperatively(
+      container,
+      [prefixSource, 'after', imageSource, media].join('\n\n'),
+      { sliceMs: 2 },
+    );
+
+    expect(completed).toBe(true);
+    expect(container.children[0]).toBe(prefix);
+    expect(container.children[1]).not.toBe(changed);
+    expect(container.children[2]).toBe(imageBlock);
+    expect(container.children[3]).toBe(mediaBlock);
+    expect(container.querySelector('a')).toBe(link);
+    expect(container.querySelector('.twemoji')).toBe(twemoji);
+    expect(container.querySelector('img[alt="Cover"]')).toBe(image);
+    expect(container.querySelector('.markdown-media__content')).toBe(
+      mediaElement,
+    );
+    expect(container.scrollLeft).toBe(7);
+    expect(container.scrollTop).toBe(180);
+    expect(container.children[1]?.textContent).toBe('after');
+  });
+
+  it('updates reused heading metadata after a cooperative heading edit', async () => {
+    const container = render('# Same\n\n## Child\n\n# Same');
+    const child = container.children[1] as HTMLElement;
+    const repeated = container.children[2] as HTMLElement;
+
+    await renderMarkdownIntoCooperatively(
+      container,
+      '# Other\n\n## Child\n\n# Same',
+      { sliceMs: 2 },
+    );
+
+    expect(container.children[1]).toBe(child);
+    expect(container.children[2]).toBe(repeated);
+    expect(child.dataset.markdownHeadingPath).toBe('["Other","Child"]');
+    expect(repeated.id).toBe('same');
+  });
+
+  it('does not change reused heading metadata if reconciliation is cancelled', async () => {
+    const frames: FrameRequestCallback[] = [];
+    let cancelled = false;
+    let nowCalls = 0;
+    const nowSpy = vi.spyOn(performance, 'now').mockImplementation(() => {
+      nowCalls += 1;
+      return nowCalls <= 5 ? 0 : 3;
+    });
+    const frameSpy = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback) => {
+        frames.push(callback);
+        return frames.length;
+      });
+    const container = render('# Same\n\n# Same\n\nTail');
+    const children = [...container.children];
+    const repeated = children[1] as HTMLElement;
+
+    try {
+      const completion = renderMarkdownIntoCooperatively(
+        container,
+        '# Other\n\n# Same\n\nTail',
+        {
+          cancelled: () => cancelled,
+          sliceMs: 2,
+        },
+      );
+
+      for (let index = 0; index < 8 && frames.length === 0; index += 1) {
+        await Promise.resolve();
+      }
+      expect(frames).toHaveLength(1);
+      expect([...container.children]).toEqual(children);
+      expect(repeated.id).toBe('same-2');
+
+      cancelled = true;
+      frames.shift()!(3);
+
+      await expect(completion).resolves.toBe(false);
+      expect([...container.children]).toEqual(children);
+      expect(repeated.id).toBe('same-2');
+      expect(repeated.dataset.markdownHeadingPath).toBe('["Same"]');
+    } finally {
+      frameSpy.mockRestore();
+      nowSpy.mockRestore();
+    }
+  });
+
+  it('renders one giant paragraph cooperatively with identical inline markup', async () => {
+    const source = Array.from(
+      { length: 1_000 },
+      (_, index) =>
+        `line ${index} **bold** [link](https://example.com/${index}) ${'x'.repeat(48)}`,
+    ).join('\n');
+    const synchronous = document.createElement('div');
+    const cooperative = document.createElement('div');
+    const frameSpy = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback) =>
+        window.setTimeout(() => callback(performance.now()), 0),
+      );
+
+    try {
+      renderMarkdownInto(synchronous, source);
+      await expect(
+        renderMarkdownIntoCooperatively(cooperative, source, {
+          sliceMs: 2,
+        }),
+      ).resolves.toBe(true);
+
+      expect(cooperative.innerHTML).toBe(synchronous.innerHTML);
+      expect(cooperative.children).toHaveLength(1);
+      expect(cooperative.querySelectorAll('br')).toHaveLength(999);
+      expect(frameSpy).toHaveBeenCalled();
+    } finally {
+      frameSpy.mockRestore();
+    }
+  });
+
+  it('preserves complete emoji sequences in one giant inline text node', async () => {
+    const source = `${'👨‍👩‍👧‍👦'.repeat(120)}${'a'.repeat(65_000)}`;
+    const synchronous = document.createElement('div');
+    const cooperative = document.createElement('div');
+    const frameSpy = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback) =>
+        window.setTimeout(() => callback(performance.now()), 0),
+      );
+
+    try {
+      renderMarkdownInto(synchronous, source);
+      await expect(
+        renderMarkdownIntoCooperatively(cooperative, source, {
+          sliceMs: 2,
+        }),
+      ).resolves.toBe(true);
+
+      expect(cooperative.innerHTML).toBe(synchronous.innerHTML);
+      expect(cooperative.querySelectorAll('.twemoji')).toHaveLength(120);
+    } finally {
+      frameSpy.mockRestore();
+    }
+  });
+
+  it('cancels a giant single-list build without publishing partial items', async () => {
+    const source = Array.from(
+      { length: 600 },
+      (_, index) => `- item ${index} ${'x'.repeat(112)}`,
+    ).join('\n');
+    const container = render('stable');
+    const published = container.firstChild;
+    const createElementSpy = vi.spyOn(document, 'createElement');
+    const frameSpy = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback) =>
+        window.setTimeout(() => callback(performance.now()), 0),
+      );
+
+    try {
+      const completed = await renderMarkdownIntoCooperatively(
+        container,
+        source,
+        {
+          cancelled: () =>
+            createElementSpy.mock.calls.filter(
+              ([tagName]) => String(tagName) === 'li',
+            ).length >= 50,
+          sliceMs: 2,
+        },
+      );
+
+      expect(completed).toBe(false);
+      expect(container.firstChild).toBe(published);
+      expect(container.textContent).toBe('stable');
+      expect(container.querySelector('li')).toBeNull();
+    } finally {
+      frameSpy.mockRestore();
+      createElementSpy.mockRestore();
+    }
+  });
+
+  it('publishes a cooperative render as one child-list mutation', async () => {
+    const container = render('stable');
+    const mutations: MutationRecord[] = [];
+    const observer = new MutationObserver((records) => {
+      mutations.push(...records);
+    });
+    observer.observe(container, { childList: true });
+
+    await renderMarkdownIntoCooperatively(
+      container,
+      '# Replacement\n\nFirst\n\nSecond',
+    );
+    await Promise.resolve();
+    observer.disconnect();
+
+    expect(
+      mutations.filter((mutation) => mutation.type === 'childList'),
+    ).toHaveLength(1);
+    expect(container.textContent).toContain('Replacement');
+  });
+
+  it('matches the synchronous renderer for headings, links and project media', async () => {
+    const projectId = 'cdb39a1a-0339-4c75-91ea-78fbbcb2f97a';
+    const image = serializeImageDirective({
+      version: 2,
+      instanceId: '223e4567-e89b-42d3-a456-426614174001',
+      assetId: '123e4567-e89b-42d3-a456-426614174000',
+      path: 'Media/Lua.png',
+      alt: 'Lua',
+      mode: 'block',
+      align: 'center',
+      width: 640,
+      height: 360,
+      minWidth: 96,
+      maxWidth: 1200,
+      margin: 8,
+      ratioLock: true,
+      positionLock: false,
+      caption: 'Legenda 😀',
+    });
+    const media = serializeMediaDirective({
+      version: 1,
+      id: '323e4567-e89b-42d3-a456-426614174002',
+      path: 'Media/clip.mp4',
+      description: 'Clipe',
+      placement: 'block',
+      span: 8,
+      offset: 2,
+      fit: 'contain',
+      ratio: 16 / 9,
+      lock: false,
+      caption: true,
+    });
+    const source = [
+      '# Repeated',
+      '## Child',
+      '# Repeated',
+      '[External](https://example.com) [Internal](Folder/Note.md#Parent#Child)',
+      image,
+      media,
+    ].join('\n\n');
+    const synchronous = document.createElement('div');
+    const cooperative = document.createElement('div');
+
+    renderMarkdownInto(synchronous, source, { projectId });
+    await renderMarkdownIntoCooperatively(cooperative, source, {
+      projectId,
+      sliceMs: 2,
+    });
+
+    expect(cooperative.innerHTML).toBe(synchronous.innerHTML);
+    expect(
+      [...cooperative.querySelectorAll('h1')].map((heading) => heading.id),
+    ).toEqual(['repeated', 'repeated-2']);
+    expect(
+      cooperative.querySelector<HTMLAnchorElement>(
+        '[data-markdown-internal-path]',
+      )?.dataset.markdownInternalHeadings,
+    ).toBe(JSON.stringify(['Parent', 'Child']));
+    expect(
+      cooperative.querySelector<HTMLMediaElement>('.markdown-media__content')
+        ?.src,
+    ).toContain(`${projectId}/323e4567-e89b-42d3-a456-426614174002`);
+  });
+
   it('renders a v2 inline image between visible words', () => {
     const directive = serializeImageDirective({
       version: 2,
@@ -32,9 +411,11 @@ describe('markdown DOM renderer', () => {
     });
     const paragraph = render(`antes ${directive} depois`).querySelector('p')!;
     expect(paragraph.childNodes[0]?.textContent).toBe('antes ');
-    expect(paragraph.querySelector('.markdown-image--inline img')?.getAttribute('alt')).toBe(
-      'Lua',
-    );
+    expect(
+      paragraph
+        .querySelector('.markdown-image--inline img')
+        ?.getAttribute('alt'),
+    ).toBe('Lua');
     expect(paragraph.lastChild?.textContent).toBe(' depois');
   });
 

@@ -1,4 +1,8 @@
 import type { SourceSelection } from './source-caret';
+import {
+  isSourceTextChangeApplicable,
+  type SourceTextChange,
+} from './source-change';
 
 export interface SourceEditorState {
   content: string;
@@ -8,6 +12,7 @@ export interface SourceEditorState {
 export interface SourceEditTransaction {
   after: SourceEditorState;
   before: SourceEditorState;
+  change?: SourceTextChange;
   inputType: string;
   timestamp: number;
 }
@@ -44,6 +49,22 @@ function entryBytes(entry: HistoryEntry): number {
 function deriveEntry(transaction: SourceEditTransaction): HistoryEntry | undefined {
   const before = transaction.before.content;
   const after = transaction.after.content;
+  const change = transaction.change;
+  if (change && isSourceTextChangeApplicable(before, after, change)) {
+    const deleted = before.slice(change.from, change.to);
+    if (deleted === change.insert) {
+      return undefined;
+    }
+    return {
+      afterSelection: transaction.after.selection,
+      beforeSelection: transaction.before.selection,
+      deleted,
+      inputType: transaction.inputType,
+      inserted: change.insert,
+      start: change.from,
+      timestamp: transaction.timestamp,
+    };
+  }
   if (before === after) {
     return undefined;
   }
@@ -182,16 +203,13 @@ function applyEntry(
 }
 
 class DocumentHistory {
-  private readonly undoStack: HistoryEntry[] = [];
-  private readonly redoStack: HistoryEntry[] = [];
+  private readonly undoStack = new HistoryEntryStack();
+  private readonly redoStack = new HistoryEntryStack();
   lastUsed = 0;
   private mergeBarrier = false;
 
   get bytes(): number {
-    return [...this.undoStack, ...this.redoStack].reduce(
-      (total, entry) => total + entryBytes(entry),
-      0,
-    );
+    return this.undoStack.bytes + this.redoStack.bytes;
   }
 
   get canUndo(): boolean {
@@ -208,20 +226,20 @@ class DocumentHistory {
       return;
     }
 
-    const previous = this.undoStack.at(-1);
+    const previous = this.undoStack.last;
     const merged = previous && !this.mergeBarrier
       ? mergeEntries(previous, entry)
       : undefined;
     if (merged) {
-      this.undoStack[this.undoStack.length - 1] = merged;
+      this.undoStack.replaceLast(merged);
     } else {
       this.undoStack.push(entry);
       if (this.undoStack.length > MAX_ENTRIES_PER_DOCUMENT) {
-        this.undoStack.shift();
+        this.undoStack.discardOldest();
       }
     }
     this.mergeBarrier = false;
-    this.redoStack.length = 0;
+    this.redoStack.clear();
   }
 
   breakCoalescing(): void {
@@ -229,7 +247,7 @@ class DocumentHistory {
   }
 
   undo(state: SourceEditorState): SourceEditorState | undefined {
-    const entry = this.undoStack.at(-1);
+    const entry = this.undoStack.last;
     if (!entry) {
       return undefined;
     }
@@ -244,7 +262,7 @@ class DocumentHistory {
   }
 
   redo(state: SourceEditorState): SourceEditorState | undefined {
-    const entry = this.redoStack.at(-1);
+    const entry = this.redoStack.last;
     if (!entry) {
       return undefined;
     }
@@ -258,34 +276,136 @@ class DocumentHistory {
     return next;
   }
 
-  discardOldest(): boolean {
-    if (this.undoStack.length > 0) {
-      this.undoStack.shift();
-      return true;
+  discardOldest(): number {
+    const undo = this.undoStack.discardOldest();
+    if (undo) {
+      return entryBytes(undo);
     }
-    if (this.redoStack.length > 0) {
-      this.redoStack.shift();
-      return true;
+    const redo = this.redoStack.discardOldest();
+    if (redo) {
+      return entryBytes(redo);
     }
-    return false;
+    return 0;
   }
 
   clear(): void {
-    this.undoStack.length = 0;
-    this.redoStack.length = 0;
+    this.undoStack.clear();
+    this.redoStack.clear();
     this.mergeBarrier = false;
+  }
+}
+
+class HistoryEntryStack {
+  private byteCount = 0;
+  private count = 0;
+  private entries: (HistoryEntry | undefined)[] = [];
+  private start = 0;
+
+  get bytes(): number {
+    return this.byteCount;
+  }
+
+  get last(): HistoryEntry | undefined {
+    return this.count === 0
+      ? undefined
+      : this.entries[
+          (this.start + this.count - 1) % this.entries.length
+        ];
+  }
+
+  get length(): number {
+    return this.count;
+  }
+
+  push(entry: HistoryEntry): void {
+    this.ensureCapacity();
+    this.entries[
+      (this.start + this.count) % this.entries.length
+    ] = entry;
+    this.count += 1;
+    this.byteCount += entryBytes(entry);
+  }
+
+  pop(): HistoryEntry | undefined {
+    if (this.count === 0) {
+      return undefined;
+    }
+    const index =
+      (this.start + this.count - 1) % this.entries.length;
+    const entry = this.entries[index];
+    this.entries[index] = undefined;
+    if (entry) {
+      this.byteCount -= entryBytes(entry);
+    }
+    this.count -= 1;
+    if (this.count === 0) {
+      this.start = 0;
+    }
+    return entry;
+  }
+
+  replaceLast(entry: HistoryEntry): void {
+    if (this.count > 0) {
+      const index =
+        (this.start + this.count - 1) % this.entries.length;
+      this.byteCount +=
+        entryBytes(entry) - entryBytes(this.entries[index]!);
+      this.entries[index] = entry;
+    }
+  }
+
+  discardOldest(): HistoryEntry | undefined {
+    const entry = this.entries[this.start];
+    if (this.count === 0 || !entry) {
+      return undefined;
+    }
+    this.entries[this.start] = undefined;
+    this.count -= 1;
+    this.byteCount -= entryBytes(entry);
+    if (this.count === 0) {
+      this.start = 0;
+    } else {
+      this.start = (this.start + 1) % this.entries.length;
+    }
+    return entry;
+  }
+
+  clear(): void {
+    this.entries = [];
+    this.count = 0;
+    this.start = 0;
+    this.byteCount = 0;
+  }
+
+  private ensureCapacity(): void {
+    if (this.count < this.entries.length) {
+      return;
+    }
+    const previous = this.entries;
+    const next = new Array<HistoryEntry | undefined>(
+      Math.max(16, previous.length * 2),
+    );
+    for (let index = 0; index < this.count; index += 1) {
+      next[index] =
+        previous[(this.start + index) % previous.length];
+    }
+    this.entries = next;
+    this.start = 0;
   }
 }
 
 export class MarkdownHistoryStore {
   private readonly documents = new Map<string, DocumentHistory>();
   private clock = 0;
+  private totalByteCount = 0;
 
   constructor(private readonly maxBytes = DEFAULT_HISTORY_BYTES) {}
 
   record(nodeId: string, transaction: SourceEditTransaction): void {
     const history = this.get(nodeId);
+    const previousBytes = history.bytes;
     history.record(transaction);
+    this.totalByteCount += history.bytes - previousBytes;
     this.touch(history);
     this.trim();
   }
@@ -296,7 +416,10 @@ export class MarkdownHistoryStore {
       return undefined;
     }
     this.touch(history);
-    return history.undo(state);
+    const previousBytes = history.bytes;
+    const next = history.undo(state);
+    this.totalByteCount += history.bytes - previousBytes;
+    return next;
   }
 
   redo(nodeId: string, state: SourceEditorState): SourceEditorState | undefined {
@@ -305,7 +428,10 @@ export class MarkdownHistoryStore {
       return undefined;
     }
     this.touch(history);
-    return history.redo(state);
+    const previousBytes = history.bytes;
+    const next = history.redo(state);
+    this.totalByteCount += history.bytes - previousBytes;
+    return next;
   }
 
   canUndo(nodeId: string): boolean {
@@ -321,11 +447,16 @@ export class MarkdownHistoryStore {
   }
 
   reset(nodeId: string): void {
-    this.documents.get(nodeId)?.clear();
+    const history = this.documents.get(nodeId);
+    if (history) {
+      this.totalByteCount -= history.bytes;
+      history.clear();
+    }
   }
 
   clear(): void {
     this.documents.clear();
+    this.totalByteCount = 0;
   }
 
   private get(nodeId: string): DocumentHistory {
@@ -344,22 +475,21 @@ export class MarkdownHistoryStore {
   }
 
   private trim(): void {
-    let bytes = this.totalBytes();
-    while (bytes > this.maxBytes) {
-      const oldest = [...this.documents.values()]
-        .filter((history) => history.bytes > 0)
-        .sort((left, right) => left.lastUsed - right.lastUsed)[0];
-      if (!oldest?.discardOldest()) {
+    while (this.totalByteCount > this.maxBytes) {
+      let oldest: DocumentHistory | undefined;
+      for (const history of this.documents.values()) {
+        if (
+          history.bytes > 0 &&
+          (!oldest || history.lastUsed < oldest.lastUsed)
+        ) {
+          oldest = history;
+        }
+      }
+      const discardedBytes = oldest?.discardOldest() ?? 0;
+      if (discardedBytes === 0) {
         return;
       }
-      bytes = this.totalBytes();
+      this.totalByteCount -= discardedBytes;
     }
-  }
-
-  private totalBytes(): number {
-    return [...this.documents.values()].reduce(
-      (total, history) => total + history.bytes,
-      0,
-    );
   }
 }

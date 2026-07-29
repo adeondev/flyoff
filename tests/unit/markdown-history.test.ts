@@ -49,6 +49,87 @@ describe('MarkdownHistoryStore', () => {
     ).toEqual({ content: 'ab', selection: selection(2) });
   });
 
+  it('records and coalesces exact localized changes', () => {
+    const prefix = 'x'.repeat(200_000);
+    const history = new MarkdownHistoryStore();
+    history.record('note', {
+      ...transaction(
+        prefix,
+        `${prefix}a`,
+        selection(prefix.length),
+        selection(prefix.length + 1),
+      ),
+      change: {
+        from: prefix.length,
+        insert: 'a',
+        to: prefix.length,
+      },
+    });
+    history.record('note', {
+      ...transaction(
+        `${prefix}a`,
+        `${prefix}ab`,
+        selection(prefix.length + 1),
+        selection(prefix.length + 2),
+        'insertText',
+        100,
+      ),
+      change: {
+        from: prefix.length + 1,
+        insert: 'b',
+        to: prefix.length + 1,
+      },
+    });
+
+    expect(
+      history.undo('note', {
+        content: `${prefix}ab`,
+        selection: selection(prefix.length + 2),
+      }),
+    ).toEqual({
+      content: prefix,
+      selection: selection(prefix.length),
+    });
+  });
+
+  it('ignores an exact replacement that leaves the source unchanged', () => {
+    const history = new MarkdownHistoryStore();
+    history.record('note', {
+      ...transaction(
+        'same',
+        'same',
+        selection(1),
+        selection(2),
+      ),
+      change: { from: 1, insert: 'a', to: 2 },
+    });
+
+    expect(history.canUndo('note')).toBe(false);
+  });
+
+  it('falls back to deriving the entry when a localized change is invalid', () => {
+    const history = new MarkdownHistoryStore();
+    history.record('note', {
+      ...transaction(
+        'before',
+        'after',
+        selection(0),
+        selection(5),
+      ),
+      change: { from: 0, insert: 'wrong', to: 6 },
+    });
+
+    expect(
+      history.undo('note', {
+        content: 'after',
+        selection: selection(5),
+      }),
+    ).toEqual({
+      content: 'before',
+      selection: selection(0),
+    });
+  });
+
   it('coalesces typing that continues inside newly inserted markup', () => {
     const history = new MarkdownHistoryStore();
     history.record(

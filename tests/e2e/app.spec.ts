@@ -2117,12 +2117,6 @@ test.describe('Flyoff desktop shell', () => {
 
     await activePaneMenu().click();
     await menuItem('split-right').click();
-    await expect(
-      page.locator('.workspace-pane[data-pane-entry="row-end"]'),
-    ).toHaveCount(1);
-    await expect(
-      page.locator('.workspace-pane-host[data-workspace-motion="entry"]'),
-    ).toHaveCount(1);
     const splitMotionHandle = await page.waitForFunction(() => {
       const panes = [
         ...document.querySelectorAll<HTMLElement>('.workspace-pane'),
@@ -2159,7 +2153,21 @@ test.describe('Flyoff desktop shell', () => {
       for (const transition of transitions) {
         transition.play();
       }
-      return { end, middle, start };
+      return {
+        end,
+        locked: Boolean(
+          document.querySelector(
+            '.workspace-pane__content[data-motion-locked]',
+          ),
+        ),
+        middle,
+        pageMounted: Boolean(
+          document.querySelector(
+            '.workspace-pane[data-pane-entry="row-end"] > .workspace-pane__content > .page-host',
+          ),
+        ),
+        start,
+      };
     });
     const splitMotion = await splitMotionHandle.jsonValue();
     await splitMotionHandle.dispose();
@@ -2167,6 +2175,17 @@ test.describe('Flyoff desktop shell', () => {
     expect(splitMotion!.middle.first).toBeGreaterThan(splitMotion!.end.first);
     expect(splitMotion!.start.second).toBeLessThan(splitMotion!.middle.second);
     expect(splitMotion!.middle.second).toBeLessThan(splitMotion!.end.second);
+    expect(splitMotion!.locked).toBe(true);
+    expect(splitMotion!.pageMounted).toBe(false);
+    await expect(
+      page.locator('.workspace-pane-host[data-workspace-motion]'),
+    ).toHaveCount(0);
+    await expect(
+      page.locator('.workspace-pane__content[data-motion-locked]'),
+    ).toHaveCount(0);
+    await expect(
+      page.locator('.workspace-pane--active > .workspace-pane__content > .page-host'),
+    ).toHaveCount(1);
     await expect(page.locator('.workspace-pane')).toHaveCount(2);
     await expect(
       page

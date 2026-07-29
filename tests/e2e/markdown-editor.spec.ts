@@ -135,14 +135,40 @@ async function stopApplication(app: ElectronApplication | undefined) {
 }
 
 async function sourceOf(editor: ReturnType<Page['locator']>): Promise<string> {
-  return editor.evaluate((root) =>
-    [...root.querySelectorAll(':scope > .md-line')]
+  return editor.evaluate((root, primaryModifier) => {
+    if (root.classList.contains('markdown-source__editor--virtual')) {
+      const proxy = root.querySelector<HTMLTextAreaElement>(
+        '.virtual-source__proxy',
+      );
+      if (!proxy) {
+        return '';
+      }
+      proxy.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          bubbles: true,
+          cancelable: true,
+          ctrlKey: primaryModifier === 'Control',
+          key: 'a',
+          metaKey: primaryModifier === 'Meta',
+        }),
+      );
+      const clipboardData = new DataTransfer();
+      proxy.dispatchEvent(
+        new ClipboardEvent('copy', {
+          bubbles: true,
+          cancelable: true,
+          clipboardData,
+        }),
+      );
+      return clipboardData.getData('text/plain');
+    }
+    return [...root.querySelectorAll(':scope > .md-line')]
       .map(
         (line) =>
           line.querySelector(':scope > .md-line__content')?.textContent ?? '',
       )
-      .join('\n'),
-  );
+      .join('\n');
+  }, process.platform === 'darwin' ? 'Meta' : 'Control');
 }
 
 async function sourceTextPoint(
@@ -203,6 +229,23 @@ async function addMarkdownNote(
   await expect(editor).toBeVisible();
   await expect(editor).toBeFocused();
   return editor;
+}
+
+async function pasteSource(
+  editor: ReturnType<Page['locator']>,
+  source: string,
+): Promise<void> {
+  await editor.evaluate((root, value) => {
+    const clipboardData = new DataTransfer();
+    clipboardData.setData('text/plain', value);
+    root.dispatchEvent(
+      new ClipboardEvent('paste', {
+        bubbles: true,
+        cancelable: true,
+        clipboardData,
+      }),
+    );
+  }, source);
 }
 
 test('stabilizes Markdown editing, history, gutters and note zoom', async () => {
@@ -1495,6 +1538,326 @@ test('drags an image block from its body with a live preview', async () => {
     await page.keyboard.press('Escape');
     await page.mouse.up();
     await expect(page.locator('.image-drag-ghost')).toHaveCount(0);
+  } finally {
+    await stopApplication(app);
+    await rm(userDataPath, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
+    await rm(projectParent, {
+      recursive: true,
+      force: true,
+      maxRetries: 5,
+      retryDelay: 100,
+    });
+  }
+});
+
+test('opens a second large note without blocking the pane transition', async () => {
+  test.setTimeout(90_000);
+  const appPath = locatePackagedAsar(repositoryRoot);
+  const userDataPath = await mkdtemp(
+    path.join(os.tmpdir(), 'flyoff-pane-performance-e2e-'),
+  );
+  const projectParent = await mkdtemp(
+    path.join(os.tmpdir(), 'flyoff-pane-performance-project-'),
+  );
+  const canonicalParent = await realpath(projectParent);
+  const projectName = 'Pane performance E2E';
+  const projectRoot = path.join(canonicalParent, projectName);
+  const firstName = 'Large left';
+  const secondName = 'Large right';
+  const largeSource = Array.from(
+    { length: 10_000 },
+    (_, index) =>
+      `## Section ${index + 1}\nLine ${index + 1} with **bold**, :purple[accent] and a [link](https://example.com/${index + 1}).`,
+  ).join('\n');
+  let app: ElectronApplication | undefined;
+
+  try {
+    app = await electron.launch({
+      args: [
+        appPath,
+        `--user-data-dir=${userDataPath}`,
+        ...(process.platform === 'linux' && process.env.CI
+          ? ['--no-sandbox']
+          : []),
+      ],
+      env: {
+        ...process.env,
+        FLYOFF_E2E: '1',
+        FLYOFF_E2E_PROJECT_CREATE_PARENT: canonicalParent,
+        FLYOFF_E2E_PROJECT_OPEN_ROOT: projectRoot,
+        FLYOFF_E2E_USER_DATA: userDataPath,
+      },
+    });
+    const page = await app.firstWindow();
+    await page.waitForLoadState('domcontentloaded');
+    await page.waitForFunction(() =>
+      ['pt-BR', 'en-US'].includes(document.documentElement.lang),
+    );
+    const labels = labelsFor(
+      await page.evaluate(() => document.documentElement.lang),
+    );
+
+    await page.getByRole('button', { name: labels.newProject }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog
+      .getByRole('textbox', { name: labels.projectName })
+      .fill(projectName);
+    await dialog.getByRole('button', { name: labels.chooseLocation }).click();
+    await expect(dialog.getByText(canonicalParent)).toBeVisible();
+    await dialog.getByRole('button', { name: labels.create }).click();
+
+    const leftEditor = await addMarkdownNote(page, labels, firstName);
+    await pasteSource(leftEditor, largeSource);
+    await expect.poll(() => sourceOf(leftEditor)).toBe(largeSource);
+    await expect(leftEditor).toHaveClass(/markdown-source__editor--virtual/);
+    expect(
+      await leftEditor.locator('.virtual-source__rows > .md-line').count(),
+    ).toBeLessThanOrEqual(96);
+    expect(await leftEditor.locator('*').count()).toBeLessThan(1_000);
+
+    const rightSource = `${largeSource}\nFinal line on the right`;
+    const rightEditor = await addMarkdownNote(page, labels, secondName);
+    await pasteSource(rightEditor, rightSource);
+    await expect.poll(() => sourceOf(rightEditor)).toBe(rightSource);
+    await expect(rightEditor).toHaveClass(/markdown-source__editor--virtual/);
+    expect(
+      await rightEditor.locator('.virtual-source__rows > .md-line').count(),
+    ).toBeLessThanOrEqual(96);
+    expect(await rightEditor.locator('*').count()).toBeLessThan(1_000);
+    await expect
+      .poll(() =>
+        readFile(path.join(projectRoot, `${secondName}.md`), 'utf8').catch(
+          () => '',
+        ),
+      )
+      .toBe(rightSource);
+
+    const rightTab = page.locator('.page-tab').filter({
+      has: page.getByRole('tab', { exact: true, name: secondName }),
+    });
+    await rightTab.locator('.page-tab__close').click();
+    await page.getByRole('tab', { exact: true, name: firstName }).click();
+    const mountedLeftEditor = page
+      .locator('.workspace-pane')
+      .filter({
+        has: page.getByRole('tab', { exact: true, name: firstName }),
+      })
+      .locator('.markdown-source__editor');
+    await expect(mountedLeftEditor).toBeVisible();
+    await mountedLeftEditor.evaluate((root) => {
+      root.scrollTop = root.scrollHeight * 0.4;
+      root.dispatchEvent(new Event('scroll', { bubbles: true }));
+    });
+    const topVisibleLine = (
+      editor: ReturnType<Page['locator']>,
+    ): Promise<number> =>
+      editor.evaluate((root) => {
+        const top = root.getBoundingClientRect().top;
+        const row = [...root.querySelectorAll<HTMLElement>('.md-line')].find(
+          (line) => line.getBoundingClientRect().bottom > top,
+        );
+        return Number(row?.dataset.line ?? 0);
+      });
+    await expect
+      .poll(() => topVisibleLine(mountedLeftEditor))
+      .toBeGreaterThan(1);
+    const leftLineBefore = await topVisibleLine(mountedLeftEditor);
+
+    await page.evaluate(() => {
+      const state = {
+        end: 0,
+        frameDurations: [] as number[],
+        lastFrame: 0,
+        lockedDuringMotion: false,
+        lockedViolation: false,
+        longTasks: [] as { duration: number; startTime: number }[],
+        pageMountedDuringMotion: false,
+        start: 0,
+      };
+      const runtime = window as typeof window & {
+        __flyoffPanePerformance?: {
+          mutationObserver: MutationObserver;
+          observer?: PerformanceObserver;
+          state: typeof state;
+        };
+      };
+      const host = document.querySelector('.workspace-pane-host');
+      const mutationObserver = new MutationObserver(() => {
+        const moving = host?.hasAttribute('data-workspace-motion') ?? false;
+        if (moving && state.start === 0) {
+          state.start = performance.now();
+          state.lockedDuringMotion = Boolean(
+            document.querySelector(
+              '.workspace-pane__content[data-motion-locked]',
+            ),
+          );
+          state.lockedViolation = !state.lockedDuringMotion;
+          state.pageMountedDuringMotion = Boolean(
+            document.querySelector(
+              '.workspace-pane[data-pane-entry] > .workspace-pane__content > .page-host',
+            ),
+          );
+          state.lastFrame = 0;
+          requestAnimationFrame(function sampleFrame(timestamp) {
+            if (state.end > 0) {
+              return;
+            }
+            if (host?.hasAttribute('data-workspace-motion')) {
+              state.lockedViolation ||= !document.querySelector(
+                '.workspace-pane__content[data-motion-locked]',
+              );
+              state.pageMountedDuringMotion ||= Boolean(
+                document.querySelector(
+                  '.workspace-pane[data-pane-entry] > .workspace-pane__content > .page-host',
+                ),
+              );
+            }
+            if (state.lastFrame > 0) {
+              state.frameDurations.push(timestamp - state.lastFrame);
+            }
+            state.lastFrame = timestamp;
+            requestAnimationFrame(sampleFrame);
+          });
+        } else if (!moving && state.start > 0 && state.end === 0) {
+          state.end = performance.now();
+          mutationObserver.disconnect();
+        }
+      });
+      mutationObserver.observe(host ?? document.body, {
+        attributeFilter: ['data-workspace-motion'],
+      });
+      const observer =
+        typeof PerformanceObserver === 'undefined'
+          ? undefined
+          : new PerformanceObserver((entries) => {
+              for (const entry of entries.getEntries()) {
+                state.longTasks.push({
+                  duration: entry.duration,
+                  startTime: entry.startTime,
+                });
+              }
+            });
+      observer?.observe({ entryTypes: ['longtask'] });
+      runtime.__flyoffPanePerformance = {
+        mutationObserver,
+        observer,
+        state,
+      };
+    });
+
+    const treeItem = page
+      .getByRole('tree')
+      .locator('.project-tree__item')
+      .filter({
+        has: page.getByRole('button', {
+          exact: true,
+          name: secondName,
+        }),
+      });
+    const pane = page.locator('.workspace-pane--active');
+    const paneBounds = await pane.boundingBox();
+    expect(paneBounds).not.toBeNull();
+    const dataTransfer = await page.evaluateHandle(() => new DataTransfer());
+    try {
+      await treeItem.dispatchEvent('dragstart', { dataTransfer });
+      await pane.dispatchEvent('dragover', {
+        clientX: paneBounds!.x + paneBounds!.width - 4,
+        clientY: paneBounds!.y + paneBounds!.height / 2,
+        dataTransfer,
+      });
+      await pane.dispatchEvent('drop', {
+        clientX: paneBounds!.x + paneBounds!.width - 4,
+        clientY: paneBounds!.y + paneBounds!.height / 2,
+        dataTransfer,
+      });
+      await treeItem.dispatchEvent('dragend', { dataTransfer });
+    } finally {
+      await dataTransfer.dispose();
+    }
+
+    await page.waitForFunction(
+      () =>
+        (
+          window as typeof window & {
+            __flyoffPanePerformance?: { state: { start: number } };
+          }
+        ).__flyoffPanePerformance?.state.start,
+    );
+    await expect(
+      page.locator('.workspace-pane-host[data-workspace-motion]'),
+    ).toHaveCount(0);
+    await expect(page.locator('.workspace-pane')).toHaveCount(2);
+
+    const metrics = await page.evaluate(() => {
+      const runtime = window as typeof window & {
+        __flyoffPanePerformance?: {
+          mutationObserver: MutationObserver;
+          observer?: PerformanceObserver;
+          state: {
+            end: number;
+            frameDurations: number[];
+            lockedDuringMotion: boolean;
+            lockedViolation: boolean;
+            longTasks: { duration: number; startTime: number }[];
+            pageMountedDuringMotion: boolean;
+            start: number;
+          };
+        };
+      };
+      const measurement = runtime.__flyoffPanePerformance;
+      measurement?.mutationObserver.disconnect();
+      for (const entry of measurement?.observer?.takeRecords() ?? []) {
+        measurement?.state.longTasks.push({
+          duration: entry.duration,
+          startTime: entry.startTime,
+        });
+      }
+      measurement?.observer?.disconnect();
+      delete runtime.__flyoffPanePerformance;
+      if (!measurement) {
+        return undefined;
+      }
+      return {
+        ...measurement.state,
+        transitionLongTasks: measurement.state.longTasks.filter(
+          (entry) =>
+            entry.startTime < measurement.state.end &&
+            entry.startTime + entry.duration > measurement.state.start &&
+            entry.duration > 50,
+        ),
+      };
+    });
+    expect(metrics).toBeDefined();
+    expect(metrics!.start).toBeGreaterThan(0);
+    expect(metrics!.end).toBeGreaterThan(metrics!.start);
+    expect(metrics!.frameDurations.length).toBeGreaterThan(0);
+    expect(metrics!.lockedDuringMotion).toBe(true);
+    expect(metrics!.lockedViolation).toBe(false);
+    expect(metrics!.pageMountedDuringMotion).toBe(false);
+    expect(metrics!.transitionLongTasks).toEqual([]);
+
+    const editors = page.locator('.markdown-source__editor:visible');
+    await expect(editors).toHaveCount(2);
+    const mountedRightEditor = page
+      .locator('.workspace-pane--active')
+      .locator('.markdown-source__editor');
+    await expect.poll(() => sourceOf(mountedRightEditor)).toBe(rightSource);
+    await expect
+      .poll(() => topVisibleLine(mountedLeftEditor))
+      .toBe(leftLineBefore);
+    await mountedRightEditor.locator('.virtual-source__proxy').focus();
+    await page.keyboard.press(
+      process.platform === 'darwin' ? 'Meta+End' : 'Control+End',
+    );
+    await page.keyboard.type(' edited');
+    await expect
+      .poll(() => sourceOf(mountedRightEditor))
+      .toBe(`${rightSource} edited`);
   } finally {
     await stopApplication(app);
     await rm(userDataPath, {

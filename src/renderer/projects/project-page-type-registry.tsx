@@ -280,6 +280,7 @@ function MarkdownProjectPage({
 
   return (
     <MarkdownEditor
+      active={active}
       autoFocus={preferences.general.focusEditorOnOpen && active}
       controller={controller}
       document={state.document}

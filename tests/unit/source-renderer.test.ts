@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   readSelection,
@@ -24,6 +24,21 @@ describe('incremental source renderer', () => {
     expect(root.querySelectorAll('[data-md-placeholder]')).toHaveLength(1);
     expect(root.children[2]?.getAttribute('data-line')).toBe('3');
     expect(readSource(root)).toBe('# one\n\nthree');
+  });
+
+  it('parses the initial document as one HTML batch', () => {
+    const root = document.createElement('div');
+    const createElement = vi.spyOn(document, 'createElement');
+
+    reconcileSource(
+      root,
+      Array.from({ length: 250 }, (_, index) => `line ${index}`).join('\n'),
+    );
+
+    const createdTags = createElement.mock.calls.map(([tag]) => String(tag));
+    expect(createdTags.filter((tag) => tag === 'template')).toHaveLength(1);
+    expect(createdTags.filter((tag) => tag === 'span')).toHaveLength(0);
+    createElement.mockRestore();
   });
 
   it('keeps gutters and empty-line placeholders out of the source', () => {
@@ -92,6 +107,17 @@ describe('incremental source renderer', () => {
     expect(readSource(root)).toBe('one\ntwo');
   });
 
+  it('repairs same-source browser mutations only when requested by input handling', () => {
+    const root = document.createElement('div');
+    reconcileSource(root, 'one\ntwo');
+    root.textContent = 'browser mutation';
+
+    reconcileSource(root, 'one\ntwo', true);
+
+    expect(readSource(root)).toBe('one\ntwo');
+    expect(root.querySelectorAll(':scope > .md-line')).toHaveLength(2);
+  });
+
   it('keeps emoji Unicode and UTF-16 cursor offsets in the editable source', () => {
     const root = document.createElement('div');
     document.body.appendChild(root);
@@ -119,8 +145,8 @@ describe('incremental source renderer', () => {
 
     expect(
       root.querySelector<HTMLElement>('.md-line--code > .md-line__content')
-        ?.spellcheck,
-    ).toBe(false);
+        ?.getAttribute('spellcheck'),
+    ).toBe('false');
 
     const enabledRoot = document.createElement('div');
     enabledRoot.dataset.spellcheckEnabled = 'true';
@@ -129,8 +155,8 @@ describe('incremental source renderer', () => {
     expect(
       enabledRoot.querySelector<HTMLElement>(
         '.md-line--code > .md-line__content',
-      )?.spellcheck,
-    ).toBe(true);
+      )?.getAttribute('spellcheck'),
+    ).toBe('true');
   });
 
   it('marks complete, empty and consecutive fenced block boundaries', () => {
@@ -200,8 +226,10 @@ describe('incremental source renderer', () => {
     reconcileSource(root, 'one\ntwo');
 
     expect(
-      root.querySelector<HTMLElement>('.md-line__content')?.spellcheck,
-    ).toBe(false);
+      root
+        .querySelector<HTMLElement>('.md-line__content')
+        ?.getAttribute('spellcheck'),
+    ).toBe('false');
 
     updateActiveSourceLine(root, 'one\ntwo', 5);
     expect(root.children[0]?.classList.contains('md-line--active')).toBe(false);
@@ -210,6 +238,19 @@ describe('incremental source renderer', () => {
     updateActiveSourceLine(root, 'one\ntwo', 0);
     expect(root.children[0]?.classList.contains('md-line--active')).toBe(true);
     expect(root.children[1]?.classList.contains('md-line--active')).toBe(false);
+  });
+
+  it('moves the active row without querying every line', () => {
+    const root = document.createElement('div');
+    reconcileSource(root, 'one\ntwo\nthree');
+    updateActiveSourceLine(root, 'one\ntwo\nthree', 0);
+    const querySelectorAll = vi.spyOn(root, 'querySelectorAll');
+
+    updateActiveSourceLine(root, 'one\ntwo\nthree', 8);
+
+    expect(querySelectorAll).not.toHaveBeenCalled();
+    expect(root.children[0]?.classList.contains('md-line--active')).toBe(false);
+    expect(root.children[2]?.classList.contains('md-line--active')).toBe(true);
   });
 
   it('does not retain a stale active line when preserved rows move', () => {

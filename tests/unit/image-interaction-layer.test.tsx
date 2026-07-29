@@ -45,6 +45,8 @@ function rect(
 function Harness({
   onInsertMediaAsset,
   onOperation,
+  source = `before\n${imageSource}\nafter`,
+  visibleLines,
 }: {
   onInsertMediaAsset?: React.ComponentProps<
     typeof ImageInteractionLayer
@@ -52,14 +54,24 @@ function Harness({
   onOperation: React.ComponentProps<
     typeof ImageInteractionLayer
   >['onOperation'];
+  source?: string;
+  visibleLines?: readonly [number, number];
 }) {
   const editorRef = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(() => {
     if (editorRef.current) {
-      reconcileSource(editorRef.current, `before\n${imageSource}\nafter`);
+      reconcileSource(editorRef.current, source);
+      if (visibleLines) {
+        for (const line of Array.from(editorRef.current.children)) {
+          const number = Number((line as HTMLElement).dataset.line);
+          if (number < visibleLines[0] || number > visibleLines[1]) {
+            line.remove();
+          }
+        }
+      }
     }
-  }, []);
+  }, [source, visibleLines]);
 
   return (
     <div data-testid="stage">
@@ -290,7 +302,80 @@ describe('image interaction layer', () => {
     expect(lineMeasurements).toBe(lines.length);
     expect(mutations).toHaveLength(0);
     observer.disconnect();
+
+    fireEvent.scroll(editor);
+    act(flushFrame);
+    expect(lineMeasurements).toBe(lines.length * 2);
+
     fireEvent.pointerCancel(host, { pointerId: 20 });
+  });
+
+  it('maps a sparse virtual window to global block boundaries', () => {
+    const onOperation = vi.fn();
+    const prefix = Array.from(
+      { length: 1_000 },
+      (_, index) => `before ${index}`,
+    );
+    const source = [...prefix, imageSource, 'after'].join('\n');
+    render(
+      <Harness
+        onOperation={onOperation}
+        source={source}
+        visibleLines={[1_000, 1_002]}
+      />,
+    );
+    const stage = screen.getByTestId('stage');
+    const editor = screen.getByTestId('editor');
+    const lines = editor.querySelectorAll<HTMLElement>('.md-line');
+    const contents =
+      editor.querySelectorAll<HTMLElement>('.md-line__content');
+    const host = editor.querySelector<HTMLElement>('.md-source-image__host')!;
+
+    expect([...lines].map((line) => line.dataset.line)).toEqual([
+      '1000',
+      '1001',
+      '1002',
+    ]);
+    stage.getBoundingClientRect = () => rect(0, 0, 640, 400);
+    editor.getBoundingClientRect = () => rect(0, 0, 640, 300);
+    lines[0]!.getBoundingClientRect = () => rect(0, 0, 640, 30);
+    lines[1]!.getBoundingClientRect = () => rect(0, 30, 640, 200);
+    lines[2]!.getBoundingClientRect = () => rect(0, 230, 640, 30);
+    contents.forEach((content, index) => {
+      content.getBoundingClientRect = () =>
+        rect(60, index === 2 ? 230 : index * 30, 560, 30);
+    });
+    host.getBoundingClientRect = () => rect(160, 40, 320, 180);
+
+    fireEvent.pointerDown(host, {
+      button: 0,
+      clientX: 320,
+      clientY: 120,
+      pointerId: 51,
+    });
+    fireEvent.pointerMove(host, {
+      clientX: 500,
+      clientY: 275,
+      pointerId: 51,
+    });
+    fireEvent.pointerUp(host, {
+      clientX: 500,
+      clientY: 275,
+      pointerId: 51,
+    });
+
+    expect(onOperation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        intent: expect.objectContaining({
+          boundaryIndex: 1_001,
+          kind: 'block-boundary',
+        }),
+        sourceRange: expect.objectContaining({
+          start: source.indexOf(imageSource),
+        }),
+        type: 'move',
+      }),
+    );
   });
 
   it('selects an image when a later text line owns the hit target', () => {

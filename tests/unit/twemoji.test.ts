@@ -34,4 +34,10 @@ describe('Twemoji segmentation', () => {
 
     expect(twemojiSegments(unsupported)).toEqual([{ text: unsupported }]);
   });
+
+  it('does not retain multi-megabyte text in the segment cache', () => {
+    const value = 'a'.repeat(4 * 1024 * 1024 + 1);
+
+    expect(twemojiSegments(value)).not.toBe(twemojiSegments(value));
+  });
 });

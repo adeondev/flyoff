@@ -4,6 +4,8 @@ export {
   parseBlocks,
   parseMarkdown,
   splitMarkdownBlocks,
+  splitMarkdownBlocksCooperatively,
+  type CooperativeMarkdownSplitOptions,
   type MarkdownBlockSource,
 } from './parse';
 export * from './internal-links';

@@ -3,6 +3,7 @@ import { parseImageDirectiveAt } from './media';
 
 const PUNCTUATION = /[!-/:-@[-`{-~]/;
 const SAFE_COLOR = /^(#[0-9a-fA-F]{3,8}|[a-zA-Z]+)$/;
+const INLINE_MARKUP = /[\\\n`!:*_~=]|\[/;
 
 interface Parsed {
   node: InlineNode;
@@ -291,6 +292,9 @@ function parseEmphasis(text: string, start: number): Parsed | null {
 }
 
 export function parseInline(text: string): InlineNode[] {
+  if (text && !INLINE_MARKUP.test(text)) {
+    return [{ type: 'text', value: text }];
+  }
   const nodes: InlineNode[] = [];
   let buffer = '';
   let index = 0;

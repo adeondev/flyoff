@@ -8,22 +8,41 @@ import {
   updateSourceDocumentModel,
   type SourceChangeRange,
   type SourceDocumentModel,
+  type SourceTextChange,
 } from './source-document-model';
 
 interface SourceRenderState {
   activeLine: number;
+  lineElements: HTMLElement[];
   model: SourceDocumentModel;
 }
 
 const renderStates = new WeakMap<HTMLElement, SourceRenderState>();
 
-function markActiveLine(root: HTMLElement, lineIndex: number): void {
-  for (const active of root.querySelectorAll(':scope > .md-line--active')) {
-    active.classList.remove('md-line--active');
+function restoreActiveLine(root: HTMLElement, lineIndex: number): void {
+  const line = renderStates.get(root)?.lineElements[lineIndex];
+  if (lineIndex >= 0 && line) {
+    line.classList.add('md-line--active');
+  }
+}
+
+function moveActiveLine(
+  root: HTMLElement,
+  state: SourceRenderState,
+  lineIndex: number,
+): void {
+  if (state.activeLine === lineIndex) {
+    return;
+  }
+  if (state.activeLine >= 0) {
+    state.lineElements[state.activeLine]?.classList.remove(
+      'md-line--active',
+    );
   }
   if (lineIndex >= 0) {
-    root.children[lineIndex]?.classList.add('md-line--active');
+    state.lineElements[lineIndex]?.classList.add('md-line--active');
   }
+  state.activeLine = lineIndex;
 }
 
 function enableTwemojiFallback(root: ParentNode): void {
@@ -127,8 +146,6 @@ function createLine(
   return element;
 }
 
-// Runs on every keystroke, so it walks the live collection instead of
-// materialising an array of every row.
 function hasCanonicalLines(root: HTMLElement, expectedLength: number): boolean {
   if (root.childElementCount !== expectedLength) {
     return false;
@@ -151,16 +168,44 @@ function hasCanonicalLines(root: HTMLElement, expectedLength: number): boolean {
 function replaceAll(
   root: HTMLElement,
   lines: readonly HighlightedSourceLine[],
-): void {
-  root.replaceChildren(
-    ...lines.map((line, index) => createLine(root, line, index)),
-  );
+): HTMLElement[] {
+  const spellcheckEnabled = root.dataset.spellcheckEnabled === 'true';
+  const spellcheckCodeBlocks =
+    root.dataset.spellcheckCodeBlocks === 'true';
+  const markup = new Array<string>(lines.length);
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index]!;
+    markup[index] =
+      `<span class="${sourceLineClassName(line)}" data-line="${index + 1}">` +
+      `<span aria-hidden="true" class="md-line__gutter" contenteditable="false" data-md-gutter>${index + 1}</span>` +
+      `<span class="md-line__content" spellcheck="${spellcheckEnabled && (spellcheckCodeBlocks || !line.code)}">` +
+      `${line.html || '<br data-md-placeholder>'}</span></span>`;
+  }
+  const template = root.ownerDocument.createElement('template');
+  template.innerHTML = markup.join('');
+  const lineElements = Array.from(
+    template.content.children,
+  ) as HTMLElement[];
+  root.replaceChildren(template.content);
+  enableTwemojiFallback(root);
+  return lineElements;
 }
 
-export function reconcileSource(root: HTMLElement, source: string): void {
+export function reconcileSource(
+  root: HTMLElement,
+  source: string,
+  verifyStructure = false,
+  change?: SourceTextChange,
+): void {
   const currentState = renderStates.get(root);
+  if (
+    !verifyStructure &&
+    currentState?.model.source === source
+  ) {
+    return;
+  }
   const model = currentState
-    ? updateSourceDocumentModel(currentState.model, source)
+    ? updateSourceDocumentModel(currentState.model, source, change)
     : createSourceDocumentModel(source);
   const next = model.lines;
   root.style.setProperty(
@@ -169,16 +214,21 @@ export function reconcileSource(root: HTMLElement, source: string): void {
   );
   const current = currentState?.model.lines;
 
-  if (!current || !hasCanonicalLines(root, current.length)) {
-    replaceAll(root, next);
+  if (
+    !current ||
+    root.childElementCount !== current.length ||
+    (verifyStructure && !hasCanonicalLines(root, current.length))
+  ) {
+    const lineElements = replaceAll(root, next);
     renderStates.set(root, {
       activeLine: currentState?.activeLine ?? -1,
+      lineElements,
       model:
         currentState && model === currentState.model
           ? createSourceDocumentModel(source)
           : model,
     });
-    markActiveLine(root, currentState?.activeLine ?? -1);
+    restoreActiveLine(root, currentState?.activeLine ?? -1);
     applyCodeBlockWidths(root, model, model.change);
     return;
   }
@@ -208,24 +258,35 @@ export function reconcileSource(root: HTMLElement, source: string): void {
 
   const oldEnd = current.length - suffix;
   const newEnd = next.length - suffix;
-  const anchor = root.children[oldEnd] ?? null;
+  const lineElements = currentState.lineElements;
+  const anchor = lineElements[oldEnd] ?? null;
+  if (currentState.activeLine >= 0) {
+    lineElements[currentState.activeLine]?.classList.remove(
+      'md-line--active',
+    );
+  }
 
   for (let index = oldEnd - 1; index >= prefix; index -= 1) {
-    root.children[index]?.remove();
+    lineElements[index]?.remove();
   }
 
   const fragment = root.ownerDocument.createDocumentFragment();
+  const insertedLines: HTMLElement[] = [];
   for (let index = prefix; index < newEnd; index += 1) {
-    fragment.appendChild(createLine(root, next[index]!, index));
+    const line = createLine(root, next[index]!, index);
+    insertedLines.push(line);
+    fragment.appendChild(line);
   }
   root.insertBefore(fragment, anchor);
+  lineElements.splice(
+    prefix,
+    oldEnd - prefix,
+    ...insertedLines,
+  );
 
-  // Rows before newEnd were just built carrying their final numbers, and the
-  // preserved suffix only shifts when the line count changes, so editing
-  // within a single line renumbers nothing.
   if (current.length !== next.length) {
-    for (let index = newEnd; index < root.children.length; index += 1) {
-      const line = root.children[index] as HTMLElement;
+    for (let index = newEnd; index < lineElements.length; index += 1) {
+      const line = lineElements[index]!;
       line.dataset.line = String(index + 1);
       const gutter = line.firstElementChild;
       if (gutter) {
@@ -234,17 +295,14 @@ export function reconcileSource(root: HTMLElement, source: string): void {
     }
   }
 
-  // Preserved rows were structurally validated before splicing and inserted
-  // rows come from createLine, so only the splice arithmetic can still be
-  // wrong — checking the count catches that without rescanning every row.
   if (root.childElementCount !== next.length) {
-    replaceAll(root, next);
+    lineElements.splice(0, lineElements.length, ...replaceAll(root, next));
   }
 
   applyCodeBlockWidths(root, model, model.change);
   const activeLine = currentState.activeLine;
-  renderStates.set(root, { activeLine, model });
-  markActiveLine(root, activeLine);
+  renderStates.set(root, { activeLine, lineElements, model });
+  restoreActiveLine(root, activeLine);
 }
 
 export function updateActiveSourceLine(
@@ -257,17 +315,20 @@ export function updateActiveSourceLine(
     return;
   }
   const lineIndex = sourceLineIndexAtOffset(state.model, offset);
-  if (state.activeLine === lineIndex) {
-    return;
-  }
-  markActiveLine(root, lineIndex);
-  state.activeLine = lineIndex;
+  moveActiveLine(root, state, lineIndex);
 }
 
 export function getSourceDocumentModel(
   root: HTMLElement,
 ): SourceDocumentModel | undefined {
   return renderStates.get(root)?.model;
+}
+
+export function getSourceLineElement(
+  root: HTMLElement,
+  index: number,
+): HTMLElement | undefined {
+  return renderStates.get(root)?.lineElements[index];
 }
 
 export function getSourceChangeRange(

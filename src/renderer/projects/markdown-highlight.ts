@@ -456,7 +456,36 @@ function highlightLine(line: string): string {
 const FENCE_LINE = /^\s*(```+|~~~+)/;
 const HEADING_LINE = /^\s*#{1,6}(?:--)?\s+/;
 const CACHE_LIMIT = 4000;
-const lineCache = new Map<string, string>();
+const CACHE_UNIT_LIMIT = 2 * 1024 * 1024;
+const lineCache = new Map<string, { html: string; units: number }>();
+let lineCacheUnits = 0;
+
+function isSourceWhitespace(code: number): boolean {
+  return (
+    (code >= 0x0009 && code <= 0x000d) ||
+    code === 0x0020 ||
+    code === 0x00a0 ||
+    code === 0x1680 ||
+    (code >= 0x2000 && code <= 0x200a) ||
+    code === 0x2028 ||
+    code === 0x2029 ||
+    code === 0x202f ||
+    code === 0x205f ||
+    code === 0x3000 ||
+    code === 0xfeff
+  );
+}
+
+function firstSourceMarker(source: string): number {
+  let index = 0;
+  while (
+    index < source.length &&
+    isSourceWhitespace(source.charCodeAt(index))
+  ) {
+    index += 1;
+  }
+  return source.charCodeAt(index);
+}
 
 export interface HighlightedSourceLine {
   code: boolean;
@@ -493,50 +522,87 @@ export function sourceLineClassName(line: HighlightedSourceLine): string {
   return classes.join(' ');
 }
 
-function highlightCachedLine(key: string, compute: () => string): string {
+function highlightCachedLine(
+  key: string,
+  source: string,
+  fenceBefore: boolean,
+  fenceLine: boolean,
+): string {
   const cached = lineCache.get(key);
 
   if (cached !== undefined) {
-    return cached;
+    lineCache.delete(key);
+    lineCache.set(key, cached);
+    return cached.html;
   }
 
-  const html = compute();
+  const html = fenceLine
+    ? span('md-tok-fence', escapeHtml(source))
+    : fenceBefore
+      ? span('md-tok-code', escapeHtml(source))
+      : highlightLine(source);
+  const units = key.length + html.length;
 
-  if (lineCache.size >= CACHE_LIMIT) {
-    lineCache.clear();
+  lineCache.set(key, { html, units });
+  lineCacheUnits += units;
+  while (
+    lineCache.size > CACHE_LIMIT ||
+    lineCacheUnits > CACHE_UNIT_LIMIT
+  ) {
+    const oldest = lineCache.keys().next().value as string | undefined;
+    if (oldest === undefined) {
+      break;
+    }
+    lineCacheUnits -= lineCache.get(oldest)?.units ?? 0;
+    lineCache.delete(oldest);
   }
 
-  lineCache.set(key, html);
   return html;
+}
+
+class HighlightedSourceLineRecord implements HighlightedSourceLine {
+  readonly code: boolean;
+  readonly codeEnd: boolean;
+  readonly codeStart: boolean;
+  readonly fenceAfter: boolean;
+  readonly fenceLine: boolean;
+  readonly heading: boolean;
+  readonly key: string;
+
+  constructor(
+    readonly source: string,
+    readonly fenceBefore: boolean,
+  ) {
+    const marker = firstSourceMarker(source);
+    this.fenceLine =
+      (marker === 0x0060 || marker === 0x007e) &&
+      FENCE_LINE.test(source);
+    this.code = this.fenceLine || fenceBefore;
+    this.codeEnd = this.fenceLine && fenceBefore;
+    this.codeStart = this.fenceLine && !fenceBefore;
+    this.fenceAfter = this.fenceLine ? !fenceBefore : fenceBefore;
+    this.heading =
+      !this.code && marker === 0x0023 && HEADING_LINE.test(source);
+    this.key = `${
+      this.fenceLine ? (fenceBefore ? 'fc' : 'fo') : fenceBefore ? 'c' : 'n'
+    }\u0000${source}`;
+  }
+
+  get html(): string {
+    return highlightCachedLine(
+      this.key,
+      this.source,
+      this.fenceBefore,
+      this.fenceLine,
+    );
+  }
 }
 
 export function highlightSourceLine(
   source: string,
   fenceBefore: boolean,
 ): HighlightedSourceLine {
-  const isFence = FENCE_LINE.test(source);
-  const state = isFence ? (fenceBefore ? 'fc' : 'fo') : fenceBefore ? 'c' : 'n';
-  const key = `${state}\u0000${source}`;
-  const html = highlightCachedLine(key, () =>
-    isFence
-      ? span('md-tok-fence', escapeHtml(source))
-      : fenceBefore
-        ? span('md-tok-code', escapeHtml(source))
-        : highlightLine(source),
-  );
-
-  return {
-    code: state !== 'n',
-    codeEnd: isFence && fenceBefore,
-    codeStart: isFence && !fenceBefore,
-    fenceAfter: isFence ? !fenceBefore : fenceBefore,
-    fenceBefore,
-    fenceLine: isFence,
-    heading: state === 'n' && HEADING_LINE.test(source),
-    html,
-    key,
-    source,
-  };
+  return new HighlightedSourceLineRecord(source, fenceBefore);
 }
 
 export function highlightSourceLines(

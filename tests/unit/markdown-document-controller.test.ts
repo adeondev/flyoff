@@ -43,6 +43,7 @@ function edit(
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 describe('MarkdownDocumentController', () => {
@@ -113,6 +114,55 @@ describe('MarkdownDocumentController', () => {
     await vi.advanceTimersByTimeAsync(1);
 
     expect(save).toHaveBeenCalledOnce();
+  });
+
+  it('moves one pending autosave deadline without replacing its timer per edit', () => {
+    const schedule = vi.fn(() => 1);
+    const cancel = vi.fn();
+    vi.stubGlobal('setTimeout', schedule);
+    vi.stubGlobal('clearTimeout', cancel);
+    const controller = new MarkdownDocumentController({
+      reload: vi.fn(),
+      save: vi.fn(),
+    });
+    controller.open(document(''));
+
+    for (let index = 0; index < 1_000; index += 1) {
+      controller.update(nodeId, String(index));
+    }
+
+    expect(schedule).toHaveBeenCalledOnce();
+    expect(cancel).not.toHaveBeenCalled();
+    controller.dispose();
+    expect(cancel).toHaveBeenCalledOnce();
+    vi.unstubAllGlobals();
+  });
+
+  it('rearms the shared autosave timer for the latest edit deadline', async () => {
+    vi.useFakeTimers();
+    const save = vi.fn(
+      async (request: SaveMarkdownDocumentRequest) => ({
+        ok: true as const,
+        value: document(request.content, secondRevision),
+      }),
+    );
+    const controller = new MarkdownDocumentController({
+      reload: vi.fn(),
+      save,
+    });
+    controller.open(document(''));
+
+    controller.update(nodeId, 'first');
+    await vi.advanceTimersByTimeAsync(400);
+    controller.update(nodeId, 'latest');
+    await vi.advanceTimersByTimeAsync(499);
+    expect(save).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(save).toHaveBeenCalledOnce();
+    expect(save).toHaveBeenCalledWith(
+      expect.objectContaining({ content: 'latest' }),
+    );
   });
 
   it('blocks autosave after a conflict until reload or overwrite is chosen', async () => {
@@ -253,6 +303,23 @@ describe('MarkdownDocumentController', () => {
       content: 'one!',
       selection: { start: 4, end: 4, direction: 'none' },
     });
+  });
+
+  it('does not replace editor state for a duplicate selection report', () => {
+    const controller = new MarkdownDocumentController({
+      reload: vi.fn(),
+      save: vi.fn(),
+    });
+    controller.open(document('one'));
+    const snapshot = controller.getSnapshot(nodeId);
+
+    controller.setEditorSelection(nodeId, {
+      start: 0,
+      end: 0,
+      direction: 'none',
+    });
+
+    expect(controller.getSnapshot(nodeId)).toBe(snapshot);
   });
 
   it('keeps history through autosave and a clean tab remount', async () => {
@@ -523,5 +590,31 @@ describe('MarkdownDocumentController', () => {
     controller.undo(nodeId, 'left');
     expect(controller.getSnapshot(nodeId, 'left')?.content).toBe('one');
     expect(controller.getSnapshot(nodeId, 'right')?.content).toBe('one');
+  });
+
+  it('publishes the committed view selection atomically with its content', () => {
+    const controller = new MarkdownDocumentController({
+      reload: vi.fn(),
+      save: vi.fn(),
+    });
+    controller.open(document('one'), 'editor');
+    const observed: MarkdownBufferSnapshot[] = [];
+    controller.subscribe(nodeId, () => {
+      const snapshot = controller.getSnapshot(nodeId, 'editor');
+      if (snapshot) {
+        observed.push(snapshot);
+      }
+    });
+
+    controller.commitEditorTransaction(
+      nodeId,
+      edit('one', 'one two'),
+      'editor',
+    );
+
+    expect(observed.at(-1)).toMatchObject({
+      content: 'one two',
+      selection: { direction: 'none', end: 7, start: 7 },
+    });
   });
 });

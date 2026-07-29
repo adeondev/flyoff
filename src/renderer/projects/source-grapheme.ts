@@ -1,3 +1,15 @@
+let segmenter: Intl.Segmenter | null | undefined;
+
+function graphemeSegmenter(): Intl.Segmenter | null {
+  if (segmenter === undefined) {
+    segmenter =
+      typeof Intl.Segmenter === 'function'
+        ? new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+        : null;
+  }
+  return segmenter;
+}
+
 function previousCodePointBoundary(value: string, offset: number): number {
   if (offset <= 0) {
     return 0;
@@ -34,14 +46,24 @@ export function previousGraphemeBoundary(
   if (bounded <= 0) {
     return 0;
   }
-  if (typeof Intl.Segmenter === 'function') {
-    const segment = new Intl.Segmenter(undefined, {
-      granularity: 'grapheme',
-    })
-      .segment(value)
-      .containing(bounded - 1);
+  if (value.charCodeAt(bounded - 1) === 0x0a) {
+    return bounded > 1 && value.charCodeAt(bounded - 2) === 0x0d
+      ? bounded - 2
+      : bounded - 1;
+  }
+  const activeSegmenter = graphemeSegmenter();
+  if (activeSegmenter) {
+    const start = value.lastIndexOf('\n', bounded - 1) + 1;
+    const nextBreak = value.indexOf('\n', bounded);
+    const line = value.slice(
+      start,
+      nextBreak === -1 ? value.length : nextBreak,
+    );
+    const segment = activeSegmenter
+      .segment(line)
+      .containing(bounded - start - 1);
     if (segment) {
-      return segment.index;
+      return start + segment.index;
     }
   }
   return previousCodePointBoundary(value, bounded);
@@ -55,14 +77,23 @@ export function nextGraphemeBoundary(
   if (bounded >= value.length) {
     return value.length;
   }
-  if (typeof Intl.Segmenter === 'function') {
-    const segment = new Intl.Segmenter(undefined, {
-      granularity: 'grapheme',
-    })
-      .segment(value)
-      .containing(bounded);
+  if (value.charCodeAt(bounded) === 0x0d) {
+    return bounded + (value.charCodeAt(bounded + 1) === 0x0a ? 2 : 1);
+  }
+  if (value.charCodeAt(bounded) === 0x0a) {
+    return bounded + 1;
+  }
+  const activeSegmenter = graphemeSegmenter();
+  if (activeSegmenter) {
+    const start = value.lastIndexOf('\n', Math.max(0, bounded - 1)) + 1;
+    const nextBreak = value.indexOf('\n', bounded);
+    const line = value.slice(
+      start,
+      nextBreak === -1 ? value.length : nextBreak,
+    );
+    const segment = activeSegmenter.segment(line).containing(bounded - start);
     if (segment) {
-      return segment.index + segment.segment.length;
+      return start + segment.index + segment.segment.length;
     }
   }
   return nextCodePointBoundary(value, bounded);

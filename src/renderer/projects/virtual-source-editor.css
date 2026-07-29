@@ -1,0 +1,157 @@
+.markdown-source__editor--virtual {
+  overflow: auto;
+  overflow-anchor: none;
+  overflow-wrap: anywhere;
+  padding: 0;
+  white-space: pre-wrap;
+}
+
+.virtual-source__spacer {
+  box-sizing: border-box;
+  contain: layout style;
+  min-height: 100%;
+  position: relative;
+}
+
+.virtual-source__rows {
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+}
+
+.markdown-source__editor--virtual .md-line {
+  box-sizing: border-box;
+  contain: layout paint style;
+  inset: 0 auto auto 0;
+  line-height: var(--virtual-source-line-height);
+  min-width: 100%;
+  overflow: hidden;
+  position: absolute;
+  white-space: pre;
+  width: 100%;
+}
+
+.markdown-source__editor--virtual .md-line__content {
+  line-height: inherit;
+  min-height: var(--virtual-source-line-height);
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.markdown-source__editor--virtual
+  .md-line[data-virtual-wrap-image]
+  > .md-line__content {
+  height: 100%;
+  position: relative;
+}
+
+.markdown-source__editor--virtual
+  .md-line[data-virtual-wrap-image]
+  .md-source-image[data-image-mode="wrap"] {
+  float: none;
+  position: absolute;
+  top: var(--virtual-wrap-top);
+}
+
+.markdown-source__editor--virtual
+  .md-line[data-virtual-wrap-image="left"]
+  .md-source-image[data-image-mode="wrap"] {
+  left: var(--virtual-wrap-inset);
+}
+
+.markdown-source__editor--virtual
+  .md-line[data-virtual-wrap-image="right"]
+  .md-source-image[data-image-mode="wrap"] {
+  right: var(--virtual-wrap-inset);
+}
+
+.virtual-source__float-intrusion {
+  display: block;
+  height: var(--virtual-float-height);
+  pointer-events: none;
+  shape-outside: inset(var(--virtual-float-top) 0 0);
+  width: var(--virtual-float-width);
+}
+
+.virtual-source__float-intrusion[data-virtual-float-align="left"] {
+  float: left;
+}
+
+.virtual-source__float-intrusion[data-virtual-float-align="right"] {
+  float: right;
+}
+
+.markdown-source__editor--virtual[data-virtual-wrap="false"],
+.markdown-source__editor--virtual[data-virtual-wrap="false"] .md-line__content {
+  overflow-wrap: normal;
+  white-space: pre;
+}
+
+.markdown-source__editor--virtual .md-line--heading,
+.markdown-source__editor--virtual .md-line--heading .md-line__content,
+.markdown-source__editor--virtual .md-tok-heading {
+  font: inherit;
+  line-height: inherit;
+}
+
+.markdown-source__editor--virtual
+  :is(.md-source-image__host, .md-inline-color-trigger) {
+  pointer-events: auto;
+}
+
+.markdown-source__editor--virtual .md-line--selected {
+  background: color-mix(in srgb, var(--color-accent) 9%, transparent);
+}
+
+:root[data-highlight-active-line="true"]
+  .markdown-source__editor--virtual:focus-within
+  .md-line--active {
+  background: color-mix(in srgb, var(--color-accent) 7%, transparent);
+}
+
+.virtual-source__proxy {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  box-sizing: border-box;
+  caret-color: var(--color-accent-bright);
+  color: transparent;
+  font: inherit;
+  inset: 0 auto auto 0;
+  line-height: var(--virtual-source-line-height);
+  margin: 0;
+  min-width: 100%;
+  outline: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  padding: 0 var(--md-content-padding-inline) 0
+    calc(
+      var(--md-content-padding-inline) + var(--md-line-number-digits) * 1ch +
+        var(--md-gutter-gap)
+    );
+  position: absolute;
+  pointer-events: none;
+  resize: none;
+  tab-size: inherit;
+  white-space: pre-wrap;
+  width: 100%;
+  -webkit-text-fill-color: transparent;
+}
+
+.markdown-source__editor--virtual[data-virtual-wrap="false"]
+  .virtual-source__proxy {
+  overflow-wrap: normal;
+  white-space: pre;
+}
+
+.virtual-source__proxy::selection {
+  background: color-mix(in srgb, var(--color-accent) 28%, transparent);
+}
+
+.virtual-source__proxy[data-composing] {
+  background: var(--color-background);
+  color: var(--color-text);
+  -webkit-text-fill-color: currentColor;
+}

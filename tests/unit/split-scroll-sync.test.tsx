@@ -21,10 +21,12 @@ function dimensions(
 
 describe('split editor scroll synchronization', () => {
   let frames: FrameRequestCallback[];
+  let mutate: MutationCallback | undefined;
   let resize: ResizeObserverCallback | undefined;
 
   beforeEach(() => {
     frames = [];
+    mutate = undefined;
     resize = undefined;
     vi.stubGlobal(
       'requestAnimationFrame',
@@ -46,6 +48,22 @@ describe('split editor scroll synchronization', () => {
         observe(): void {}
 
         unobserve(): void {}
+      },
+    );
+    vi.stubGlobal(
+      'MutationObserver',
+      class {
+        constructor(callback: MutationCallback) {
+          mutate = callback;
+        }
+
+        disconnect(): void {}
+
+        observe(): void {}
+
+        takeRecords(): MutationRecord[] {
+          return [];
+        }
       },
     );
   });
@@ -149,6 +167,61 @@ describe('split editor scroll synchronization', () => {
     });
     act(() => resize?.([], {} as ResizeObserver));
     flushFrame();
+    expect(reading.scrollTop).toBe(1_000);
+  });
+
+  it('defers geometry reads until scrolling or preview publication', () => {
+    const source = document.createElement('div');
+    const reading = document.createElement('div');
+    let sourceReads = 0;
+    let readingReads = 0;
+    Object.defineProperties(source, {
+      clientHeight: { configurable: true, value: 500 },
+      scrollHeight: {
+        configurable: true,
+        get: () => {
+          sourceReads += 1;
+          return 1_500;
+        },
+      },
+      scrollTop: { configurable: true, writable: true, value: 500 },
+    });
+    Object.defineProperties(reading, {
+      clientHeight: { configurable: true, value: 500 },
+      scrollHeight: {
+        configurable: true,
+        get: () => {
+          readingReads += 1;
+          return 2_500;
+        },
+      },
+      scrollTop: { configurable: true, writable: true, value: 0 },
+    });
+    const readingRef = { current: reading };
+    const sourceRef = { current: source };
+    const { rerender } = renderHook(
+      ({ content }) =>
+        useSplitScrollSync({
+          content,
+          mode: 'split',
+          readingRef,
+          sourceRef,
+        }),
+      { initialProps: { content: 'one' } },
+    );
+    flushFrame();
+    sourceReads = 0;
+    readingReads = 0;
+
+    rerender({ content: 'two' });
+    flushFrame();
+    expect(sourceReads).toBe(0);
+    expect(readingReads).toBe(0);
+
+    act(() => mutate?.([], {} as MutationObserver));
+    flushFrame();
+    expect(sourceReads).toBe(1);
+    expect(readingReads).toBe(1);
     expect(reading.scrollTop).toBe(1_000);
   });
 

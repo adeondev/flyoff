@@ -70,6 +70,24 @@ function sourceLinesInRange(
   root: HTMLElement,
   range?: Pick<SourceChangeRange, 'endLine' | 'startLine'>,
 ): readonly HTMLElement[] {
+  const virtualRows = root.querySelector<HTMLElement>(
+    ':scope > .virtual-source__spacer > .virtual-source__rows',
+  );
+  if (virtualRows) {
+    const start = Math.max(0, range?.startLine ?? 0);
+    const end = Math.max(start, range?.endLine ?? Number.POSITIVE_INFINITY);
+    const lines: HTMLElement[] = [];
+    for (const child of virtualRows.children) {
+      if (!(child instanceof HTMLElement) || !child.classList.contains('md-line')) {
+        continue;
+      }
+      const index = Number(child.dataset.line) - 1;
+      if (Number.isInteger(index) && index >= start && index < end) {
+        lines.push(child);
+      }
+    }
+    return lines;
+  }
   const start = Math.max(0, range?.startLine ?? 0);
   const end = Math.min(
     root.children.length,

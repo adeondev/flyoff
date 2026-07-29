@@ -136,6 +136,50 @@ describe('markdown typing colour', () => {
     expect(deleted).toEqual({ content: '', selection: selection(0) });
   });
 
+  it('cleans the affected colour line inside a 20k-line document', () => {
+    const before = Array.from(
+      { length: 10_000 },
+      (_, index) => `before ${index}`,
+    ).join('\n');
+    const after = Array.from(
+      { length: 9_999 },
+      (_, index) => `after ${index}`,
+    ).join('\n');
+    const prefix = `${before}\n`;
+    const content = `${prefix}[a]{color=#8F4FC4}\n${after}`;
+    const deleted = resolveMarkdownTypingInput(
+      {
+        content,
+        selection: selection(prefix.length + 2),
+      },
+      'deleteContentBackward',
+      null,
+      purple,
+    );
+
+    expect(deleted).toEqual({
+      content: `${prefix}\n${after}`,
+      selection: selection(prefix.length),
+    });
+  });
+
+  it('removes an emptied authored highlight on the affected line', () => {
+    expect(
+      resolveMarkdownTypingInput(
+        {
+          content: 'before\n==x=={color=#FACC15}\nafter',
+          selection: selection('before\n==x'.length),
+        },
+        'deleteContentBackward',
+        null,
+        yellow,
+      ),
+    ).toEqual({
+      content: 'before\n\nafter',
+      selection: selection('before\n'.length),
+    });
+  });
+
   it('post-processes the final IME insertion as a single styled edit', () => {
     const composed = applyMarkdownTypingComposition(
       { content: 'A ', selection: selection(2) },

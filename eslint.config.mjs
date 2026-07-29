@@ -57,6 +57,7 @@ export default tseslint.config(
     files: [
       'packages/native-core/**/*.{cjs,js}',
       'scripts/benchmark-large-notes.cjs',
+      'scripts/make-windows-zip.cjs',
     ],
     languageOptions: {
       globals: globals.node,

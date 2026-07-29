@@ -1,9 +1,30 @@
 import { describe, expect, it } from 'vitest';
 
-import { highlightSource } from '../../src/renderer/projects/markdown-highlight';
+import {
+  highlightSource,
+  highlightSourceLines,
+} from '../../src/renderer/projects/markdown-highlight';
 import { serializeImageDirective } from '../../src/shared/markdown';
 
 describe('markdown source highlighter', () => {
+  it('shares lazy HTML behavior across source line records', () => {
+    const lines = highlightSourceLines('plain\n**bold**');
+    const prototype = Object.getPrototypeOf(lines[0]) as object;
+
+    expect(Object.getOwnPropertyDescriptor(lines[0], 'html')).toBeUndefined();
+    expect(Object.getPrototypeOf(lines[1])).toBe(prototype);
+    expect(Object.getOwnPropertyDescriptor(prototype, 'html')?.get)
+      .toBeTypeOf('function');
+    expect(lines[1]?.html).toContain('md-tok-strong');
+  });
+
+  it('recognizes structural markers after Unicode whitespace', () => {
+    const html = highlightSource('\u3000### Heading\n\u2003```js');
+
+    expect(html).toContain('md-line--heading');
+    expect(html).toContain('md-line--code-start');
+  });
+
   it('decorates an inline image with its exact source interval', () => {
     const directive = serializeImageDirective({
       version: 2,

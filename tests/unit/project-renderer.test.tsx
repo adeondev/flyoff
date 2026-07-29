@@ -41,6 +41,7 @@ import type {
   ProjectSummary,
   ProjectTreeNode,
 } from '../../src/shared/contracts';
+import { serializeImageDirective } from '../../src/shared/markdown';
 import {
   createDefaultFlyoffPreferences,
   normalizeFlyoffPreferences,
@@ -112,6 +113,43 @@ function successfulSave() {
   }));
 }
 
+function readingImageDirective(): string {
+  return serializeImageDirective({
+    version: 2,
+    instanceId: '223e4567-e89b-42d3-a456-426614174001',
+    assetId: '123e4567-e89b-42d3-a456-426614174000',
+    path: 'Media/Lua.png',
+    alt: 'Lua',
+    mode: 'block',
+    align: 'center',
+    width: 640,
+    height: 360,
+    minWidth: 96,
+    maxWidth: 1200,
+    margin: 8,
+    ratioLock: true,
+    positionLock: false,
+    caption: '',
+  });
+}
+
+async function flushAnimationFrames(
+  frames: FrameRequestCallback[],
+  complete: () => boolean,
+): Promise<void> {
+  for (let index = 0; index < 1_000; index += 1) {
+    if (complete()) {
+      return;
+    }
+    const frame = frames.shift();
+    await act(async () => {
+      frame?.(index * 16);
+      await Promise.resolve();
+    });
+  }
+  throw new Error('Animation frame work did not complete.');
+}
+
 function preferenceContext(
   preferences = createDefaultFlyoffPreferences(),
 ): FlyoffPreferencesContextValue {
@@ -134,19 +172,13 @@ function preferenceContext(
   };
 }
 
-function StatefulPreferencesProvider({
-  children,
-}: {
-  children: ReactNode;
-}) {
+function StatefulPreferencesProvider({ children }: { children: ReactNode }) {
   const [preferences, setPreferences] = useState(
     createDefaultFlyoffPreferences,
   );
   const value = preferenceContext(preferences);
   value.update = (updater) => {
-    setPreferences((current) =>
-      normalizeFlyoffPreferences(updater(current)),
-    );
+    setPreferences((current) => normalizeFlyoffPreferences(updater(current)));
   };
   return (
     <FlyoffPreferencesProvider value={value}>
@@ -183,12 +215,13 @@ describe('locked Markdown note', () => {
       screen.getByRole('heading', { name: 'projects.lockedGreeting' }),
     ).toBeTruthy();
     expect(screen.queryByText('projects.lockedPrompt')).toBeNull();
-    expect(container.querySelector('.markdown-locked__illustration')).toBeTruthy();
+    expect(
+      container.querySelector('.markdown-locked__illustration'),
+    ).toBeTruthy();
 
-    fireEvent.change(
-      screen.getByLabelText('projects.propertiesPassword'),
-      { target: { value: 'secret' } },
-    );
+    fireEvent.change(screen.getByLabelText('projects.propertiesPassword'), {
+      target: { value: 'secret' },
+    });
     fireEvent.click(
       screen.getByRole('button', { name: 'projects.submitPassword' }),
     );
@@ -228,9 +261,7 @@ describe('project sidebar', () => {
       </FlyoffPreferencesProvider>,
     );
 
-    expect(
-      await screen.findByRole('button', { name: 'Todo.md' }),
-    ).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Todo.md' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Flow.flyd' })).toBeTruthy();
     const noteItem = screen
       .getByRole('button', { name: 'Todo.md' })
@@ -289,15 +320,17 @@ describe('project sidebar', () => {
   });
 
   it('searches the full lazy tree and restores its expansion state when cleared', async () => {
-    const loadChildren = vi.fn(async ({ parentId }: { parentId: string | null }) => ({
-      ok: true as const,
-      value:
-        parentId === null
-          ? [folder, note]
-          : parentId === folder.nodeId
-            ? [nestedNote]
-            : [],
-    }));
+    const loadChildren = vi.fn(
+      async ({ parentId }: { parentId: string | null }) => ({
+        ok: true as const,
+        value:
+          parentId === null
+            ? [folder, note]
+            : parentId === folder.nodeId
+              ? [nestedNote]
+              : [],
+      }),
+    );
 
     render(
       <ProjectSidebar
@@ -402,12 +435,12 @@ describe('project sidebar', () => {
 
     await screen.findByRole('tree', { name: 'projects.navigation' });
     const footer = container.querySelector('.project-sidebar__footer')!;
-    expect(within(footer).getByRole('button', { name: project.name })).toBeTruthy();
+    expect(
+      within(footer).getByRole('button', { name: project.name }),
+    ).toBeTruthy();
     expect(footer.querySelector('.project-sidebar__project-mark')).toBeNull();
 
-    fireEvent.click(
-      within(footer).getByRole('button', { name: 'menu.about' }),
-    );
+    fireEvent.click(within(footer).getByRole('button', { name: 'menu.about' }));
     fireEvent.click(
       within(footer).getByRole('button', { name: 'pages.settings' }),
     );
@@ -422,10 +455,12 @@ describe('project sidebar', () => {
       nodeId: '9dfad5c6-80ac-4e7e-b18c-fe23a48c3a2e',
       name: 'Meeting',
     };
-    const loadChildren = vi.fn(async ({ parentId }: { parentId: string | null }) => ({
-      ok: true as const,
-      value: parentId === folder.nodeId ? [nestedNote] : rootNodes,
-    }));
+    const loadChildren = vi.fn(
+      async ({ parentId }: { parentId: string | null }) => ({
+        ok: true as const,
+        value: parentId === folder.nodeId ? [nestedNote] : rootNodes,
+      }),
+    );
     const onCreateNode = vi.fn(async () => {
       rootNodes = [...rootNodes, created];
       return { ok: true as const, value: created };
@@ -573,10 +608,12 @@ describe('project sidebar', () => {
   });
 
   it('moves through the accessible dialog and confirms trash explicitly', async () => {
-    const loadChildren = vi.fn(async ({ parentId }: { parentId: string | null }) => ({
-      ok: true as const,
-      value: parentId === null ? [folder, note] : [],
-    }));
+    const loadChildren = vi.fn(
+      async ({ parentId }: { parentId: string | null }) => ({
+        ok: true as const,
+        value: parentId === null ? [folder, note] : [],
+      }),
+    );
     const moved = { ...note, parentId: folder.nodeId };
     const onMoveNode = vi.fn(async () => ({ ok: true as const, value: moved }));
     const onTrashNode = vi.fn(async () => ({
@@ -747,7 +784,9 @@ describe('project sidebar', () => {
 
     const tree = screen.getByRole('tree', { name: 'projects.navigation' });
     fireEvent.contextMenu(tree, { clientX: 80, clientY: 120 });
-    expect(screen.queryByRole('dialog', { name: 'projects.addInstance' })).toBeNull();
+    expect(
+      screen.queryByRole('dialog', { name: 'projects.addInstance' }),
+    ).toBeNull();
     fireEvent.click(
       await screen.findByRole('menuitem', { name: 'projects.newInstance' }),
     );
@@ -796,7 +835,10 @@ describe('project sidebar', () => {
 
   it('targets the nested branch for creation and native path actions', async () => {
     const onCopyPath = vi.fn(async () => ({ ok: true as const, value: null }));
-    const onRevealPath = vi.fn(async () => ({ ok: true as const, value: null }));
+    const onRevealPath = vi.fn(async () => ({
+      ok: true as const,
+      value: null,
+    }));
     const onCreateNode = vi.fn(async ({ name }: { name: string }) => ({
       ok: true as const,
       value: {
@@ -843,7 +885,9 @@ describe('project sidebar', () => {
         .hasAttribute('aria-disabled'),
     ).toBe(false);
 
-    fireEvent.click(screen.getByRole('menuitem', { name: 'projects.copyPath' }));
+    fireEvent.click(
+      screen.getByRole('menuitem', { name: 'projects.copyPath' }),
+    );
     await waitFor(() =>
       expect(onCopyPath).toHaveBeenCalledWith({ nodeId: folder.nodeId }),
     );
@@ -960,7 +1004,9 @@ describe('project sidebar', () => {
       { key: 'Escape' },
     );
     await waitFor(() => {
-      expect(item.classList.contains('project-tree__item--context')).toBe(false);
+      expect(item.classList.contains('project-tree__item--context')).toBe(
+        false,
+      );
       expect(item.classList.contains('project-tree__item--active')).toBe(true);
     });
 
@@ -968,9 +1014,7 @@ describe('project sidebar', () => {
     fireEvent.keyDown(item, { key: 'F2' });
     const input = screen.getByRole('textbox', { name: 'projects.name' });
     fireEvent.blur(input, { relatedTarget: document.body });
-    expect(
-      screen.queryByRole('textbox', { name: 'projects.name' }),
-    ).toBeNull();
+    expect(screen.queryByRole('textbox', { name: 'projects.name' })).toBeNull();
     expect(screen.getByRole('button', { name: 'Todo' })).toBeTruthy();
   });
 
@@ -1003,9 +1047,7 @@ describe('project sidebar', () => {
     });
     fireEvent.click(rename);
 
-    expect(
-      screen.getByRole('textbox', { name: 'projects.name' }),
-    ).toBeTruthy();
+    expect(screen.getByRole('textbox', { name: 'projects.name' })).toBeTruthy();
   });
 
   it('moves a node onto a folder with drag and drop', async () => {
@@ -1031,9 +1073,9 @@ describe('project sidebar', () => {
       />,
     );
 
-    const noteItem = (await screen.findByRole('button', { name: 'Todo' })).closest(
-      '[role="treeitem"]',
-    );
+    const noteItem = (
+      await screen.findByRole('button', { name: 'Todo' })
+    ).closest('[role="treeitem"]');
     const folderItem = screen
       .getByRole('button', { name: 'Docs' })
       .closest('[role="treeitem"]');
@@ -1079,9 +1121,9 @@ describe('project sidebar', () => {
       />,
     );
 
-    const noteItem = (await screen.findByRole('button', { name: 'Todo' })).closest(
-      '[role="treeitem"]',
-    )!;
+    const noteItem = (
+      await screen.findByRole('button', { name: 'Todo' })
+    ).closest('[role="treeitem"]')!;
     const folderItem = screen
       .getByRole('button', { name: 'Docs' })
       .closest('[role="treeitem"]')!;
@@ -1186,14 +1228,59 @@ describe('project naming and creation dialog', () => {
   });
 
   it('treats the Markdown suffix as presentation instead of sanitizing names', () => {
-    expect(
-      projectNodeDisplayName({ ...note, name: 'Roadmap.md' }),
-    ).toBe('Roadmap.md');
+    expect(projectNodeDisplayName({ ...note, name: 'Roadmap.md' })).toBe(
+      'Roadmap.md',
+    );
     expect(projectNodeInputName('page', ' Roadmap ')).toBe(' Roadmap ');
   });
 });
 
 describe('Markdown editor', () => {
+  it('pauses asynchronous spellcheck while its pane is inactive', async () => {
+    vi.useFakeTimers();
+    const checkSpellcheckWords = vi.fn(async () => []);
+    Object.defineProperty(window, 'flyoff', {
+      configurable: true,
+      value: { checkSpellcheckWords },
+    });
+    const preferences = createDefaultFlyoffPreferences();
+    preferences.spellcheck.enabled = true;
+    const original: MarkdownDocument = {
+      nodeId: note.nodeId,
+      content: 'palavra incorreta',
+      readOnly: false,
+      revision: '1'.repeat(64),
+    };
+    const controller = new MarkdownDocumentController({
+      reload: vi.fn(),
+      save: successfulSave(),
+    });
+    const renderEditor = (active: boolean) => (
+      <FlyoffPreferencesProvider value={preferenceContext(preferences)}>
+        <MarkdownEditor
+          active={active}
+          controller={controller}
+          document={original}
+          translate={translate}
+        />
+      </FlyoffPreferencesProvider>
+    );
+    const view = render(renderEditor(false));
+
+    await act(async () => {
+      vi.advanceTimersByTime(200);
+      await Promise.resolve();
+    });
+    expect(checkSpellcheckWords).not.toHaveBeenCalled();
+
+    view.rerender(renderEditor(true));
+    await act(async () => {
+      vi.advanceTimersByTime(200);
+      await Promise.resolve();
+    });
+    expect(checkSpellcheckWords).toHaveBeenCalledTimes(1);
+  });
+
   it('changes a source color token as one undoable operation', () => {
     const original: MarkdownDocument = {
       nodeId: note.nodeId,
@@ -1217,9 +1304,7 @@ describe('Markdown editor', () => {
     )!;
     fireEvent.click(trigger);
 
-    const hex = screen.getByLabelText(
-      'projects.nodeColorCustom: hexadecimal',
-    );
+    const hex = screen.getByLabelText('projects.nodeColorCustom: hexadecimal');
     fireEvent.change(hex, { target: { value: '#ff0000' } });
     fireEvent.blur(hex);
     fireEvent.click(
@@ -1230,9 +1315,7 @@ describe('Markdown editor', () => {
       '[John]{color=#FF0000}',
     );
     controller.undo(note.nodeId);
-    expect(controller.getSnapshot(note.nodeId)?.content).toBe(
-      original.content,
-    );
+    expect(controller.getSnapshot(note.nodeId)?.content).toBe(original.content);
   });
 
   it('removes a link colour without removing the link', () => {
@@ -1254,9 +1337,7 @@ describe('Markdown editor', () => {
       />,
     );
     fireEvent.click(
-      container.querySelector<HTMLButtonElement>(
-        '.md-inline-color-trigger',
-      )!,
+      container.querySelector<HTMLButtonElement>('.md-inline-color-trigger')!,
     );
     fireEvent.click(
       screen.getByRole('button', { name: 'toolbar.defaultColor' }),
@@ -1352,7 +1433,9 @@ describe('Markdown editor', () => {
       </FlyoffPreferencesProvider>,
     );
 
-    expect(view.container.querySelector('.markdown-editor__header')).toBeTruthy();
+    expect(
+      view.container.querySelector('.markdown-editor__header'),
+    ).toBeTruthy();
     expect(screen.getByText('projects.saved')).toBeTruthy();
     expect(
       screen.queryByRole('button', { name: 'projects.editorModeMenu' }),
@@ -1380,9 +1463,8 @@ describe('Markdown editor', () => {
       />,
     );
 
-    const editor = view.container.querySelector<HTMLElement>(
-      '.markdown-editor',
-    );
+    const editor =
+      view.container.querySelector<HTMLElement>('.markdown-editor');
     expect(editor?.hasAttribute('data-note-accent')).toBe(true);
     expect(editor?.style.getPropertyValue('--note-seed')).toBe('#3568A4');
 
@@ -1396,9 +1478,8 @@ describe('Markdown editor', () => {
       />,
     );
 
-    const cleared = view.container.querySelector<HTMLElement>(
-      '.markdown-editor',
-    );
+    const cleared =
+      view.container.querySelector<HTMLElement>('.markdown-editor');
     expect(cleared?.hasAttribute('data-note-accent')).toBe(false);
     expect(cleared?.style.getPropertyValue('--note-seed')).toBe('');
   });
@@ -1602,7 +1683,11 @@ describe('Markdown editor', () => {
       })
       .mockImplementationOnce(async (request) => ({
         ok: true as const,
-        value: { ...original, content: request.content, revision: secondRevision },
+        value: {
+          ...original,
+          content: request.content,
+          revision: secondRevision,
+        },
       }));
     const controller = new MarkdownDocumentController({
       reload: vi.fn(async () => ({ ok: true as const, value: original })),
@@ -1618,7 +1703,9 @@ describe('Markdown editor', () => {
       />,
     );
 
-    const editor = screen.getByRole('textbox', { name: 'projects.editorLabel' });
+    const editor = screen.getByRole('textbox', {
+      name: 'projects.editorLabel',
+    });
     editor.textContent = '# Changed';
     fireEvent.input(editor);
     fireEvent.keyDown(editor, { key: 's', ctrlKey: true });
@@ -1979,9 +2066,9 @@ describe('Markdown editor', () => {
         translate={translate}
       />,
     );
-    expect(
-      screen.getByLabelText('projects.editorPosition').textContent,
-    ).toBe('');
+    expect(screen.getByLabelText('projects.editorPosition').textContent).toBe(
+      '',
+    );
     expect(
       screen.getByRole('button', { name: 'projects.editorModeMenu' }),
     ).toBeTruthy();
@@ -2213,9 +2300,9 @@ describe('Markdown editor', () => {
     editor.focus();
     writeSelection(editor, 3);
     document.dispatchEvent(new Event('selectionchange'));
-    expect(
-      editor.children[0]?.classList.contains('md-line--active'),
-    ).toBe(true);
+    expect(editor.children[0]?.classList.contains('md-line--active')).toBe(
+      true,
+    );
 
     const second = editor.children[1] as HTMLElement;
     const observer = new MutationObserver(() => undefined);
@@ -2236,12 +2323,12 @@ describe('Markdown editor', () => {
     observer.disconnect();
 
     expect(controller.getSnapshot(note.nodeId)?.content).toBe('ab\nsecond');
-    expect(
-      editor.children[0]?.classList.contains('md-line--active'),
-    ).toBe(true);
-    expect(
-      editor.children[1]?.classList.contains('md-line--active'),
-    ).toBe(false);
+    expect(editor.children[0]?.classList.contains('md-line--active')).toBe(
+      true,
+    );
+    expect(editor.children[1]?.classList.contains('md-line--active')).toBe(
+      false,
+    );
     expect(
       records.some((record) =>
         record.oldValue?.split(/\s+/).includes('md-line--active'),
@@ -2446,6 +2533,295 @@ describe('Markdown editor', () => {
     );
   });
 
+  it('rebuilds project media URLs when the project changes without a content change', () => {
+    const content = readingImageDirective();
+    const firstProjectId = 'cdb39a1a-0339-4c75-91ea-78fbbcb2f97a';
+    const secondProjectId = 'adb39a1a-0339-4c75-91ea-78fbbcb2f97a';
+    const view = render(
+      <MarkdownReadingView
+        ariaLabel="Reading"
+        content={content}
+        projectId={firstProjectId}
+        translate={translate}
+      />,
+    );
+
+    expect(screen.getByAltText('Lua').getAttribute('src')).toContain(
+      firstProjectId,
+    );
+    view.rerender(
+      <MarkdownReadingView
+        ariaLabel="Reading"
+        content={content}
+        projectId={secondProjectId}
+        translate={translate}
+      />,
+    );
+    expect(screen.getByAltText('Lua').getAttribute('src')).toContain(
+      secondProjectId,
+    );
+  });
+
+  it('uses the latest project when a queued split frame belongs to an older effect', async () => {
+    vi.useFakeTimers({
+      toFake: [
+        'cancelAnimationFrame',
+        'clearTimeout',
+        'requestAnimationFrame',
+        'setTimeout',
+      ],
+    });
+    const content = readingImageDirective();
+    const firstProjectId = 'cdb39a1a-0339-4c75-91ea-78fbbcb2f97a';
+    const latestProjectId = 'adb39a1a-0339-4c75-91ea-78fbbcb2f97a';
+    const view = render(
+      <MarkdownReadingView
+        ariaLabel="Reading"
+        content="initial"
+        projectId={project.projectId}
+        translate={translate}
+        updatePolicy="split"
+      />,
+    );
+
+    view.rerender(
+      <MarkdownReadingView
+        ariaLabel="Reading"
+        content={content}
+        projectId={firstProjectId}
+        translate={translate}
+        updatePolicy="split"
+      />,
+    );
+    view.rerender(
+      <MarkdownReadingView
+        ariaLabel="Reading"
+        content={content}
+        projectId={latestProjectId}
+        translate={translate}
+        updatePolicy="split"
+      />,
+    );
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20);
+    });
+
+    const source = screen.getByAltText('Lua').getAttribute('src');
+    expect(source).toContain(latestProjectId);
+    expect(source).not.toContain(firstProjectId);
+  });
+
+  it('renders an initial virtual-scale reading view cooperatively', async () => {
+    const frames: FrameRequestCallback[] = [];
+    let now = 0;
+    const nowSpy = vi
+      .spyOn(performance, 'now')
+      .mockImplementation(() => (now += 9));
+    const frameSpy = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback) => {
+        frames.push(callback);
+        return frames.length;
+      });
+    const large = [
+      '```text',
+      ...Array.from({ length: 5_001 }, (_, index) => `line ${index}`),
+      '```',
+    ].join('\n');
+
+    try {
+      render(
+        <MarkdownReadingView
+          ariaLabel="Reading"
+          content={large}
+          translate={translate}
+        />,
+      );
+      const documentView = screen.getByRole('document');
+
+      expect(documentView.getAttribute('aria-busy')).toBe('true');
+      expect(documentView.textContent).toBe('');
+
+      await flushAnimationFrames(
+        frames,
+        () => documentView.getAttribute('aria-busy') === null,
+      );
+
+      expect(documentView.querySelector('pre')?.textContent).toContain(
+        'line 5000',
+      );
+      expect(documentView.getAttribute('aria-busy')).toBeNull();
+    } finally {
+      frameSpy.mockRestore();
+      nowSpy.mockRestore();
+    }
+  });
+
+  it('keeps immediate reading content stable when a large render is superseded', async () => {
+    const frames: FrameRequestCallback[] = [];
+    let now = 0;
+    const nowSpy = vi
+      .spyOn(performance, 'now')
+      .mockImplementation(() => (now += 9));
+    const frameSpy = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback) => {
+        frames.push(callback);
+        return frames.length;
+      });
+    const large = Array.from(
+      { length: 5_100 },
+      (_, index) => `# Heading ${index}`,
+    ).join('\n');
+    const view = render(
+      <MarkdownReadingView
+        ariaLabel="Reading"
+        content="initial"
+        translate={translate}
+      />,
+    );
+
+    try {
+      view.rerender(
+        <MarkdownReadingView
+          ariaLabel="Reading"
+          content={large}
+          translate={translate}
+        />,
+      );
+      const documentView = screen.getByRole('document');
+      expect(documentView.textContent).toBe('initial');
+      expect(documentView.getAttribute('aria-busy')).toBe('true');
+
+      view.rerender(
+        <MarkdownReadingView
+          ariaLabel="Reading"
+          content="latest"
+          translate={translate}
+        />,
+      );
+      expect(documentView.textContent).toBe('latest');
+      expect(documentView.getAttribute('aria-busy')).toBeNull();
+
+      await flushAnimationFrames(frames, () => frames.length === 0);
+      expect(documentView.textContent).toBe('latest');
+      expect(documentView.getAttribute('aria-busy')).toBeNull();
+    } finally {
+      frameSpy.mockRestore();
+      nowSpy.mockRestore();
+    }
+  });
+
+  it('clears stale busy state when a virtual preview returns to the published content', async () => {
+    vi.useFakeTimers({
+      toFake: [
+        'cancelAnimationFrame',
+        'clearTimeout',
+        'requestAnimationFrame',
+        'setTimeout',
+      ],
+    });
+    const large = Array.from(
+      { length: 5_100 },
+      (_, index) => `# Heading ${index}`,
+    ).join('\n');
+    const view = render(
+      <MarkdownReadingView
+        ariaLabel="Reading"
+        content="initial"
+        translate={translate}
+        updatePolicy="split"
+      />,
+    );
+
+    view.rerender(
+      <MarkdownReadingView
+        ariaLabel="Reading"
+        content={large}
+        translate={translate}
+        updatePolicy="split"
+      />,
+    );
+    expect(screen.getByRole('document').getAttribute('aria-busy')).toBe('true');
+    act(() => vi.advanceTimersByTime(360));
+    expect(screen.getByRole('document').getAttribute('aria-busy')).toBe('true');
+
+    view.rerender(
+      <MarkdownReadingView
+        ariaLabel="Reading"
+        content="initial"
+        translate={translate}
+        updatePolicy="split"
+      />,
+    );
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20);
+    });
+
+    expect(screen.getByRole('document').getAttribute('aria-busy')).toBeNull();
+    expect(screen.getByRole('document').textContent).toBe('initial');
+  });
+
+  it('uses the latest project when an older maximum-lag timer flushes the preview', () => {
+    vi.useFakeTimers();
+    const directive = readingImageDirective();
+    const firstProjectId = 'cdb39a1a-0339-4c75-91ea-78fbbcb2f97a';
+    const secondProjectId = 'bdb39a1a-0339-4c75-91ea-78fbbcb2f97a';
+    const latestProjectId = 'adb39a1a-0339-4c75-91ea-78fbbcb2f97a';
+    const content = (label: string, fill: string) =>
+      `${directive}\n\n${label} ${fill.repeat(100_000)}`;
+    const view = render(
+      <MarkdownReadingView
+        ariaLabel="Reading"
+        content="initial"
+        projectId={project.projectId}
+        translate={translate}
+        updatePolicy="split"
+      />,
+    );
+
+    view.rerender(
+      <MarkdownReadingView
+        ariaLabel="Reading"
+        content={content('first', 'a')}
+        projectId={firstProjectId}
+        translate={translate}
+        updatePolicy="split"
+      />,
+    );
+    act(() => vi.advanceTimersByTime(50));
+    view.rerender(
+      <MarkdownReadingView
+        ariaLabel="Reading"
+        content={content('second', 'b')}
+        projectId={secondProjectId}
+        translate={translate}
+        updatePolicy="split"
+      />,
+    );
+    act(() => vi.advanceTimersByTime(50));
+    view.rerender(
+      <MarkdownReadingView
+        ariaLabel="Reading"
+        content={content('latest', 'c')}
+        projectId={latestProjectId}
+        translate={translate}
+        updatePolicy="split"
+      />,
+    );
+
+    expect(screen.getByRole('document').textContent).toBe('initial');
+    act(() => vi.advanceTimersByTime(20));
+
+    const documentView = screen.getByRole('document');
+    const source = screen.getByAltText('Lua').getAttribute('src');
+    expect(documentView.textContent).toContain('latest');
+    expect(documentView.textContent).not.toContain('second');
+    expect(source).toContain(latestProjectId);
+    expect(source).not.toContain(firstProjectId);
+  });
+
   it('keeps a large split preview stable and flushes the latest edit within the maximum lag', () => {
     vi.useFakeTimers();
     const first = `first ${'a'.repeat(100_000)}`;
@@ -2488,8 +2864,10 @@ describe('Markdown editor', () => {
     );
 
     expect(screen.getByRole('document').textContent).toBe('initial');
+    expect(screen.getByRole('document').getAttribute('aria-busy')).toBe('true');
     act(() => vi.advanceTimersByTime(20));
     expect(screen.getByRole('document').textContent).toBe(latest);
+    expect(screen.getByRole('document').getAttribute('aria-busy')).toBeNull();
   });
 
   it('shows the five internal-link commands and goes to the resolved heading', async () => {

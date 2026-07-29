@@ -1,5 +1,6 @@
 import {
   useEffect,
+  useMemo,
   useRef,
   useState,
   type KeyboardEvent,
@@ -17,6 +18,10 @@ import {
   serializeImageDirective,
 } from '../../shared/markdown';
 import type { SourceEditTransaction } from './markdown-history';
+import {
+  isSourceTextChangeApplicable,
+  type SourceTextChange,
+} from './source-document-model';
 import {
   hasWorkspaceDrag,
   isWorkspaceDragActive,
@@ -75,8 +80,11 @@ import {
   MEDIA_ASSET_TRANSFER,
 } from './media-transfer';
 import type { ImageInsertionPlacement } from './image-interaction';
+import { shouldVirtualizeSource } from './source-viewport';
+import { VirtualSourceEditor } from './VirtualSourceEditor';
 
 export interface RichSourceEditorProps {
+  active?: boolean;
   activeOffset?: number;
   ariaLabel: string;
   autoFocus?: boolean;
@@ -123,11 +131,136 @@ export interface SourceInlineColorRequest {
 
 interface PendingInput {
   before: SourceEditTransaction['before'];
+  data?: string | null;
   inputType: string;
   timestamp: number;
 }
 
-export function RichSourceEditor({
+function sourceTextChangeForStates(
+  before: SourceEditTransaction['before'],
+  after: SourceEditTransaction['after'],
+): SourceTextChange | undefined {
+  const directFrom = Math.min(
+    before.selection.start,
+    before.content.length,
+  );
+  const directTo = Math.min(
+    Math.max(directFrom, before.selection.end),
+    before.content.length,
+  );
+  const directInsertLength =
+    after.content.length -
+    (before.content.length - (directTo - directFrom));
+  if (directInsertLength >= 0) {
+    const direct = {
+      from: directFrom,
+      insert: after.content.slice(
+        directFrom,
+        directFrom + directInsertLength,
+      ),
+      to: directTo,
+    };
+    if (
+      isSourceTextChangeApplicable(
+        before.content,
+        after.content,
+        direct,
+      )
+    ) {
+      return direct;
+    }
+  }
+
+  const focus = Math.min(
+    before.selection.start,
+    after.selection.start,
+  );
+  const beforeStart =
+    before.content.lastIndexOf('\n', Math.max(0, focus - 1)) + 1;
+  const afterStart =
+    after.content.lastIndexOf('\n', Math.max(0, focus - 1)) + 1;
+  if (beforeStart !== afterStart) {
+    return undefined;
+  }
+  const beforeBreak = before.content.indexOf(
+    '\n',
+    Math.max(before.selection.end, focus),
+  );
+  const afterBreak = after.content.indexOf(
+    '\n',
+    Math.max(after.selection.end, focus),
+  );
+  const beforeEnd =
+    beforeBreak === -1 ? before.content.length : beforeBreak;
+  const afterEnd =
+    afterBreak === -1 ? after.content.length : afterBreak;
+  let prefix = 0;
+  while (
+    beforeStart + prefix < beforeEnd &&
+    afterStart + prefix < afterEnd &&
+    before.content[beforeStart + prefix] ===
+      after.content[afterStart + prefix]
+  ) {
+    prefix += 1;
+  }
+  let suffix = 0;
+  while (
+    suffix < beforeEnd - beforeStart - prefix &&
+    suffix < afterEnd - afterStart - prefix &&
+    before.content[beforeEnd - suffix - 1] ===
+      after.content[afterEnd - suffix - 1]
+  ) {
+    suffix += 1;
+  }
+  const localized = {
+    from: beforeStart + prefix,
+    insert: after.content.slice(
+      afterStart + prefix,
+      afterEnd - suffix,
+    ),
+    to: beforeEnd - suffix,
+  };
+  return isSourceTextChangeApplicable(
+    before.content,
+    after.content,
+    localized,
+  )
+    ? localized
+    : undefined;
+}
+
+function supportsVirtualSource(value: string): boolean {
+  return shouldVirtualizeSource(value);
+}
+
+export function RichSourceEditor(
+  props: RichSourceEditorProps,
+) {
+  const virtual = useMemo(
+    () => supportsVirtualSource(props.value),
+    [props.value],
+  );
+  const currentEditor = props.editorRef.current;
+  const activeElement = currentEditor?.ownerDocument.activeElement;
+  const restoreFocus = Boolean(
+    currentEditor &&
+      activeElement &&
+      (activeElement === currentEditor ||
+        currentEditor.contains(activeElement)),
+  );
+  const editorProps =
+    restoreFocus && !props.autoFocus
+      ? { ...props, autoFocus: true }
+      : props;
+  return virtual ? (
+    <VirtualSourceEditor {...editorProps} />
+  ) : (
+    <ClassicSourceEditor {...editorProps} />
+  );
+}
+
+function ClassicSourceEditor({
+  active: pageActive = true,
   activeOffset,
   ariaLabel,
   autoFocus = false,
@@ -172,6 +305,11 @@ export function RichSourceEditor({
   const suppressedInputRef = useRef<string | undefined>(undefined);
   const suppressedInputTimerRef = useRef<number | undefined>(undefined);
   const pendingRef = useRef<PendingInput | undefined>(undefined);
+  const decorationRef = useRef<{
+    inlineColorLabel?: string;
+    readOnly: boolean;
+    value?: string;
+  }>({ readOnly });
   const stateRef = useRef({ content: value, selection });
   const readOnlyRef = useRef(readOnly);
   const typingColorRef = useRef(typingColor);
@@ -240,15 +378,37 @@ export function RichSourceEditor({
         ? stateRef.current.selection
         : selection;
     reconcileSource(root, value);
-    for (const trigger of root.querySelectorAll<HTMLButtonElement>(
-      '.md-inline-color-trigger',
-    )) {
-      if (inlineColorLabel) {
-        trigger.setAttribute('aria-label', inlineColorLabel);
-        trigger.dataset.flyoffTooltip = inlineColorLabel;
-        trigger.dataset.flyoffTooltipPlacement = 'top';
+    const decoration = decorationRef.current;
+    const metadataChanged =
+      decoration.inlineColorLabel !== inlineColorLabel ||
+      decoration.readOnly !== readOnly;
+    if (decoration.value !== value || metadataChanged) {
+      const change = metadataChanged
+        ? undefined
+        : getSourceChangeRange(root);
+      const start = change?.startLine ?? 0;
+      const end = Math.min(
+        root.children.length,
+        change?.endLine ?? root.children.length,
+      );
+      for (let index = start; index < end; index += 1) {
+        const line = root.children[index];
+        for (const trigger of line?.querySelectorAll<HTMLButtonElement>(
+          '.md-inline-color-trigger',
+        ) ?? []) {
+          if (inlineColorLabel) {
+            trigger.setAttribute('aria-label', inlineColorLabel);
+            trigger.dataset.flyoffTooltip = inlineColorLabel;
+            trigger.dataset.flyoffTooltipPlacement = 'top';
+          } else {
+            trigger.removeAttribute('aria-label');
+            delete trigger.dataset.flyoffTooltip;
+            delete trigger.dataset.flyoffTooltipPlacement;
+          }
+          trigger.ariaDisabled = String(readOnly);
+        }
       }
-      trigger.ariaDisabled = String(readOnly);
+      decorationRef.current = { inlineColorLabel, readOnly, value };
     }
     if (focused) {
       writeSelection(root, nextSelection);
@@ -261,11 +421,13 @@ export function RichSourceEditor({
     const root = editorRef.current;
     const checkWords = (window.flyoff as Partial<FlyoffApi> | undefined)
       ?.checkSpellcheckWords;
-    if (!root || !spellCheck || !checkWords) {
-      if (root) {
+    if (!root || !pageActive || !spellCheck || !checkWords) {
+      if (root && !spellCheck) {
         clearSourceSpellingErrors(root);
       }
-      spellcheckScopeRef.current = undefined;
+      if (!spellCheck) {
+        spellcheckScopeRef.current = undefined;
+      }
       return;
     }
 
@@ -351,6 +513,7 @@ export function RichSourceEditor({
       window.clearTimeout(timeout);
     };
   }, [
+    pageActive,
     checkCodeBlocks,
     editorRef,
     largeSourceDocument,
@@ -396,8 +559,10 @@ export function RichSourceEditor({
     function reconcileSelection(
       content: string,
       nextSelection: SourceSelection,
+      verifyStructure = false,
+      change?: SourceTextChange,
     ): void {
-      reconcileSource(editor, content);
+      reconcileSource(editor, content, verifyStructure, change);
       writeSelection(editor, nextSelection);
       updateActiveSourceLine(editor, content, nextSelection.end);
     }
@@ -408,14 +573,23 @@ export function RichSourceEditor({
       nextSelection: SourceSelection,
       inputType: string,
       timestamp: number,
+      change?: SourceTextChange,
     ): void {
-      reconcileSelection(content, nextSelection);
       const after = { content, selection: nextSelection };
+      const exactChange =
+        change ?? sourceTextChangeForStates(before, after);
+      reconcileSelection(
+        content,
+        nextSelection,
+        false,
+        exactChange,
+      );
       stateRef.current = after;
       pendingRef.current = undefined;
       callbacksRef.current.onTransaction({
         after,
         before,
+        change: exactChange,
         inputType,
         timestamp,
       });
@@ -435,12 +609,25 @@ export function RichSourceEditor({
         inserted,
         applyTypingColor ? typingColorRef.current : null,
       );
+      const normalized = normalizeSourceText(inserted);
+      const directChange = {
+        from: before.selection.start,
+        insert: normalized,
+        to: before.selection.end,
+      };
       commit(
         before,
         after.content,
         after.selection,
         inputType,
         performance.now(),
+        isSourceTextChangeApplicable(
+          before.content,
+          after.content,
+          directChange,
+        )
+          ? directChange
+          : undefined,
       );
     }
 
@@ -477,7 +664,7 @@ export function RichSourceEditor({
       }
 
       if (after.content === before.content) {
-        reconcileSelection(after.content, after.selection);
+        reconcileSelection(after.content, after.selection, true);
         stateRef.current = after;
         pendingRef.current = undefined;
         callbacksRef.current.onSelectionChange(after.selection);
@@ -571,6 +758,7 @@ export function RichSourceEditor({
 
       pendingRef.current = {
         before,
+        data,
         inputType: event.inputType,
         timestamp: performance.now(),
       };
@@ -581,6 +769,7 @@ export function RichSourceEditor({
         reconcileSelection(
           stateRef.current.content,
           stateRef.current.selection,
+          true,
         );
         return;
       }
@@ -588,6 +777,7 @@ export function RichSourceEditor({
         reconcileSelection(
           stateRef.current.content,
           stateRef.current.selection,
+          true,
         );
         suppressedInputRef.current = undefined;
         return;
@@ -738,6 +928,7 @@ export function RichSourceEditor({
           reconcileSelection(
             stateRef.current.content,
             stateRef.current.selection,
+            true,
           );
           return;
         }

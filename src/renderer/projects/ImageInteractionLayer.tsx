@@ -1,4 +1,5 @@
 import {
+  memo,
   useCallback,
   useEffect,
   useReducer,
@@ -40,9 +41,10 @@ import {
   updateImageDropPreview,
   type ImageDragRect,
 } from './image-drag-coordinator';
-import { getSourceDocumentModel } from './source-renderer';
 import {
+  focusSource,
   readSelection,
+  readSourceDocumentModel,
   sourceCaretRect,
   sourceOffsetAtPoint,
   writeSelection,
@@ -142,7 +144,10 @@ function imageSourceRange(
   wrapper: HTMLElement,
   lineStart: number,
   source: string,
-): { directive: ImageDirective; range: ImageSourceRange } | null {
+): {
+  directive: ImageDirective;
+  range: ImageSourceRange;
+} | null {
   const localStart = Number(wrapper.dataset.imageSourceStart ?? 0);
   const localEnd = Number(wrapper.dataset.imageSourceEnd ?? source.length);
   if (
@@ -196,6 +201,7 @@ function imageHostAtPoint(
 
 interface BlockDropPreview {
   afterLast: boolean;
+  boundaryIndex: number;
   bounds: OverlayBounds;
   placement: ImageInsertionPlacement;
   sourceRect: ImageDragRect;
@@ -216,9 +222,7 @@ function captureBlockDropGeometry(
   editor: HTMLElement,
   layer: HTMLElement,
 ): BlockDropGeometry {
-  const lines = Array.from(
-    editor.querySelectorAll<HTMLElement>('.md-line'),
-  );
+  const lines = Array.from(editor.querySelectorAll<HTMLElement>('.md-line'));
   return {
     contentBounds: lines.map(
       (line) =>
@@ -261,12 +265,13 @@ function resolveBlockDropPreview(
   );
   const provisionalHeight =
     provisionalWidth * (targetHeight / Math.max(1, targetWidth));
-  const target = imageBoundaryAtPoint(
-    clientY,
-    provisionalHeight,
-    lineBounds,
-  );
+  const target = imageBoundaryAtPoint(clientY, provisionalHeight, lineBounds);
   const targetLine = lines[Math.min(target, lines.length - 1)];
+  const boundaryLine = lines[Math.min(target, lines.length - 1)];
+  const boundaryLineIndex = Number(boundaryLine?.dataset.line) - 1;
+  const boundaryIndex = Number.isInteger(boundaryLineIndex)
+    ? boundaryLineIndex + Number(target >= lines.length)
+    : target;
   const contentBounds =
     geometry.contentBounds[
       Math.min(target, geometry.contentBounds.length - 1)
@@ -297,6 +302,7 @@ function resolveBlockDropPreview(
   };
   return {
     afterLast: target >= lines.length,
+    boundaryIndex,
     bounds,
     placement,
     sourceRect: {
@@ -309,7 +315,7 @@ function resolveBlockDropPreview(
   };
 }
 
-export function ImageInteractionLayer({
+function ImageInteractionLayerComponent({
   editorRef,
   onOperation,
   onInsertMediaAsset,
@@ -325,7 +331,10 @@ export function ImageInteractionLayer({
   );
   const [bounds, setBounds] = useState<OverlayBounds | null>(null);
   const [dropBounds, setDropBounds] = useState<OverlayBounds | null>(null);
-  const [context, setContext] = useState<{ x: number; y: number }>();
+  const [context, setContext] = useState<{
+    x: number;
+    y: number;
+  }>();
   const [metadataEdit, setMetadataEdit] = useState<'alt' | 'caption'>();
   const [metadataValue, setMetadataValue] = useState('');
   const layerRef = useRef<HTMLDivElement>(null);
@@ -380,7 +389,7 @@ export function ImageInteractionLayer({
     (host: HTMLElement): void => {
       const editor = editorRef.current;
       const line = host.closest<HTMLElement>('.md-line');
-      const model = editor ? getSourceDocumentModel(editor) : undefined;
+      const model = editor ? readSourceDocumentModel(editor) : undefined;
       const lineIndex = Number(line?.dataset.line) - 1;
       const source =
         model && Number.isInteger(lineIndex) && lineIndex >= 0
@@ -390,11 +399,7 @@ export function ImageInteractionLayer({
       const resolved =
         source === undefined || !wrapper || !model
           ? null
-          : imageSourceRange(
-              wrapper,
-              model.lineStarts[lineIndex] ?? 0,
-              source,
-            );
+          : imageSourceRange(wrapper, model.lineStarts[lineIndex] ?? 0, source);
       if (!editor || !model || !resolved || lineIndex < 0) {
         return;
       }
@@ -413,7 +418,7 @@ export function ImageInteractionLayer({
         end: offset,
         direction: 'none',
       } as const;
-      editor.focus({ preventScroll: true });
+      focusSource(editor, { preventScroll: true });
       writeSelection(editor, selection);
       onSelectionChangeRef.current(selection);
       syncBounds();
@@ -426,77 +431,106 @@ export function ImageInteractionLayer({
     if (!editor) {
       return;
     }
-    const hydrate = (): void => {
-      for (const host of editor.querySelectorAll<HTMLElement>(
-        '.md-source-image__host[data-md-decoration]',
-      )) {
-        const assetId = host.parentElement?.dataset.imageAsset;
-        const image = host.querySelector<HTMLImageElement>('img');
-        if (assetId && image) {
-          const source = mediaAssetUrl(assetId, projectId);
-          if (image.src !== source) {
-            image.src = source;
-          }
-          image.addEventListener(
-            'error',
-            () => host.parentElement?.classList.add('md-source-image--missing'),
-            { once: true },
-          );
+    const hydrateHost = (host: HTMLElement): void => {
+      const assetId = host.parentElement?.dataset.imageAsset;
+      const image = host.querySelector<HTMLImageElement>('img');
+      if (assetId && image) {
+        const source = mediaAssetUrl(assetId, projectId);
+        if (image.src !== source) {
+          image.src = source;
         }
-      }
-      const selected = stateRef.current.selection;
-      if (selected && stateRef.current.phase !== 'image-dragging') {
-        const current = Array.from(
-          editor.querySelectorAll<HTMLElement>('.md-source-image'),
-        ).find(
-          (element) =>
-            element.dataset.imageInstance === selected.directive.instanceId,
+        image.addEventListener(
+          'error',
+          () => host.parentElement?.classList.add('md-source-image--missing'),
+          { once: true },
         );
-        const host = current?.querySelector<HTMLElement>(
-          '.md-source-image__host',
-        );
-        if (host) {
-          hostRef.current = host;
-          const line = host.closest<HTMLElement>('.md-line');
-          const model = getSourceDocumentModel(editor);
-          const lineIndex = Number(line?.dataset.line) - 1;
-          const source =
-            model && lineIndex >= 0
-              ? model.lines[lineIndex]?.source
-              : undefined;
-          const resolved =
-            current && model && source !== undefined
-              ? imageSourceRange(
-                  current,
-                  model.lineStarts[lineIndex] ?? 0,
-                  source,
-                )
-              : null;
-          if (
-            resolved &&
-            (selected.sourceRange.start !== resolved.range.start ||
-              selected.sourceRange.end !== resolved.range.end ||
-              selected.lineIndex !== lineIndex)
-          ) {
-            dispatch({
-              type: 'select',
-              selection: {
-                directive: resolved.directive,
-                lineIndex,
-                sourceRange: resolved.range,
-              },
-            });
-          }
-          syncBounds();
-        } else if (!hostRef.current?.isConnected) {
-          hostRef.current = null;
-          setBounds(null);
-        }
       }
     };
-    hydrate();
-    const observer = new MutationObserver(hydrate);
-    observer.observe(editor, { childList: true, subtree: true });
+    const hydrateTree = (root: ParentNode): void => {
+      if (
+        root instanceof HTMLElement &&
+        root.matches('.md-source-image__host[data-md-decoration]')
+      ) {
+        hydrateHost(root);
+      }
+      for (const host of root.querySelectorAll<HTMLElement>(
+        '.md-source-image__host[data-md-decoration]',
+      )) {
+        hydrateHost(host);
+      }
+    };
+    const syncSelectedImage = (): void => {
+      const selected = stateRef.current.selection;
+      if (!selected || stateRef.current.phase === 'image-dragging') {
+        return;
+      }
+      let host = hostRef.current;
+      if (
+        !host?.isConnected ||
+        host.parentElement?.dataset.imageInstance !==
+          selected.directive.instanceId
+      ) {
+        host = editor.querySelector<HTMLElement>(
+          `.md-source-image[data-image-instance="${CSS.escape(selected.directive.instanceId)}"] > .md-source-image__host`,
+        );
+      }
+      if (host) {
+        hostRef.current = host;
+        const current = host.parentElement;
+        const line = host.closest<HTMLElement>('.md-line');
+        const model = readSourceDocumentModel(editor);
+        const lineIndex = Number(line?.dataset.line) - 1;
+        const source =
+          model && lineIndex >= 0 ? model.lines[lineIndex]?.source : undefined;
+        const resolved =
+          current && model && source !== undefined
+            ? imageSourceRange(
+                current,
+                model.lineStarts[lineIndex] ?? 0,
+                source,
+              )
+            : null;
+        if (
+          resolved &&
+          (selected.sourceRange.start !== resolved.range.start ||
+            selected.sourceRange.end !== resolved.range.end ||
+            selected.lineIndex !== lineIndex)
+        ) {
+          dispatch({
+            type: 'select',
+            selection: {
+              directive: resolved.directive,
+              lineIndex,
+              sourceRange: resolved.range,
+            },
+          });
+        }
+        syncBounds();
+      } else {
+        hostRef.current = null;
+        setBounds(null);
+      }
+    };
+    hydrateTree(editor);
+    syncSelectedImage();
+    const observer = new MutationObserver((records) => {
+      let selectionMayHaveMoved = !hostRef.current?.isConnected;
+      for (const record of records) {
+        selectionMayHaveMoved ||= record.removedNodes.length > 0;
+        for (const node of record.addedNodes) {
+          if (node instanceof Element) {
+            hydrateTree(node);
+          }
+        }
+      }
+      if (selectionMayHaveMoved) {
+        syncSelectedImage();
+      }
+    });
+    observer.observe(editor, {
+      childList: true,
+      subtree: true,
+    });
     const mediaChanged = (event: Event): void => {
       const removed = removedMediaAssetIds(event);
       if (removed.size === 0) {
@@ -561,11 +595,11 @@ export function ImageInteractionLayer({
       left === right ||
       Boolean(
         left &&
-          right &&
-          left.height === right.height &&
-          left.left === right.left &&
-          left.top === right.top &&
-          left.width === right.width,
+        right &&
+        left.height === right.height &&
+        left.left === right.left &&
+        left.top === right.top &&
+        left.width === right.width,
       );
     const publishDropBounds = (next: OverlayBounds | null): void => {
       if (sameBounds(dropBoundsValue, next)) {
@@ -647,9 +681,7 @@ export function ImageInteractionLayer({
         );
         const finalBounds = finalWrapper?.getBoundingClientRect();
         if (
-          (!finalBounds ||
-            finalBounds.width <= 0 ||
-            finalBounds.height <= 0) &&
+          (!finalBounds || finalBounds.width <= 0 || finalBounds.height <= 0) &&
           attempt < 3
         ) {
           settleAtInstance(instanceId, fallback, onFinish, attempt + 1);
@@ -718,20 +750,14 @@ export function ImageInteractionLayer({
       event.stopPropagation();
       selectHost(target);
       const line = target.closest<HTMLElement>('.md-line');
-      const model = getSourceDocumentModel(editor);
+      const model = readSourceDocumentModel(editor);
       const lineIndex = Number(line?.dataset.line) - 1;
       const wrapper = target.closest<HTMLElement>('.md-source-image');
       const source =
-        model && lineIndex >= 0
-          ? model.lines[lineIndex]?.source
-          : undefined;
+        model && lineIndex >= 0 ? model.lines[lineIndex]?.source : undefined;
       const resolved =
         model && wrapper && source !== undefined
-          ? imageSourceRange(
-              wrapper,
-              model.lineStarts[lineIndex] ?? 0,
-              source,
-            )
+          ? imageSourceRange(wrapper, model.lineStarts[lineIndex] ?? 0, source)
           : null;
       if (
         readOnly ||
@@ -754,8 +780,7 @@ export function ImageInteractionLayer({
         startX: event.clientX,
         startY: event.clientY,
         intent: null,
-        preferredMode:
-          resolved.directive.mode === 'wrap' ? 'wrap' : 'block',
+        preferredMode: resolved.directive.mode === 'wrap' ? 'wrap' : 'block',
         sourceRect: {
           height: sourceBounds.height,
           left: sourceBounds.left,
@@ -788,22 +813,15 @@ export function ImageInteractionLayer({
       if (!drag?.started) {
         return;
       }
-      const model = getSourceDocumentModel(editor);
+      const model = readSourceDocumentModel(editor);
       if (drag.directive.mode === 'inline' && model) {
-        const candidate = sourceOffsetAtPoint(
-          editor,
-          clientX,
-          clientY,
-        );
+        const candidate = sourceOffsetAtPoint(editor, clientX, clientY);
         const offset =
           candidate === undefined
             ? null
-            : inlineImageDropOffset(
-                model.source,
-                candidate,
-                drag.sourceRange,
-              );
-        const caret = offset === null ? undefined : sourceCaretRect(editor, offset);
+            : inlineImageDropOffset(model.source, candidate, drag.sourceRange);
+        const caret =
+          offset === null ? undefined : sourceCaretRect(editor, offset);
         const layer = layerRef.current;
         if (offset !== null && caret && layer) {
           const layerBounds = layer.getBoundingClientRect();
@@ -821,14 +839,8 @@ export function ImageInteractionLayer({
             layer.appendChild(inlineMarker);
             drag.intent = nextIntent;
           }
-          const availableWidth = Math.max(
-            96,
-            layerBounds.right - caret.left,
-          );
-          const previewWidth = Math.min(
-            drag.directive.width,
-            availableWidth,
-          );
+          const availableWidth = Math.max(96, layerBounds.right - caret.left);
+          const previewWidth = Math.min(drag.directive.width, availableWidth);
           const previewHeight =
             previewWidth *
             (drag.directive.height / Math.max(1, drag.directive.width));
@@ -847,7 +859,9 @@ export function ImageInteractionLayer({
             top: nextBounds.top + layerBounds.top,
           };
           publishDropBounds(nextBounds);
-          updateImageDropPreview({ rect: drag.previewRect });
+          updateImageDropPreview({
+            rect: drag.previewRect,
+          });
         } else if (drag.intent !== null) {
           clearDropTarget();
           drag.intent = null;
@@ -880,7 +894,7 @@ export function ImageInteractionLayer({
         const nextIntent: ImageDropIntent = {
           kind: 'block-boundary',
           align: nextDirective.align,
-          boundaryIndex: preview.target,
+          boundaryIndex: preview.boundaryIndex,
         };
         if (!sameImageDropIntent(drag.intent, nextIntent)) {
           applyBlockDropTarget(
@@ -972,7 +986,10 @@ export function ImageInteractionLayer({
       drag = undefined;
       updateImageDropPreview(undefined);
       if (moved && completed.intent && completed.previewRect) {
-        holdImageDrag({ x: event.clientX, y: event.clientY });
+        holdImageDrag({
+          x: event.clientX,
+          y: event.clientY,
+        });
         onOperationRef.current?.({
           type: 'move',
           sourceRange: completed.sourceRange,
@@ -1012,7 +1029,7 @@ export function ImageInteractionLayer({
     };
     const updateExternalPreview = (clientX: number, clientY: number): void => {
       const payload = imageDragSnapshot().payload;
-      const model = getSourceDocumentModel(editor);
+      const model = readSourceDocumentModel(editor);
       const geometry = blockDropGeometry();
       if (
         !payload ||
@@ -1035,20 +1052,17 @@ export function ImageInteractionLayer({
       );
       const nextIntent: ImageDropIntent = {
         align: preview.placement.align,
-        boundaryIndex: preview.target,
+        boundaryIndex: preview.boundaryIndex,
         kind: 'block-boundary',
       };
       if (!sameImageDropIntent(externalDrop?.intent ?? null, nextIntent)) {
-        applyBlockDropTarget(
-          preview,
-          preview.placement.align,
-          12,
-        );
+        applyBlockDropTarget(preview, preview.placement.align, 12);
       }
       externalDrop = {
         intent: nextIntent,
         instanceId: payload.instanceId,
-        offset: model.lineStarts[preview.target] ?? model.source.length,
+        offset:
+          model.lineStarts[preview.boundaryIndex] ?? model.source.length,
         placement: preview.placement,
         previewRect: preview.sourceRect,
       };
@@ -1064,7 +1078,7 @@ export function ImageInteractionLayer({
         return;
       }
       const payload = imageDragSnapshot().payload;
-      const model = getSourceDocumentModel(editor);
+      const model = readSourceDocumentModel(editor);
       if (
         !payload ||
         payload.source !== 'gallery' ||
@@ -1123,10 +1137,8 @@ export function ImageInteractionLayer({
             rejectImageDrop(() => publishDropBounds(null));
             return;
           }
-          settleAtInstance(
-            completed.instanceId,
-            completed.previewRect,
-            () => publishDropBounds(null),
+          settleAtInstance(completed.instanceId, completed.previewRect, () =>
+            publishDropBounds(null),
           );
         })
         .catch(() => rejectImageDrop(() => publishDropBounds(null)));
@@ -1167,11 +1179,13 @@ export function ImageInteractionLayer({
     const scroll = (): void => {
       syncBounds();
       if (lastPreview) {
-        schedulePreview(
-          lastPreview.kind,
-          lastPreview.x,
-          lastPreview.y,
-        );
+        blockGeometry = undefined;
+        clearDropTarget();
+        if (drag) {
+          drag.intent = null;
+        }
+        externalDrop = undefined;
+        schedulePreview(lastPreview.kind, lastPreview.x, lastPreview.y);
       }
     };
     const resize = (): void => {
@@ -1183,11 +1197,7 @@ export function ImageInteractionLayer({
       }
       externalDrop = undefined;
       if (lastPreview) {
-        schedulePreview(
-          lastPreview.kind,
-          lastPreview.x,
-          lastPreview.y,
-        );
+        schedulePreview(lastPreview.kind, lastPreview.x, lastPreview.y);
       }
     };
 
@@ -1200,7 +1210,9 @@ export function ImageInteractionLayer({
     editor.addEventListener('pointerup', pointerEnd, true);
     editor.addEventListener('pointercancel', cancelDrag, true);
     editor.addEventListener('lostpointercapture', cancelDrag, true);
-    editor.addEventListener('scroll', scroll, { passive: true });
+    editor.addEventListener('scroll', scroll, {
+      passive: true,
+    });
     editor.addEventListener('copy', clipboard, true);
     editor.addEventListener('cut', clipboard, true);
     window.addEventListener('keydown', keyDown, true);
@@ -1372,9 +1384,15 @@ export function ImageInteractionLayer({
       }
     };
     owner.addEventListener('pointermove', move);
-    owner.addEventListener('pointerup', commit, { once: true });
-    owner.addEventListener('pointercancel', cancel, { once: true });
-    owner.addEventListener('lostpointercapture', cancel, { once: true });
+    owner.addEventListener('pointerup', commit, {
+      once: true,
+    });
+    owner.addEventListener('pointercancel', cancel, {
+      once: true,
+    });
+    owner.addEventListener('lostpointercapture', cancel, {
+      once: true,
+    });
     window.addEventListener('keydown', key, true);
     window.addEventListener('blur', cancel);
     resizeCleanupRef.current = teardown;
@@ -1599,7 +1617,10 @@ export function ImageInteractionLayer({
               checked: selected.directive.ratioLock,
               disabled: readOnly,
             },
-            { kind: 'separator', id: 'size-limits-separator' },
+            {
+              kind: 'separator',
+              id: 'size-limits-separator',
+            },
             {
               kind: 'action',
               id: 'minimum-current',
@@ -1836,11 +1857,20 @@ export function ImageInteractionLayer({
       group === 'align' &&
       (value === 'left' || value === 'center' || value === 'right')
     ) {
-      directive = normalizeImageDirective({ ...directive, align: value });
+      directive = normalizeImageDirective({
+        ...directive,
+        align: value,
+      });
     } else if (action === 'ratio-lock') {
-      directive = { ...directive, ratioLock: !directive.ratioLock };
+      directive = {
+        ...directive,
+        ratioLock: !directive.ratioLock,
+      };
     } else if (action === 'position-lock') {
-      directive = { ...directive, positionLock: !directive.positionLock };
+      directive = {
+        ...directive,
+        positionLock: !directive.positionLock,
+      };
     } else {
       return;
     }
@@ -1985,3 +2015,5 @@ export function ImageInteractionLayer({
     </>
   );
 }
+
+export const ImageInteractionLayer = memo(ImageInteractionLayerComponent);

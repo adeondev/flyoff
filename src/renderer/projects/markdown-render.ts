@@ -4,56 +4,76 @@ import {
   parseMarkdown,
   parseInternalLinkDestination,
   splitMarkdownBlocks,
+  splitMarkdownBlocksCooperatively,
   type BlockNode,
   type Heading,
   type InlineNode,
   type MarkdownBlockSource,
 } from '../../shared/markdown';
-import { twemojiAssetUrl, twemojiSegments } from '../components/twemoji';
+import {
+  twemojiAssetUrl,
+  twemojiSegments,
+  type TwemojiSegment,
+} from '../components/twemoji';
 import { colorContrastInk } from '../components/color';
 
 const SCHEME = /^([a-z][a-z0-9+.-]*):/i;
 const ALLOWED_ASSET_SCHEMES = /^(https?|flyoff|flyoff-media)$/i;
 const ALLOWED_EXTERNAL_SCHEMES = /^(https?|mailto)$/i;
+const ASCII_TEXT = /^\p{ASCII}*$/u;
+const COOPERATIVE_MARKDOWN_BLOCK_CHARACTERS = 64_000;
+function appendTwemojiSegment(
+  parent: Node,
+  segment: TwemojiSegment,
+): void {
+  if (!segment.codepoint || !segment.emoji) {
+    parent.appendChild(document.createTextNode(segment.text));
+    return;
+  }
+  const wrapper = document.createElement('span');
+  const unicode = document.createElement('span');
+  const assetUrl = twemojiAssetUrl(segment.codepoint);
+  wrapper.className = 'twemoji';
+  wrapper.dataset.twemoji = segment.codepoint;
+  wrapper.setAttribute('aria-label', segment.emoji);
+  wrapper.setAttribute('role', 'img');
+  unicode.className = 'twemoji__unicode';
+  unicode.setAttribute('aria-hidden', 'true');
+  unicode.textContent = segment.emoji;
+  wrapper.appendChild(unicode);
+  if (assetUrl) {
+    const image = document.createElement('img');
+    image.alt = '';
+    image.setAttribute('aria-hidden', 'true');
+    image.className = 'twemoji__glyph';
+    image.decoding = 'async';
+    image.draggable = false;
+    image.loading = 'lazy';
+    image.src = assetUrl;
+    image.addEventListener(
+      'error',
+      () => {
+        wrapper.classList.add('twemoji--fallback');
+        image.remove();
+      },
+      { once: true },
+    );
+    wrapper.appendChild(image);
+  } else {
+    wrapper.classList.add('twemoji--fallback');
+  }
+  parent.appendChild(wrapper);
+}
+
 function appendTwemojiText(parent: Node, value: string): void {
+  if (ASCII_TEXT.test(value)) {
+    if (value) {
+      parent.appendChild(document.createTextNode(value));
+    }
+    return;
+  }
   for (const segment of twemojiSegments(value)) {
-    if (!segment.codepoint || !segment.emoji) {
-      parent.appendChild(document.createTextNode(segment.text));
-      continue;
-    }
-    const wrapper = document.createElement('span');
-    const unicode = document.createElement('span');
-    const assetUrl = twemojiAssetUrl(segment.codepoint);
-    wrapper.className = 'twemoji';
-    wrapper.dataset.twemoji = segment.codepoint;
-    wrapper.setAttribute('aria-label', segment.emoji);
-    wrapper.setAttribute('role', 'img');
-    unicode.className = 'twemoji__unicode';
-    unicode.setAttribute('aria-hidden', 'true');
-    unicode.textContent = segment.emoji;
-    wrapper.appendChild(unicode);
-    if (assetUrl) {
-      const image = document.createElement('img');
-      image.alt = '';
-      image.setAttribute('aria-hidden', 'true');
-      image.className = 'twemoji__glyph';
-      image.decoding = 'async';
-      image.draggable = false;
-      image.loading = 'lazy';
-      image.src = assetUrl;
-      image.addEventListener(
-        'error',
-        () => {
-          wrapper.classList.add('twemoji--fallback');
-          image.remove();
-        },
-        { once: true },
-      );
-      wrapper.appendChild(image);
-    } else {
-      wrapper.classList.add('twemoji--fallback');
-    }
-    parent.appendChild(wrapper);
+    appendTwemojiSegment(parent, segment);
   }
 }
 
@@ -273,17 +293,27 @@ function inlineText(nodes: readonly InlineNode[]): string {
   return value;
 }
 
+interface RenderedMarkdownHeading {
+  element: HTMLElement;
+  node: Heading;
+}
+
 interface RenderContext {
+  capturedHeadings?: RenderedMarkdownHeading[];
   headingIds: Map<string, number>;
   headingPath: string[];
   projectId?: string;
 }
 
-function applyHeadingMetadata(
+interface HeadingMetadata {
+  id: string;
+  path: string;
+}
+
+function nextHeadingMetadata(
   node: Heading,
-  element: HTMLElement,
   context: RenderContext,
-): void {
+): HeadingMetadata {
   const text = inlineText(node.children).trim();
   context.headingPath.length = node.depth;
   context.headingPath[node.depth - 1] = text;
@@ -291,8 +321,21 @@ function applyHeadingMetadata(
   const slug = markdownHeadingSlug(text) || 'heading';
   const count = context.headingIds.get(slug) ?? 0;
   context.headingIds.set(slug, count + 1);
-  element.id = count === 0 ? slug : `${slug}-${count + 1}`;
-  element.dataset.markdownHeadingPath = JSON.stringify(headingPath);
+  return {
+    id: count === 0 ? slug : `${slug}-${count + 1}`,
+    path: JSON.stringify(headingPath),
+  };
+}
+
+function applyHeadingMetadata(
+  node: Heading,
+  element: HTMLElement,
+  context: RenderContext,
+): void {
+  const metadata = nextHeadingMetadata(node, context);
+  element.id = metadata.id;
+  element.dataset.markdownHeadingPath = metadata.path;
+  context.capturedHeadings?.push({ element, node });
 }
 
 function renderBlocks(
@@ -499,6 +542,7 @@ function renderBlocks(
 
 interface RenderedMarkdownBlock {
   element: ChildNode;
+  headings: readonly RenderedMarkdownHeading[];
   node: BlockNode;
   source: string;
 }
@@ -511,55 +555,6 @@ interface MarkdownRenderState {
 
 const renderStates = new WeakMap<HTMLElement, MarkdownRenderState>();
 
-function collectHeadings(node: BlockNode, headings: Heading[]): void {
-  if (node.type === 'heading') {
-    headings.push(node);
-    return;
-  }
-  if (node.type === 'blockquote') {
-    for (const child of node.children) {
-      collectHeadings(child, headings);
-    }
-    return;
-  }
-  if (node.type === 'list') {
-    for (const item of node.children) {
-      for (const child of item.children) {
-        collectHeadings(child, headings);
-      }
-    }
-  }
-}
-
-function syncHeadingMetadata(
-  node: BlockNode,
-  element: ChildNode,
-  context: RenderContext,
-): void {
-  if (!(element instanceof Element)) {
-    return;
-  }
-  const headings: Heading[] = [];
-  collectHeadings(node, headings);
-  if (headings.length === 0) {
-    return;
-  }
-  const elements = [
-    ...(element.matches(':is(h1, h2, h3, h4, h5, h6)')
-      ? [element as HTMLElement]
-      : []),
-    ...element.querySelectorAll<HTMLElement>(
-      ':is(h1, h2, h3, h4, h5, h6)',
-    ),
-  ];
-  headings.forEach((heading, index) => {
-    const headingElement = elements[index];
-    if (headingElement) {
-      applyHeadingMetadata(heading, headingElement, context);
-    }
-  });
-}
-
 function renderContext(projectId?: string): RenderContext {
   return {
     headingIds: new Map(),
@@ -568,28 +563,79 @@ function renderContext(projectId?: string): RenderContext {
   };
 }
 
-function rebuildMarkdown(
-  container: HTMLElement,
+function renderMarkdownBlock(
+  segment: MarkdownBlockSource,
+  context: RenderContext,
+): RenderedMarkdownBlock | null {
+  const node = parseChangedBlock(segment);
+  if (!node) {
+    return null;
+  }
+  const fragment = document.createDocumentFragment();
+  const headings: RenderedMarkdownHeading[] = [];
+  context.capturedHeadings = headings;
+  renderBlocks([node], fragment, context);
+  delete context.capturedHeadings;
+  const element = fragment.firstChild;
+  if (!element) {
+    return null;
+  }
+  return { element, headings, node, source: segment.source };
+}
+
+function buildMarkdown(
   source: string,
   projectId?: string,
-): void {
+): {
+  blocks: readonly RenderedMarkdownBlock[];
+  fragment: DocumentFragment;
+} {
   const nodes = parseMarkdown(source).children;
   const fragment = document.createDocumentFragment();
   const context = renderContext(projectId);
   const blocks: RenderedMarkdownBlock[] = [];
 
   for (const node of nodes) {
+    const headings: RenderedMarkdownHeading[] = [];
+    context.capturedHeadings = headings;
     renderBlocks([node], fragment, context);
+    delete context.capturedHeadings;
     const element = fragment.lastChild!;
     blocks.push({
       element,
+      headings,
       node,
       source: source.slice(node.position.start, node.position.end),
     });
   }
 
-  container.replaceChildren(fragment);
-  renderStates.set(container, { blocks, projectId, source });
+  return { blocks, fragment };
+}
+
+function publishMarkdown(
+  container: HTMLElement,
+  source: string,
+  projectId: string | undefined,
+  build: {
+    blocks: readonly RenderedMarkdownBlock[];
+    fragment: DocumentFragment;
+  },
+): void {
+  container.replaceChildren(build.fragment);
+  renderStates.set(container, {
+    blocks: build.blocks,
+    projectId,
+    source,
+  });
+}
+
+function rebuildMarkdown(
+  container: HTMLElement,
+  source: string,
+  projectId?: string,
+): void {
+  const build = buildMarkdown(source, projectId);
+  publishMarkdown(container, source, projectId, build);
 }
 
 function hasExpectedChildren(
@@ -614,6 +660,723 @@ function parseChangedBlock(segment: MarkdownBlockSource): BlockNode | null {
   return node;
 }
 
+interface MarkdownBlockDiff {
+  newEnd: number;
+  oldEnd: number;
+  prefix: number;
+  suffix: number;
+}
+
+function markdownBlockDiff(
+  blocks: readonly RenderedMarkdownBlock[],
+  segments: readonly MarkdownBlockSource[],
+): MarkdownBlockDiff {
+  let prefix = 0;
+  while (
+    prefix < blocks.length &&
+    prefix < segments.length &&
+    blocks[prefix]?.source === segments[prefix]?.source
+  ) {
+    prefix += 1;
+  }
+
+  let suffix = 0;
+  while (
+    suffix < blocks.length - prefix &&
+    suffix < segments.length - prefix &&
+    blocks[blocks.length - suffix - 1]?.source ===
+      segments[segments.length - suffix - 1]?.source
+  ) {
+    suffix += 1;
+  }
+
+  return {
+    newEnd: segments.length - suffix,
+    oldEnd: blocks.length - suffix,
+    prefix,
+    suffix,
+  };
+}
+
+function reuseMarkdownBlocks(
+  blocks: readonly RenderedMarkdownBlock[],
+  segments: readonly MarkdownBlockSource[],
+  diff: MarkdownBlockDiff,
+): Array<RenderedMarkdownBlock | undefined> {
+  const next: Array<RenderedMarkdownBlock | undefined> = new Array(
+    segments.length,
+  );
+  for (let index = 0; index < diff.prefix; index += 1) {
+    next[index] = blocks[index]!;
+  }
+  for (let index = 0; index < diff.suffix; index += 1) {
+    next[segments.length - index - 1] =
+      blocks[blocks.length - index - 1]!;
+  }
+  return next;
+}
+
+interface HeadingMetadataUpdate extends HeadingMetadata {
+  element: HTMLElement;
+}
+
+function headingStructureChanged(
+  previous: readonly RenderedMarkdownBlock[],
+  next: readonly RenderedMarkdownBlock[],
+  diff: MarkdownBlockDiff,
+): boolean {
+  for (let index = diff.prefix; index < diff.oldEnd; index += 1) {
+    if (previous[index]!.headings.length > 0) {
+      return true;
+    }
+  }
+  for (let index = diff.prefix; index < diff.newEnd; index += 1) {
+    if (next[index]!.headings.length > 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function nextHeadingUpdate(
+  heading: RenderedMarkdownHeading,
+  context: RenderContext,
+): HeadingMetadataUpdate | null {
+  const metadata = nextHeadingMetadata(heading.node, context);
+  return heading.element.id === metadata.id &&
+    heading.element.dataset.markdownHeadingPath === metadata.path
+    ? null
+    : { ...metadata, element: heading.element };
+}
+
+function headingMetadataUpdates(
+  blocks: readonly RenderedMarkdownBlock[],
+): HeadingMetadataUpdate[] {
+  const context = renderContext();
+  const updates: HeadingMetadataUpdate[] = [];
+  for (const block of blocks) {
+    for (const heading of block.headings) {
+      const update = nextHeadingUpdate(heading, context);
+      if (update) {
+        updates.push(update);
+      }
+    }
+  }
+  return updates;
+}
+
+function applyHeadingMetadataUpdates(
+  updates: readonly HeadingMetadataUpdate[],
+): void {
+  for (const { element, id, path } of updates) {
+    element.id = id;
+    element.dataset.markdownHeadingPath = path;
+  }
+}
+
+function publishMarkdownChanges(
+  container: HTMLElement,
+  source: string,
+  projectId: string | undefined,
+  blocks: readonly RenderedMarkdownBlock[],
+  diff: MarkdownBlockDiff,
+  headingUpdates: readonly HeadingMetadataUpdate[],
+): void {
+  const scrollLeft = container.scrollLeft;
+  const scrollTop = container.scrollTop;
+  const anchor = container.childNodes[diff.oldEnd] ?? null;
+  const fragment = document.createDocumentFragment();
+  for (let index = diff.prefix; index < diff.newEnd; index += 1) {
+    fragment.appendChild(blocks[index]!.element);
+  }
+
+  if (diff.prefix === 0 && diff.suffix === 0) {
+    container.replaceChildren(fragment);
+  } else {
+    for (let index = diff.oldEnd - 1; index >= diff.prefix; index -= 1) {
+      container.childNodes[index]?.remove();
+    }
+    container.insertBefore(fragment, anchor);
+  }
+  applyHeadingMetadataUpdates(headingUpdates);
+  renderStates.set(container, { blocks, projectId, source });
+  container.scrollLeft = scrollLeft;
+  container.scrollTop = scrollTop;
+}
+
+function rendererYield(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => resolve());
+  });
+}
+
+interface CooperativeRenderState {
+  cancelled?: () => boolean;
+  sliceMs: number;
+  sliceStartedAt: number;
+}
+
+function cooperativeRenderCheckpoint(
+  state: CooperativeRenderState,
+): boolean | Promise<boolean> {
+  if (state.cancelled?.()) {
+    return false;
+  }
+  if (performance.now() - state.sliceStartedAt < state.sliceMs) {
+    return true;
+  }
+  return rendererYield().then(() => {
+    state.sliceStartedAt = performance.now();
+    return !state.cancelled?.();
+  });
+}
+
+async function appendTwemojiTextCooperatively(
+  parent: Node,
+  value: string,
+  state: CooperativeRenderState,
+): Promise<boolean> {
+  if (ASCII_TEXT.test(value)) {
+    if (value) {
+      parent.appendChild(document.createTextNode(value));
+    }
+    const checkpoint = cooperativeRenderCheckpoint(state);
+    return checkpoint === true
+      ? true
+      : checkpoint === false
+        ? false
+        : checkpoint;
+  }
+  const segments = twemojiSegments(value);
+  const parsed = cooperativeRenderCheckpoint(state);
+  if (parsed === false || (parsed !== true && !(await parsed))) {
+    return false;
+  }
+  for (const segment of segments) {
+    appendTwemojiSegment(parent, segment);
+    const checkpoint = cooperativeRenderCheckpoint(state);
+    if (
+      checkpoint === false ||
+      (checkpoint !== true && !(await checkpoint))
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+async function renderInlineCooperatively(
+  nodes: readonly InlineNode[],
+  parent: Node,
+  projectId: string | undefined,
+  state: CooperativeRenderState,
+): Promise<boolean> {
+  for (const node of nodes) {
+    if (node.type === 'text') {
+      if (
+        !(await appendTwemojiTextCooperatively(
+          parent,
+          node.value,
+          state,
+        ))
+      ) {
+        return false;
+      }
+    } else if (node.type === 'inlineCode') {
+      const element = document.createElement('code');
+      if (
+        !(await appendTwemojiTextCooperatively(
+          element,
+          node.value,
+          state,
+        ))
+      ) {
+        return false;
+      }
+      parent.appendChild(element);
+    } else if (
+      node.type === 'strong' ||
+      node.type === 'emphasis' ||
+      node.type === 'delete'
+    ) {
+      const element = document.createElement(
+        node.type === 'strong'
+          ? 'strong'
+          : node.type === 'emphasis'
+            ? 'em'
+            : 'del',
+      );
+      if (
+        !(await renderInlineCooperatively(
+          node.children,
+          element,
+          projectId,
+          state,
+        ))
+      ) {
+        return false;
+      }
+      parent.appendChild(element);
+    } else if (node.type === 'highlight') {
+      const element = document.createElement('mark');
+      if (node.color) {
+        element.style.backgroundColor = node.color;
+        element.style.color = colorContrastInk(node.color);
+        element.dataset.customColor = '';
+      }
+      if (
+        !(await renderInlineCooperatively(
+          node.children,
+          element,
+          projectId,
+          state,
+        ))
+      ) {
+        return false;
+      }
+      parent.appendChild(element);
+    } else if (node.type === 'color') {
+      const element = document.createElement('span');
+      element.style.color = node.color;
+      if (
+        !(await renderInlineCooperatively(
+          node.children,
+          element,
+          projectId,
+          state,
+        ))
+      ) {
+        return false;
+      }
+      parent.appendChild(element);
+    } else if (node.type === 'link') {
+      const element = document.createElement('a');
+      if (node.color) {
+        element.style.color = node.color;
+        element.dataset.customColor = '';
+      }
+      const url = safeExternalUrl(node.url);
+      if (url) {
+        element.dataset.markdownExternalUrl = url;
+        element.setAttribute('role', 'link');
+        element.tabIndex = 0;
+      } else {
+        const syntax = node.syntax ?? 'markdown';
+        const internal = parseInternalLinkDestination(node.url, syntax);
+        if (internal) {
+          element.dataset.markdownInternalPath = internal.path;
+          element.dataset.markdownInternalHeadings = JSON.stringify(
+            internal.headingPath,
+          );
+          element.dataset.markdownInternalSyntax = syntax;
+          element.setAttribute('role', 'link');
+          element.tabIndex = 0;
+        } else {
+          element.setAttribute('aria-disabled', 'true');
+        }
+      }
+      if (node.title) {
+        element.dataset.flyoffTooltip = node.title;
+      }
+      if (
+        !(await renderInlineCooperatively(
+          node.children,
+          element,
+          projectId,
+          state,
+        ))
+      ) {
+        return false;
+      }
+      parent.appendChild(element);
+    } else {
+      renderInline([node], parent, projectId);
+    }
+
+    const checkpoint = cooperativeRenderCheckpoint(state);
+    if (
+      checkpoint === false ||
+      (checkpoint !== true && !(await checkpoint))
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+async function renderLargeBlockCooperatively(
+  node: BlockNode,
+  parent: Node,
+  context: RenderContext,
+  state: CooperativeRenderState,
+): Promise<boolean> {
+  if (node.type === 'paragraph') {
+    const element = document.createElement('p');
+    if (
+      !(await renderInlineCooperatively(
+        node.children,
+        element,
+        context.projectId,
+        state,
+      ))
+    ) {
+      return false;
+    }
+    parent.appendChild(element);
+    return true;
+  }
+
+  if (node.type === 'code') {
+    const pre = document.createElement('pre');
+    const code = document.createElement('code');
+    if (node.lang) {
+      code.dataset.lang = node.lang;
+    }
+    if (
+      !(await appendTwemojiTextCooperatively(
+        code,
+        node.value,
+        state,
+      ))
+    ) {
+      return false;
+    }
+    pre.appendChild(code);
+    parent.appendChild(pre);
+    return true;
+  }
+
+  if (node.type === 'list') {
+    const element = document.createElement(node.ordered ? 'ol' : 'ul');
+    if (node.ordered && node.start !== null && node.start !== 1) {
+      element.setAttribute('start', String(node.start));
+    }
+    for (const item of node.children) {
+      const listItem = document.createElement('li');
+      if (item.checked !== null) {
+        listItem.classList.add('markdown-view__task');
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'flyoff-checkbox';
+        checkbox.checked = item.checked;
+        checkbox.disabled = true;
+        listItem.appendChild(checkbox);
+      }
+      const [firstChild] = item.children;
+      if (
+        item.children.length === 1 &&
+        firstChild &&
+        firstChild.type === 'paragraph'
+      ) {
+        renderInline(firstChild.children, listItem, context.projectId);
+      } else {
+        renderBlocks(item.children, listItem, context);
+      }
+      element.appendChild(listItem);
+      const checkpoint = cooperativeRenderCheckpoint(state);
+      if (
+        checkpoint === false ||
+        (checkpoint !== true && !(await checkpoint))
+      ) {
+        return false;
+      }
+    }
+    parent.appendChild(element);
+    return true;
+  }
+
+  if (node.type === 'table') {
+    const wrapper = document.createElement('div');
+    const table = document.createElement('table');
+    const head = document.createElement('thead');
+    const headRow = document.createElement('tr');
+    wrapper.className = 'markdown-view__table-scroll';
+    node.header.forEach((cell, index) => {
+      const element = document.createElement('th');
+      const alignment = node.alignments[index];
+      if (alignment) {
+        element.style.textAlign = alignment;
+      }
+      renderInline(cell, element, context.projectId);
+      headRow.appendChild(element);
+    });
+    head.appendChild(headRow);
+    table.appendChild(head);
+    if (node.rows.length > 0) {
+      const body = document.createElement('tbody');
+      for (const row of node.rows) {
+        const bodyRow = document.createElement('tr');
+        row.forEach((cell, index) => {
+          const element = document.createElement('td');
+          const alignment = node.alignments[index];
+          if (alignment) {
+            element.style.textAlign = alignment;
+          }
+          renderInline(cell, element, context.projectId);
+          bodyRow.appendChild(element);
+        });
+        body.appendChild(bodyRow);
+        const checkpoint = cooperativeRenderCheckpoint(state);
+        if (
+          checkpoint === false ||
+          (checkpoint !== true && !(await checkpoint))
+        ) {
+          return false;
+        }
+      }
+      table.appendChild(body);
+    }
+    wrapper.appendChild(table);
+    parent.appendChild(wrapper);
+    return true;
+  }
+
+  renderBlocks([node], parent, context);
+  return true;
+}
+
+async function renderMarkdownBlockCooperatively(
+  segment: MarkdownBlockSource,
+  context: RenderContext,
+  cancelled: (() => boolean) | undefined,
+  sliceMs: number,
+): Promise<RenderedMarkdownBlock | null | undefined> {
+  const state: CooperativeRenderState = {
+    cancelled,
+    sliceMs,
+    sliceStartedAt: performance.now(),
+  };
+  const node = parseChangedBlock(segment);
+  if (!node) {
+    return null;
+  }
+  const parsed = cooperativeRenderCheckpoint(state);
+  if (parsed === false || (parsed !== true && !(await parsed))) {
+    return undefined;
+  }
+
+  const fragment = document.createDocumentFragment();
+  const headings: RenderedMarkdownHeading[] = [];
+  context.capturedHeadings = headings;
+  const rendered = await renderLargeBlockCooperatively(
+    node,
+    fragment,
+    context,
+    state,
+  );
+  delete context.capturedHeadings;
+  if (!rendered) {
+    return undefined;
+  }
+  const element = fragment.firstChild;
+  return element
+    ? { element, headings, node, source: segment.source }
+    : null;
+}
+
+async function headingMetadataUpdatesCooperatively(
+  blocks: readonly RenderedMarkdownBlock[],
+  cancelled: (() => boolean) | undefined,
+  sliceMs: number,
+): Promise<HeadingMetadataUpdate[] | null> {
+  const context = renderContext();
+  const updates: HeadingMetadataUpdate[] = [];
+  let sliceStartedAt = performance.now();
+
+  for (const block of blocks) {
+    for (const heading of block.headings) {
+      const update = nextHeadingUpdate(heading, context);
+      if (update) {
+        updates.push(update);
+      }
+    }
+    if (cancelled?.()) {
+      return null;
+    }
+    if (performance.now() - sliceStartedAt >= sliceMs) {
+      await rendererYield();
+      if (cancelled?.()) {
+        return null;
+      }
+      sliceStartedAt = performance.now();
+    }
+  }
+  return updates;
+}
+
+export async function renderMarkdownIntoCooperatively(
+  container: HTMLElement,
+  source: string,
+  options: {
+    cancelled?: () => boolean;
+    projectId?: string;
+    sliceMs?: number;
+  } = {},
+): Promise<boolean> {
+  const state = renderStates.get(container);
+  if (
+    state?.source === source &&
+    state.projectId === options.projectId &&
+    hasExpectedChildren(container, state.blocks)
+  ) {
+    return true;
+  }
+  if (options.cancelled?.()) {
+    return false;
+  }
+
+  const sliceMs = Math.max(2, options.sliceMs ?? 8);
+  const segments = await splitMarkdownBlocksCooperatively(source, {
+    cancelled: options.cancelled,
+    sliceMs,
+    yieldControl: rendererYield,
+  });
+  if (!segments) {
+    return false;
+  }
+
+  const reusableState =
+    state &&
+    state.projectId === options.projectId &&
+    hasExpectedChildren(container, state.blocks)
+      ? state
+      : undefined;
+  if (reusableState) {
+    const diff = markdownBlockDiff(reusableState.blocks, segments);
+    if (
+      reusableState.blocks.length === segments.length &&
+      diff.prefix === segments.length
+    ) {
+      renderStates.set(container, { ...reusableState, source });
+      return true;
+    }
+
+    const pending = reuseMarkdownBlocks(
+      reusableState.blocks,
+      segments,
+      diff,
+    );
+    const context = renderContext(options.projectId);
+    let sliceStartedAt = performance.now();
+    for (let index = diff.prefix; index < diff.newEnd; index += 1) {
+      if (options.cancelled?.()) {
+        return false;
+      }
+      const segment = segments[index]!;
+      const block =
+        segment.source.length >= COOPERATIVE_MARKDOWN_BLOCK_CHARACTERS
+          ? await renderMarkdownBlockCooperatively(
+              segment,
+              context,
+              options.cancelled,
+              sliceMs,
+            )
+          : renderMarkdownBlock(segment, context);
+      if (block === undefined) {
+        return false;
+      }
+      if (!block) {
+        break;
+      }
+      pending[index] = block;
+      if (performance.now() - sliceStartedAt >= sliceMs) {
+        await rendererYield();
+        if (options.cancelled?.()) {
+          return false;
+        }
+        sliceStartedAt = performance.now();
+      }
+    }
+
+    if (pending.some((block) => block === undefined)) {
+      const build = buildMarkdown(source, options.projectId);
+      if (options.cancelled?.()) {
+        return false;
+      }
+      publishMarkdown(container, source, options.projectId, build);
+      return true;
+    }
+
+    const blocks = pending as RenderedMarkdownBlock[];
+    const headingUpdates = headingStructureChanged(
+      reusableState.blocks,
+      blocks,
+      diff,
+    )
+      ? await headingMetadataUpdatesCooperatively(
+          blocks,
+          options.cancelled,
+          sliceMs,
+        )
+      : [];
+    if (!headingUpdates || options.cancelled?.()) {
+      return false;
+    }
+    if (
+      renderStates.get(container) !== reusableState ||
+      !hasExpectedChildren(container, reusableState.blocks)
+    ) {
+      return false;
+    }
+    publishMarkdownChanges(
+      container,
+      source,
+      options.projectId,
+      blocks,
+      diff,
+      headingUpdates,
+    );
+    return true;
+  }
+
+  const context = renderContext(options.projectId);
+  const fragment = document.createDocumentFragment();
+  const blocks: RenderedMarkdownBlock[] = [];
+  let sliceStartedAt = performance.now();
+
+  for (const segment of segments) {
+    if (options.cancelled?.()) {
+      return false;
+    }
+    const block =
+      segment.source.length >= COOPERATIVE_MARKDOWN_BLOCK_CHARACTERS
+        ? await renderMarkdownBlockCooperatively(
+            segment,
+            context,
+            options.cancelled,
+            sliceMs,
+          )
+        : renderMarkdownBlock(segment, context);
+    if (block === undefined) {
+      return false;
+    }
+    if (!block) {
+      const build = buildMarkdown(source, options.projectId);
+      if (options.cancelled?.()) {
+        return false;
+      }
+      publishMarkdown(container, source, options.projectId, build);
+      return true;
+    }
+    fragment.appendChild(block.element);
+    blocks.push(block);
+
+    if (performance.now() - sliceStartedAt >= sliceMs) {
+      await rendererYield();
+      sliceStartedAt = performance.now();
+    }
+  }
+
+  if (options.cancelled?.()) {
+    return false;
+  }
+  publishMarkdown(container, source, options.projectId, {
+    blocks,
+    fragment,
+  });
+  return true;
+}
+
 export function renderMarkdownInto(
   container: HTMLElement,
   source: string,
@@ -634,84 +1397,38 @@ export function renderMarkdownInto(
   }
 
   const segments = splitMarkdownBlocks(source);
-  let prefix = 0;
-  while (
-    prefix < state.blocks.length &&
-    prefix < segments.length &&
-    state.blocks[prefix]?.source === segments[prefix]?.source
-  ) {
-    prefix += 1;
-  }
+  const diff = markdownBlockDiff(state.blocks, segments);
 
-  if (state.blocks.length === segments.length && prefix === segments.length) {
+  if (
+    state.blocks.length === segments.length &&
+    diff.prefix === segments.length
+  ) {
     renderStates.set(container, { ...state, source });
     return;
   }
 
-  let suffix = 0;
-  while (
-    suffix < state.blocks.length - prefix &&
-    suffix < segments.length - prefix &&
-    state.blocks[state.blocks.length - suffix - 1]?.source ===
-      segments[segments.length - suffix - 1]?.source
-  ) {
-    suffix += 1;
-  }
-
-  const oldEnd = state.blocks.length - suffix;
-  const newEnd = segments.length - suffix;
-  const next: Array<RenderedMarkdownBlock | undefined> = new Array(
-    segments.length,
-  );
-
-  for (let index = 0; index < prefix; index += 1) {
-    next[index] = state.blocks[index]!;
-  }
-  for (let index = 0; index < suffix; index += 1) {
-    next[segments.length - index - 1] =
-      state.blocks[state.blocks.length - index - 1]!;
-  }
-  for (let index = prefix; index < newEnd; index += 1) {
+  const next = reuseMarkdownBlocks(state.blocks, segments, diff);
+  const context = renderContext(options.projectId);
+  for (let index = diff.prefix; index < diff.newEnd; index += 1) {
     const segment = segments[index]!;
-    const node = parseChangedBlock(segment);
-    if (!node) {
+    const block = renderMarkdownBlock(segment, context);
+    if (!block) {
       rebuildMarkdown(container, source, options.projectId);
       return;
     }
-    next[index] = {
-      element: document.createTextNode(''),
-      node,
-      source: segment.source,
-    };
+    next[index] = block;
   }
 
-  const context = renderContext(options.projectId);
-  for (let index = 0; index < next.length; index += 1) {
-    const block = next[index]!;
-    if (index >= prefix && index < newEnd) {
-      const fragment = document.createDocumentFragment();
-      renderBlocks([block.node], fragment, context);
-      block.element = fragment.firstChild!;
-    } else {
-      syncHeadingMetadata(block.node, block.element, context);
-    }
-  }
-
-  const anchor = container.childNodes[oldEnd] ?? null;
-
-  for (let index = oldEnd - 1; index >= prefix; index -= 1) {
-    container.childNodes[index]?.remove();
-  }
-
-  const fragment = document.createDocumentFragment();
-  for (let index = prefix; index < newEnd; index += 1) {
-    fragment.appendChild(next[index]!.element);
-  }
-  container.insertBefore(fragment, anchor);
-
-  renderStates.set(container, {
-    blocks: next as RenderedMarkdownBlock[],
-    projectId: options.projectId,
+  const blocks = next as RenderedMarkdownBlock[];
+  const headingUpdates = headingStructureChanged(state.blocks, blocks, diff)
+    ? headingMetadataUpdates(blocks)
+    : [];
+  publishMarkdownChanges(
+    container,
     source,
-  });
+    options.projectId,
+    blocks,
+    diff,
+    headingUpdates,
+  );
 }

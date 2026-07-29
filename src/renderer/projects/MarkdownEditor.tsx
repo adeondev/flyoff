@@ -3,6 +3,7 @@ import {
   forwardRef,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useRef,
   useState,
   type KeyboardEvent,
@@ -57,7 +58,9 @@ import type { ImageSourceOperation } from './ImageInteractionLayer';
 import type { ImageInsertionPlacement } from './image-interaction';
 import { rewriteImageSource } from './image-source-edit';
 import {
+  focusSource,
   readSelection,
+  readSourceDocumentModel,
   writeSelection,
   type SourceSelection,
 } from './source-caret';
@@ -94,6 +97,7 @@ export interface MarkdownEditorHandle {
 }
 
 export interface MarkdownEditorProps {
+  active?: boolean;
   controller: MarkdownDocumentController;
   document: MarkdownDocument;
   mode?: EditorMode;
@@ -143,6 +147,7 @@ export const MarkdownEditor = forwardRef<
   MarkdownEditorProps
 >(function MarkdownEditor(
   {
+    active = true,
     autoFocus = false,
     controller,
     document,
@@ -176,6 +181,8 @@ export const MarkdownEditor = forwardRef<
   const [typingColor, setTypingColor] =
     useState<MarkdownTypingColor | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
+  const sourceSurfaceRef = useRef<HTMLDivElement | null>(null);
+  const sourceScrollLeftRef = useRef(0);
   const readingRef = useRef<HTMLDivElement>(null);
   const selectionRef = useRef(snapshot.selection);
   const selectionFrameRef = useRef<number | undefined>(undefined);
@@ -275,6 +282,15 @@ export const MarkdownEditor = forwardRef<
     }
   }, [scrollTop]);
 
+  useLayoutEffect(() => {
+    const editor = editorRef.current;
+    if (editor && editor !== sourceSurfaceRef.current) {
+      editor.scrollLeft = sourceScrollLeftRef.current;
+      editor.scrollTop = scrollTop;
+    }
+    sourceSurfaceRef.current = editor;
+  });
+
   useEffect(() => {
     if (!navigation || navigation.nodeId !== nodeId) {
       return;
@@ -323,7 +339,7 @@ export const MarkdownEditor = forwardRef<
       editor
         .querySelector<HTMLElement>(`.md-line[data-line="${line}"]`)
         ?.scrollIntoView({ block: 'center' });
-      editor.focus({ preventScroll: true });
+      focusSource(editor, { preventScroll: true });
     });
     return () => cancelAnimationFrame(frame);
   }, [
@@ -340,7 +356,11 @@ export const MarkdownEditor = forwardRef<
     () => ({
       flush: () => controller.flush(nodeId),
       isDirty: () => controller.isDirty(nodeId),
-      focus: () => editorRef.current?.focus(),
+      focus: () => {
+        if (editorRef.current) {
+          focusSource(editorRef.current);
+        }
+      },
     }),
     [controller, nodeId],
   );
@@ -461,7 +481,9 @@ export const MarkdownEditor = forwardRef<
     }
     requestAnimationFrame(() => {
       const editor = editorRef.current;
-      editor?.focus({ preventScroll: true });
+      if (editor) {
+        focusSource(editor, { preventScroll: true });
+      }
       if (editor) {
         writeSelection(editor, edit.selection);
         if (viewport) {
@@ -886,7 +908,9 @@ export const MarkdownEditor = forwardRef<
   function restoreEditorFocus(): void {
     requestAnimationFrame(() => {
       const editor = editorRef.current;
-      editor?.focus();
+      if (editor) {
+        focusSource(editor);
+      }
       if (editor) {
         writeSelection(editor, selectionRef.current);
       }
@@ -904,7 +928,16 @@ export const MarkdownEditor = forwardRef<
 
   const status = statusLabel(snapshot, translate);
   const busy = snapshot.status === 'saving' || snapshot.status === 'loading';
-  const position = sourcePositionStatus(snapshot.content, liveSelection);
+  const renderedSourceModel = editorRef.current
+    ? readSourceDocumentModel(editorRef.current)
+    : undefined;
+  const position = sourcePositionStatus(
+    snapshot.content,
+    liveSelection,
+    renderedSourceModel?.source === snapshot.content
+      ? renderedSourceModel.lineStarts
+      : undefined,
+  );
   const focusLayout = editorPreferences.chromeLayout === 'focus';
   const importantStatus = snapshot.readOnly || snapshot.status !== 'saved';
   const modeMenuItems: readonly MenuItem[] = [
@@ -1072,6 +1105,7 @@ export const MarkdownEditor = forwardRef<
       <div className={`markdown-editor__body markdown-editor__body--${mode}`}>
         {mode === 'reading' ? null : (
           <RichSourceEditor
+            active={active}
             activeOffset={liveSelection.end}
             ariaLabel={translate('projects.editorLabel')}
             autoFocus={autoFocus}
@@ -1095,12 +1129,12 @@ export const MarkdownEditor = forwardRef<
             onRedo={() => controller.redo(nodeId, viewId)}
             onRevealMediaAsset={onRevealMediaAsset}
             onScroll={(scrollPosition, settled) => {
+              sourceScrollLeftRef.current =
+                editorRef.current?.scrollLeft ?? sourceScrollLeftRef.current;
               onScrollChange?.(scrollPosition, settled);
               splitScroll.handleSourceScroll();
             }}
-            onSelectionChange={(next) => {
-              handleSourceSelection(next);
-            }}
+            onSelectionChange={handleSourceSelection}
             onTransaction={handleTransaction}
             onUndo={() => controller.undo(nodeId, viewId)}
             selection={snapshot.selection}

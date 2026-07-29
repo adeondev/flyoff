@@ -5,6 +5,7 @@ import {
   parseMarkdown,
   serializeImageDirective,
   splitMarkdownBlocks,
+  splitMarkdownBlocksCooperatively,
 } from '../../src/shared/markdown';
 
 describe('markdown block parser', () => {
@@ -142,6 +143,50 @@ describe('markdown block parser', () => {
         source: '| A | B |\n| --- | --- |\n| 1 | 2 |',
       },
     ]);
+  });
+
+  it('keeps cooperative block boundaries identical across line endings and fenced blanks', async () => {
+    const source = [
+      '# Heading\r\nparagraph',
+      '```ts\nconst value = 1;\n\nconst next = 2;\n```',
+      '> quoted\n> continuation',
+      '- one\n- two',
+      '| A | B |\n| --- | ---: |\n| 1 | 2 |',
+      'tail\rline',
+    ].join('\n\n');
+    let clock = 0;
+    let yields = 0;
+
+    const blocks = await splitMarkdownBlocksCooperatively(source, {
+      now: () => (clock += 3),
+      sliceMs: 2,
+      yieldControl: async () => {
+        yields += 1;
+      },
+    });
+
+    expect(blocks).toEqual(splitMarkdownBlocks(source));
+    expect(yields).toBeGreaterThan(0);
+  });
+
+  it('stops cooperative block scanning without publishing partial ranges', async () => {
+    let cancelled = false;
+    let clock = 0;
+    const source = Array.from(
+      { length: 2_000 },
+      (_, index) => `paragraph ${index}`,
+    ).join('\n\n');
+
+    const blocks = await splitMarkdownBlocksCooperatively(source, {
+      cancelled: () => cancelled,
+      now: () => (clock += 3),
+      sliceMs: 2,
+      yieldControl: async () => {
+        cancelled = true;
+      },
+    });
+
+    expect(blocks).toBeNull();
   });
 });
 

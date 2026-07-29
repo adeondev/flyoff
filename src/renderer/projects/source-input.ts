@@ -4,6 +4,9 @@ import {
   previousGraphemeBoundary,
 } from './source-grapheme';
 
+const SOURCE_WHITESPACE = /\s/uy;
+const SOURCE_WORD_CHARACTER = /[\p{L}\p{M}\p{N}_]/uy;
+
 function collapsed(offset: number): SourceEditorState['selection'] {
   return { start: offset, end: offset, direction: 'none' };
 }
@@ -22,24 +25,169 @@ function replaceSelection(
   };
 }
 
-function previousWordBoundary(value: string, offset: number): number {
-  const prefix = value.slice(0, offset);
-  const whitespace = /\s+$/u.exec(prefix);
-  if (whitespace) {
-    return offset - whitespace[0].length;
-  }
-  const word = /[\p{L}\p{M}\p{N}_]+$/u.exec(prefix);
-  return word ? offset - word[0].length : previousGraphemeBoundary(value, offset);
+function previousCodePointStart(value: string, offset: number): number {
+  const previous = value.charCodeAt(offset - 1);
+  return previous >= 0xdc00 &&
+    previous <= 0xdfff &&
+    offset > 1 &&
+    value.charCodeAt(offset - 2) >= 0xd800 &&
+    value.charCodeAt(offset - 2) <= 0xdbff
+    ? offset - 2
+    : offset - 1;
 }
 
-function nextWordBoundary(value: string, offset: number): number {
-  const suffix = value.slice(offset);
-  const whitespace = /^\s+/u.exec(suffix);
-  if (whitespace) {
-    return offset + whitespace[0].length;
+function nextCodePointEnd(value: string, offset: number): number {
+  const current = value.charCodeAt(offset);
+  return current >= 0xd800 &&
+    current <= 0xdbff &&
+    offset + 1 < value.length &&
+    value.charCodeAt(offset + 1) >= 0xdc00 &&
+    value.charCodeAt(offset + 1) <= 0xdfff
+    ? offset + 2
+    : offset + 1;
+}
+
+function matchesCodePoint(
+  pattern: RegExp,
+  value: string,
+  start: number,
+  end: number,
+): boolean {
+  pattern.lastIndex = start;
+  return pattern.test(value) && pattern.lastIndex === end;
+}
+
+export function previousSourceWordBoundary(
+  value: string,
+  offset: number,
+): number {
+  let cursor = Math.min(Math.max(0, offset), value.length);
+  let start = previousCodePointStart(value, cursor);
+  if (
+    cursor > 0 &&
+    matchesCodePoint(SOURCE_WHITESPACE, value, start, cursor)
+  ) {
+    do {
+      cursor = start;
+      start = previousCodePointStart(value, cursor);
+    } while (
+      cursor > 0 &&
+      matchesCodePoint(SOURCE_WHITESPACE, value, start, cursor)
+    );
+    return cursor;
   }
-  const word = /^[\p{L}\p{M}\p{N}_]+/u.exec(suffix);
-  return word ? offset + word[0].length : nextGraphemeBoundary(value, offset);
+  if (
+    cursor > 0 &&
+    matchesCodePoint(SOURCE_WORD_CHARACTER, value, start, cursor)
+  ) {
+    do {
+      cursor = start;
+      start = previousCodePointStart(value, cursor);
+    } while (
+      cursor > 0 &&
+      matchesCodePoint(SOURCE_WORD_CHARACTER, value, start, cursor)
+    );
+    return cursor;
+  }
+  return previousGraphemeBoundary(value, cursor);
+}
+
+export function nextSourceWordBoundary(value: string, offset: number): number {
+  let cursor = Math.min(Math.max(0, offset), value.length);
+  let end = nextCodePointEnd(value, cursor);
+  if (
+    cursor < value.length &&
+    matchesCodePoint(SOURCE_WHITESPACE, value, cursor, end)
+  ) {
+    do {
+      cursor = end;
+      end = nextCodePointEnd(value, cursor);
+    } while (
+      cursor < value.length &&
+      matchesCodePoint(SOURCE_WHITESPACE, value, cursor, end)
+    );
+    return cursor;
+  }
+  if (
+    cursor < value.length &&
+    matchesCodePoint(SOURCE_WORD_CHARACTER, value, cursor, end)
+  ) {
+    do {
+      cursor = end;
+      end = nextCodePointEnd(value, cursor);
+    } while (
+      cursor < value.length &&
+      matchesCodePoint(SOURCE_WORD_CHARACTER, value, cursor, end)
+    );
+    return cursor;
+  }
+  return nextGraphemeBoundary(value, cursor);
+}
+
+export function previousSourceWordNavigationBoundary(
+  value: string,
+  offset: number,
+): number {
+  let cursor = Math.min(Math.max(0, offset), value.length);
+  while (cursor > 0) {
+    const start = previousCodePointStart(value, cursor);
+    if (matchesCodePoint(SOURCE_WORD_CHARACTER, value, start, cursor)) {
+      break;
+    }
+    cursor = start;
+  }
+  while (cursor > 0) {
+    const start = previousCodePointStart(value, cursor);
+    if (!matchesCodePoint(SOURCE_WORD_CHARACTER, value, start, cursor)) {
+      break;
+    }
+    cursor = start;
+  }
+  return cursor;
+}
+
+export function nextSourceWordStartBoundary(
+  value: string,
+  offset: number,
+): number {
+  let cursor = Math.min(Math.max(0, offset), value.length);
+  while (cursor < value.length) {
+    const end = nextCodePointEnd(value, cursor);
+    if (!matchesCodePoint(SOURCE_WORD_CHARACTER, value, cursor, end)) {
+      break;
+    }
+    cursor = end;
+  }
+  while (cursor < value.length) {
+    const end = nextCodePointEnd(value, cursor);
+    if (matchesCodePoint(SOURCE_WORD_CHARACTER, value, cursor, end)) {
+      break;
+    }
+    cursor = end;
+  }
+  return cursor;
+}
+
+export function nextSourceWordEndBoundary(
+  value: string,
+  offset: number,
+): number {
+  let cursor = Math.min(Math.max(0, offset), value.length);
+  while (cursor < value.length) {
+    const end = nextCodePointEnd(value, cursor);
+    if (matchesCodePoint(SOURCE_WORD_CHARACTER, value, cursor, end)) {
+      break;
+    }
+    cursor = end;
+  }
+  while (cursor < value.length) {
+    const end = nextCodePointEnd(value, cursor);
+    if (!matchesCodePoint(SOURCE_WORD_CHARACTER, value, cursor, end)) {
+      break;
+    }
+    cursor = end;
+  }
+  return cursor;
 }
 
 function previousLineBoundary(value: string, offset: number): number {
@@ -110,9 +258,9 @@ export function resolveSourceInput(
     case 'deleteContentForward':
       return deleteRange(state, 'forward', nextGraphemeBoundary);
     case 'deleteWordBackward':
-      return deleteRange(state, 'backward', previousWordBoundary);
+      return deleteRange(state, 'backward', previousSourceWordBoundary);
     case 'deleteWordForward':
-      return deleteRange(state, 'forward', nextWordBoundary);
+      return deleteRange(state, 'forward', nextSourceWordBoundary);
     case 'deleteSoftLineBackward':
     case 'deleteHardLineBackward':
       return deleteRange(state, 'backward', previousLineBoundary);

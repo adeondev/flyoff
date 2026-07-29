@@ -25,6 +25,7 @@ async function run() {
         path.join(root, 'scripts', 'benchmark-large-notes-entry.ts'),
       ],
       format: 'iife',
+      loader: { '.svg': 'dataurl' },
       outfile: bundlePath,
       platform: 'browser',
       target: 'chrome142',
@@ -48,15 +49,25 @@ async function run() {
       },
     });
     await window.loadFile(htmlPath);
-    await window.webContents.insertCSS(
-      await readFile(
-        path.join(root, 'src', 'renderer', 'projects', 'projects.css'),
-        'utf8',
+    const styles = await Promise.all([
+      path.join(root, 'src', 'renderer', 'styles.css'),
+      path.join(root, 'src', 'renderer', 'projects', 'projects.css'),
+      path.join(
+        root,
+        'src',
+        'renderer',
+        'projects',
+        'virtual-source-editor.css',
       ),
-    );
+    ].map((file) => readFile(file, 'utf8')));
+    await window.webContents.insertCSS(styles.join('\n'));
     process.stderr.write('Running benchmark cases...\n');
+    const benchmarkExpression =
+      process.env.FLYOFF_BENCHMARK_VIRTUAL_ONLY === '1'
+        ? 'window.runVirtualSourceBenchmark()'
+        : 'window.runLargeNotesBenchmark()';
     const result = await window.webContents.executeJavaScript(
-      'window.runLargeNotesBenchmark()',
+      benchmarkExpression,
       true,
     );
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

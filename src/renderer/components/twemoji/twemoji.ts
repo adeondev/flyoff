@@ -7,26 +7,46 @@ export interface TwemojiSegment {
 }
 
 const CACHE_LIMIT = 2_000;
+const CACHE_UNIT_LIMIT = 4 * 1024 * 1024;
 const TWEMOJI_ASSET_BASE_URL = 'flyoff-asset://app/twemoji/';
 const TWEMOJI_CODEPOINT_PATTERN =
   /^[0-9a-f]{1,6}(?:-[0-9a-f]{1,6})*$/;
-const segmentCache = new Map<string, readonly TwemojiSegment[]>();
+const segmentCache = new Map<
+  string,
+  { segments: readonly TwemojiSegment[]; units: number }
+>();
+let segmentCacheUnits = 0;
 
 function remember(
   value: string,
   segments: readonly TwemojiSegment[],
 ): readonly TwemojiSegment[] {
-  if (segmentCache.size >= CACHE_LIMIT) {
-    segmentCache.delete(segmentCache.keys().next().value as string);
+  const units = value.length + segments.length * 4;
+  if (units > CACHE_UNIT_LIMIT) {
+    return segments;
   }
-  segmentCache.set(value, segments);
+  segmentCache.set(value, { segments, units });
+  segmentCacheUnits += units;
+  while (
+    segmentCache.size > CACHE_LIMIT ||
+    segmentCacheUnits > CACHE_UNIT_LIMIT
+  ) {
+    const oldest = segmentCache.keys().next().value as string | undefined;
+    if (oldest === undefined) {
+      break;
+    }
+    segmentCacheUnits -= segmentCache.get(oldest)?.units ?? 0;
+    segmentCache.delete(oldest);
+  }
   return segments;
 }
 
 export function twemojiSegments(value: string): readonly TwemojiSegment[] {
   const cached = segmentCache.get(value);
   if (cached) {
-    return cached;
+    segmentCache.delete(value);
+    segmentCache.set(value, cached);
+    return cached.segments;
   }
   const entities = parse(value, {
     assetType: 'svg',
@@ -63,4 +83,5 @@ export function twemojiAssetUrl(codepoint: string): string | null {
 
 export function clearTwemojiSegmentCache(): void {
   segmentCache.clear();
+  segmentCacheUnits = 0;
 }
