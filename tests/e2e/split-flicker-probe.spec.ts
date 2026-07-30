@@ -78,7 +78,7 @@ async function stopApplication(app: ElectronApplication | undefined) {
   await app.close().catch(() => undefined);
 }
 
-function longNoteFixture(): string {
+function uniformNoteFixture(): string {
   return Array.from({ length: LINE_COUNT }, (_, index) => {
     if (index % 47 === 0) {
       return `## Section ${index}`;
@@ -88,6 +88,64 @@ function longNoteFixture(): string {
     }
     return `Line ${index}: political, religious and everyday record with enough text to react to the pane width.`;
   }).join('\n');
+}
+
+/**
+ * Blocks whose real height is nothing like the estimate, and whose height per
+ * row differs sharply between kinds. The reading view calibrates its estimator
+ * from whatever it has measured so far, so content that keeps moving that
+ * average is what stops the estimate from converging.
+ */
+function mixedNoteFixture(): string {
+  const parts: string[] = [];
+  for (let index = 0; index < LINE_COUNT; index += 1) {
+    const bucket = index % 11;
+    if (bucket === 0) {
+      parts.push(`# Chapter ${index}`);
+    } else if (bucket === 1) {
+      parts.push(`### Sub ${index}`);
+    } else if (bucket === 2) {
+      parts.push(
+        `| Column ${index} | Second | Third |\n| --- | --- | --- |\n| ${index} | value | another |\n| ${index + 1} | value | another |`,
+      );
+    } else if (bucket === 3) {
+      parts.push(
+        '```ts\n' +
+          `const value${index} = ${index};\n`.repeat(6) +
+          '```',
+      );
+    } else if (bucket === 4) {
+      parts.push(`> Quote ${index} that runs on for a while. `.repeat(3));
+    } else if (bucket === 5) {
+      parts.push(
+        Array.from(
+          { length: 6 },
+          (_, item) => `- Item ${index}.${item} with a reasonably long label`,
+        ).join('\n'),
+      );
+    } else if (bucket === 6) {
+      // A very long paragraph: many wrapped rows, far above the average.
+      parts.push(
+        `Paragraph ${index}: ` +
+          'text that keeps going and wraps many times over. '.repeat(24),
+      );
+    } else if (bucket === 7) {
+      parts.push(`Tiny ${index}.`);
+    } else if (bucket === 8) {
+      parts.push('---');
+    } else {
+      parts.push(
+        `Paragraph ${index} with a middling amount of text on it, enough to wrap once or twice at a normal pane width.`,
+      );
+    }
+  }
+  return parts.join('\n\n');
+}
+
+function noteFixture(): string {
+  return process.env.FLICKER_FIXTURE === 'mixed'
+    ? mixedNoteFixture()
+    : uniformNoteFixture();
 }
 
 /** Patches the scroll APIs once; the store is reset between scenarios. */
@@ -171,8 +229,12 @@ const installProbe = () => {
         const scrollers = pane.querySelectorAll<HTMLElement>(
           '.markdown-source__editor, .markdown-view, .page-panel',
         );
-        scrollers.forEach((scroller) => {
-          const key = `pane${paneIndex}:${describe(scroller)}`;
+        scrollers.forEach((scroller, scrollerIndex) => {
+          // Both tabs of a pane stay mounted, so two editors can answer the
+          // same selector. Keying only by class merged them into one track and
+          // made the alternation between a visible and a hidden editor look
+          // like the view oscillating.
+          const key = `pane${paneIndex}:#${scrollerIndex}:${describe(scroller)}:h${scroller.clientHeight}`;
           let track = store.tracks.get(key);
           if (!track) {
             track = [];
@@ -312,7 +374,7 @@ test('probe: what writes scrollTop when something opens to the right', async () 
     path.join(os.tmpdir(), 'flyoff-flicker-project-'),
   );
   const projectName = 'Flicker Probe';
-  const source = longNoteFixture();
+  const source = noteFixture();
   let app: ElectronApplication | undefined;
 
   try {
@@ -385,25 +447,57 @@ test('probe: what writes scrollTop when something opens to the right', async () 
       .fill(projectName);
     await projectDialog.getByRole('button', { name: labels.choose }).click();
     await projectDialog.getByRole('button', { name: labels.create }).click();
-    await page.getByRole('button', { name: labels.add }).click();
-    await page
-      .getByRole('dialog', { name: labels.add })
-      .getByRole('option', { name: new RegExp(`^${labels.note}`) })
-      .click();
-    const nameInput = page.getByRole('textbox', { name: labels.name });
-    await nameInput.fill('Eleven thousand lines');
-    await nameInput.press('Enter');
-
-    const editor = page.locator('.markdown-source__editor:visible');
-    await expect(editor).toBeVisible();
     await app.evaluate(
       ({ clipboard }, value) => clipboard.writeText(value),
       source,
     );
-    await editor.focus();
-    await page.keyboard.press(
-      process.platform === 'darwin' ? 'Meta+V' : 'Control+V',
-    );
+
+    const createNote = async (name: string): Promise<void> => {
+      await page.getByRole('button', { name: labels.add }).click();
+      await page
+        .getByRole('dialog', { name: labels.add })
+        .getByRole('option', { name: new RegExp(`^${labels.note}`) })
+        .click();
+      const nameInput = page.getByRole('textbox', { name: labels.name });
+      await nameInput.fill(name);
+      await nameInput.press('Enter');
+      const fresh = page.locator('.markdown-source__editor:visible');
+      await expect(fresh).toBeVisible();
+      await app.evaluate(
+        ({ clipboard }, value) => clipboard.writeText(value),
+        source,
+      );
+      await fresh.focus();
+      await page.keyboard.press(
+        process.platform === 'darwin' ? 'Meta+V' : 'Control+V',
+      );
+      await page.waitForTimeout(1_500);
+      console.log(
+        `[probe] after paste into ${name}: ${JSON.stringify(
+          await fresh.evaluate((root) => ({
+            editors: document.querySelectorAll('.markdown-source__editor')
+              .length,
+            hasInput: Boolean(root.querySelector('.source-window__input')),
+            scrollable: root.scrollHeight - root.clientHeight,
+            text: (root.textContent ?? '').length,
+          })),
+        )}`,
+      );
+      await expect
+        .poll(
+          () => fresh.evaluate((root) => root.scrollHeight - root.clientHeight),
+          { timeout: 60_000 },
+        )
+        .toBeGreaterThan(1_000);
+    };
+
+    // Two notes, so that opening one to the right leaves a live editor in each
+    // pane. With the pane menu's placeholder page on the right there is only
+    // ever one editor mounted, and the pair is the whole point of the repro.
+    await createNote('Nota B');
+    await createNote('Nota A');
+
+    const editor = page.locator('.markdown-source__editor:visible');
     // A small note renders through the non-windowed editor, which carries no
     // line-count attribute, so readiness is judged by the document being
     // taller than the viewport in both cases.
@@ -464,7 +558,10 @@ test('probe: what writes scrollTop when something opens to the right', async () 
     // actually moves the note into a pane of its own, which is what "open
     // something to the right" does.
     await runScenario(page, 'B drag the note tab to the right edge', async () => {
-      const tab = page.locator('.workspace-pane .page-tab').first();
+      const tab = page
+        .locator('.workspace-pane .page-tab')
+        .filter({ hasText: 'Nota B' })
+        .first();
       const pane = page.locator('.workspace-pane').first();
       const box = (await pane.boundingBox())!;
       await tab.hover();
@@ -479,6 +576,11 @@ test('probe: what writes scrollTop when something opens to the right', async () 
       await expect(page.locator('.workspace-pane')).toHaveCount(2, {
         timeout: 10_000,
       });
+      console.log(
+        `[probe] editors mounted after split: ${await page
+          .locator('.markdown-source__editor')
+          .count()}`,
+      );
     });
 
     await runScenario(page, 'C mode -> split (reading opens right)', () =>
