@@ -463,7 +463,7 @@ test('probe: what writes scrollTop when something opens to the right', async () 
       await nameInput.press('Enter');
       const fresh = page.locator('.markdown-source__editor:visible');
       await expect(fresh).toBeVisible();
-      await app.evaluate(
+      await app!.evaluate(
         ({ clipboard }, value) => clipboard.writeText(value),
         source,
       );
