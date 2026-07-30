@@ -41,9 +41,120 @@ function entryBytes(entry: HistoryEntry): number {
   return (entry.deleted.length + entry.inserted.length) * 2;
 }
 
+interface LocalChangeBoundary {
+  after: number;
+  before: number;
+}
+
+function lineStart(content: string, offset: number): number {
+  return content.lastIndexOf(
+    '\n',
+    Math.max(0, Math.min(content.length, offset) - 1),
+  ) + 1;
+}
+
+function lineWindowEnd(content: string, offset: number): number {
+  const bounded = Math.max(0, Math.min(content.length, offset));
+  if (bounded === lineStart(content, bounded)) {
+    return bounded;
+  }
+  const newline = content.indexOf('\n', bounded);
+  return newline === -1 ? content.length : newline + 1;
+}
+
+function matchingLocalTail(
+  before: string,
+  after: string,
+  boundary: LocalChangeBoundary,
+): boolean {
+  const beforeRemaining = before.length - boundary.before;
+  if (beforeRemaining !== after.length - boundary.after) {
+    return false;
+  }
+  const probe = Math.min(64, beforeRemaining);
+  return (
+    before.slice(boundary.before, boundary.before + probe) ===
+      after.slice(boundary.after, boundary.after + probe) &&
+    before.slice(before.length - probe) === after.slice(after.length - probe)
+  );
+}
+
+function localChangeBoundary(
+  transaction: SourceEditTransaction,
+): LocalChangeBoundary | undefined {
+  if (
+    !transaction.inputType.startsWith('insert') &&
+    !transaction.inputType.startsWith('delete')
+  ) {
+    return undefined;
+  }
+  const before = transaction.before.content;
+  const after = transaction.after.content;
+  const selectionBoundary = {
+    after: transaction.after.selection.end,
+    before: transaction.before.selection.end,
+  };
+  if (matchingLocalTail(before, after, selectionBoundary)) {
+    return selectionBoundary;
+  }
+  const lineBoundary = {
+    after: lineWindowEnd(after, transaction.after.selection.end),
+    before: lineWindowEnd(before, transaction.before.selection.end),
+  };
+  return matchingLocalTail(before, after, lineBoundary)
+    ? lineBoundary
+    : undefined;
+}
+
+function deriveLocalEntry(
+  transaction: SourceEditTransaction,
+): HistoryEntry | undefined {
+  const boundary = localChangeBoundary(transaction);
+  if (!boundary) {
+    return undefined;
+  }
+  const before = transaction.before.content;
+  const after = transaction.after.content;
+  let start = Math.min(
+    lineStart(before, transaction.before.selection.start),
+    lineStart(after, transaction.after.selection.start),
+  );
+  const sharedEnd = Math.min(boundary.before, boundary.after);
+  while (start < sharedEnd && before[start] === after[start]) {
+    start += 1;
+  }
+
+  let previousEnd = boundary.before;
+  let nextEnd = boundary.after;
+  while (
+    previousEnd > start &&
+    nextEnd > start &&
+    before[previousEnd - 1] === after[nextEnd - 1]
+  ) {
+    previousEnd -= 1;
+    nextEnd -= 1;
+  }
+  if (start === previousEnd && start === nextEnd) {
+    return undefined;
+  }
+  return {
+    afterSelection: transaction.after.selection,
+    beforeSelection: transaction.before.selection,
+    deleted: before.slice(start, previousEnd),
+    inputType: transaction.inputType,
+    inserted: after.slice(start, nextEnd),
+    start,
+    timestamp: transaction.timestamp,
+  };
+}
+
 function deriveEntry(transaction: SourceEditTransaction): HistoryEntry | undefined {
   const before = transaction.before.content;
   const after = transaction.after.content;
+  const local = deriveLocalEntry(transaction);
+  if (local) {
+    return local;
+  }
   if (before === after) {
     return undefined;
   }

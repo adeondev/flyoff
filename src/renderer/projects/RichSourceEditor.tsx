@@ -1,10 +1,12 @@
 import {
+  Component,
   useEffect,
   useRef,
   useState,
   type KeyboardEvent,
   type MouseEvent,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
   type RefObject,
 } from 'react';
 
@@ -38,9 +40,11 @@ import {
   revealSourceSelectionAfterNavigation,
 } from './source-interaction';
 import {
+  disposeSourceRenderer,
   reconcileSource,
   getSourceChangeRange,
   getSourceDocumentModel,
+  getSourceLineElements,
   updateActiveSourceLine,
 } from './source-renderer';
 import {
@@ -53,9 +57,12 @@ import {
 } from './source-spellcheck';
 import {
   isLargeMarkdownDocument,
+  shouldWindowMarkdownSource,
   SOURCE_SPELLCHECK_IDLE_MS,
   SOURCE_SPELLCHECK_SCROLL_IDLE_MS,
+  SOURCE_SPELLCHECK_VIEWPORT_IDLE_MS,
 } from './editor-performance';
+import { WindowedRichSourceEditor } from './WindowedRichSourceEditor';
 import {
   applyMarkdownTypingComposition,
   applyMarkdownTypingReplacement,
@@ -127,7 +134,35 @@ interface PendingInput {
   timestamp: number;
 }
 
-export function RichSourceEditor({
+interface SourceEditorPromotionSnapshot {
+  focused: boolean;
+  scrollLeft: number;
+  scrollTop: number;
+  selection: SourceSelection;
+  viewKey: string;
+}
+
+interface SourceEditorModeState {
+  windowedNotes: ReadonlySet<string>;
+}
+
+const promotionSelections = new WeakMap<HTMLElement, SourceSelection>();
+
+function sourceEditorNoteKey({
+  nodeId,
+  projectId,
+}: Pick<RichSourceEditorProps, 'nodeId' | 'projectId'>): string {
+  return `${projectId ?? ''}\u0000${nodeId}`;
+}
+
+function sourceEditorViewKey(
+  noteKey: string,
+  viewId: string | undefined,
+): string {
+  return `${noteKey}\u0000${viewId ?? ''}`;
+}
+
+function LegacyRichSourceEditor({
   activeOffset,
   ariaLabel,
   autoFocus = false,
@@ -159,6 +194,7 @@ export function RichSourceEditor({
 }: RichSourceEditorProps) {
   const activeSourceOffset = activeOffset ?? selection.end;
   const largeSourceDocument = isLargeMarkdownDocument(value);
+  const nativeSpellCheck = spellCheck && !largeSourceDocument;
   const scrollReporter = useScrollPositionReporter(onScroll);
   const composingRef = useRef(false);
   const [spellcheckRevision, setSpellcheckRevision] = useState(0);
@@ -167,6 +203,9 @@ export function RichSourceEditor({
   const spellcheckCacheRef = useRef(new Map<string, boolean>());
   const spellcheckGenerationRef = useRef(0);
   const spellcheckScopeRef = useRef<string | undefined>(undefined);
+  const spellcheckSourceRef = useRef<string | undefined>(undefined);
+  const spellcheckDirtyLinesRef = useRef(new Set<HTMLElement>());
+  const spellcheckViewportRevisionRef = useRef(-1);
   const spellcheckScrollTimerRef = useRef<number | undefined>(undefined);
   const compositionTimerRef = useRef<number | undefined>(undefined);
   const suppressedInputRef = useRef<string | undefined>(undefined);
@@ -212,11 +251,11 @@ export function RichSourceEditor({
       '.md-line > .md-line__content',
     )) {
       line.spellcheck =
-        spellCheck &&
+        nativeSpellCheck &&
         (checkCodeBlocks ||
           !line.parentElement?.classList.contains('md-line--code'));
     }
-  }, [checkCodeBlocks, editorRef, spellCheck]);
+  }, [checkCodeBlocks, editorRef, nativeSpellCheck]);
 
   useEffect(() => {
     const refresh = () => {
@@ -235,11 +274,30 @@ export function RichSourceEditor({
     }
 
     const focused = root.ownerDocument.activeElement === root;
+    if (
+      focused &&
+      stateRef.current.content === value &&
+      getSourceDocumentModel(root)?.source === value
+    ) {
+      return;
+    }
     const nextSelection =
       focused && stateRef.current.content === value
         ? stateRef.current.selection
         : selection;
     reconcileSource(root, value);
+    if (focused) {
+      writeSelection(root, nextSelection);
+    }
+    stateRef.current = { content: value, selection: nextSelection };
+    updateActiveSourceLine(root, value, nextSelection.end);
+  }, [editorRef, selection, value]);
+
+  useEffect(() => {
+    const root = editorRef.current;
+    if (!root) {
+      return;
+    }
     for (const trigger of root.querySelectorAll<HTMLButtonElement>(
       '.md-inline-color-trigger',
     )) {
@@ -250,12 +308,7 @@ export function RichSourceEditor({
       }
       trigger.ariaDisabled = String(readOnly);
     }
-    if (focused) {
-      writeSelection(root, nextSelection);
-    }
-    stateRef.current = { content: value, selection: nextSelection };
-    updateActiveSourceLine(root, value, nextSelection.end);
-  }, [editorRef, inlineColorLabel, readOnly, selection, value]);
+  }, [editorRef, inlineColorLabel, readOnly]);
 
   useEffect(() => {
     const root = editorRef.current;
@@ -266,6 +319,9 @@ export function RichSourceEditor({
         clearSourceSpellingErrors(root);
       }
       spellcheckScopeRef.current = undefined;
+      spellcheckSourceRef.current = undefined;
+      spellcheckDirtyLinesRef.current.clear();
+      spellcheckViewportRevisionRef.current = -1;
       return;
     }
 
@@ -275,24 +331,91 @@ export function RichSourceEditor({
     const fullRefresh = spellcheckScopeRef.current !== scope;
     if (fullRefresh) {
       spellcheckCacheRef.current.clear();
+      spellcheckDirtyLinesRef.current.clear();
+    } else {
+      const queuedModel = getSourceDocumentModel(root);
+      const queuedChange = getSourceChangeRange(root);
+      const queuedLines = getSourceLineElements(root);
+      if (
+        queuedModel?.source === value &&
+        queuedChange &&
+        !queuedChange.full &&
+        queuedLines
+      ) {
+        for (
+          let lineIndex = queuedChange.startLine;
+          lineIndex < queuedChange.endLine;
+          lineIndex += 1
+        ) {
+          const line = queuedLines[lineIndex];
+          if (line) {
+            spellcheckDirtyLinesRef.current.add(line);
+          }
+        }
+      }
     }
-    spellcheckScopeRef.current = scope;
+    const viewportRefreshPending =
+      largeSourceDocument &&
+      spellcheckViewportRevisionRef.current !==
+        spellcheckViewportRevision;
     const timeout = window.setTimeout(() => {
       const model = getSourceDocumentModel(root);
       if (!model || model.source !== value) {
         return;
       }
       const changed = getSourceChangeRange(root);
-      const range = largeSourceDocument
+      let dirtyStart = Number.POSITIVE_INFINITY;
+      let dirtyEnd = -1;
+      for (const line of spellcheckDirtyLinesRef.current) {
+        if (line.parentElement !== root) {
+          spellcheckDirtyLinesRef.current.delete(line);
+          continue;
+        }
+        const lineIndex = Number(line.dataset.line) - 1;
+        if (lineIndex >= 0) {
+          dirtyStart = Math.min(dirtyStart, lineIndex);
+          dirtyEnd = Math.max(dirtyEnd, lineIndex + 1);
+        }
+      }
+      const viewportChanged =
+        spellcheckViewportRevisionRef.current !==
+        spellcheckViewportRevision;
+      const viewportRange = largeSourceDocument
         ? sourceSpellcheckViewportRange(root, model.lines.length)
+        : undefined;
+      const refreshViewport =
+        largeSourceDocument &&
+        (fullRefresh ||
+          viewportChanged ||
+          spellcheckSourceRef.current === undefined);
+      let range = refreshViewport
+        ? viewportRange!
         : fullRefresh || changed?.full
           ? { startLine: 0, endLine: model.lines.length }
-          : {
-              startLine: changed?.startLine ?? 0,
-              endLine: changed?.endLine ?? model.lines.length,
-            };
-      if (largeSourceDocument) {
-        clearSourceSpellingErrorsOutsideRange(root, range);
+          : dirtyEnd >= 0
+            ? { startLine: dirtyStart, endLine: dirtyEnd }
+            : {
+                startLine: changed?.startLine ?? 0,
+                endLine: changed?.endLine ?? model.lines.length,
+              };
+      if (largeSourceDocument && !refreshViewport) {
+        range = {
+          startLine: Math.max(
+            range.startLine,
+            viewportRange!.startLine,
+          ),
+          endLine: Math.min(
+            range.endLine,
+            viewportRange!.endLine,
+          ),
+        };
+        if (range.startLine >= range.endLine) {
+          clearSourceSpellingErrors(root, range);
+          spellcheckSourceRef.current = value;
+          spellcheckViewportRevisionRef.current =
+            spellcheckViewportRevision;
+          return;
+        }
       }
       const words = collectSourceSpellcheckWordsFromLines(
         model.lines.slice(range.startLine, range.endLine),
@@ -327,6 +450,9 @@ export function RichSourceEditor({
           }
           const focused = editor.ownerDocument.activeElement === editor;
           const currentSelection = focused ? readSelection(editor) : undefined;
+          if (refreshViewport) {
+            clearSourceSpellingErrorsOutsideRange(editor, range);
+          }
           renderSourceSpellingErrors(
             editor,
             words.filter(
@@ -338,13 +464,34 @@ export function RichSourceEditor({
           if (currentSelection) {
             writeSelection(editor, currentSelection);
           }
+          spellcheckScopeRef.current = scope;
+          spellcheckSourceRef.current = value;
+          if (refreshViewport || !largeSourceDocument) {
+            spellcheckDirtyLinesRef.current.clear();
+          } else {
+            for (const line of spellcheckDirtyLinesRef.current) {
+              const lineIndex = Number(line.dataset.line) - 1;
+              if (
+                line.parentElement !== editor ||
+                (lineIndex >= range.startLine &&
+                  lineIndex < range.endLine)
+              ) {
+                spellcheckDirtyLinesRef.current.delete(line);
+              }
+            }
+          }
+          spellcheckViewportRevisionRef.current =
+            spellcheckViewportRevision;
         })
         .catch(() => {
           if (active && editorRef.current) {
             clearSourceSpellingErrors(editorRef.current);
           }
         });
-    }, SOURCE_SPELLCHECK_IDLE_MS);
+    },
+    viewportRefreshPending
+      ? SOURCE_SPELLCHECK_VIEWPORT_IDLE_MS
+      : SOURCE_SPELLCHECK_IDLE_MS);
 
     return () => {
       active = false;
@@ -369,6 +516,16 @@ export function RichSourceEditor({
     },
     [],
   );
+
+  useEffect(() => {
+    const root = editorRef.current;
+    return () => {
+      if (root) {
+        clearSourceSpellingErrors(root);
+        disposeSourceRenderer(root);
+      }
+    };
+  }, [editorRef]);
 
   useEffect(() => {
     const root = editorRef.current;
@@ -409,7 +566,12 @@ export function RichSourceEditor({
       inputType: string,
       timestamp: number,
     ): void {
-      reconcileSelection(content, nextSelection);
+      if (shouldWindowMarkdownSource(content)) {
+        promotionSelections.set(editor, nextSelection);
+      } else {
+        promotionSelections.delete(editor);
+        reconcileSelection(content, nextSelection);
+      }
       const after = { content, selection: nextSelection };
       stateRef.current = after;
       pendingRef.current = undefined;
@@ -756,6 +918,14 @@ export function RichSourceEditor({
         return;
       }
       const nextSelection = readSelection(editor);
+      const currentSelection = stateRef.current.selection;
+      if (
+        nextSelection.start === currentSelection.start &&
+        nextSelection.end === currentSelection.end &&
+        nextSelection.direction === currentSelection.direction
+      ) {
+        return;
+      }
       stateRef.current = {
         content: stateRef.current.content,
         selection: nextSelection,
@@ -770,6 +940,7 @@ export function RichSourceEditor({
 
     const removeMouseSelection = installSourceMouseSelection(editor, {
       getContent: () => stateRef.current.content,
+      getSelection: () => stateRef.current.selection,
       isComposing: () => composingRef.current,
       onSelectionChange: (content, nextSelection) => {
         stateRef.current = { content, selection: nextSelection };
@@ -814,8 +985,11 @@ export function RichSourceEditor({
   useEffect(() => {
     const editor = editorRef.current;
     if (autoFocus && editor) {
+      const { scrollLeft, scrollTop } = editor;
       editor.focus({ preventScroll: true });
       writeSelection(editor, stateRef.current.selection);
+      editor.scrollLeft = scrollLeft;
+      editor.scrollTop = scrollTop;
     }
   }, [autoFocus, editorRef]);
 
@@ -926,10 +1100,12 @@ export function RichSourceEditor({
         aria-readonly={readOnly}
         className="markdown-source__editor"
         contentEditable={readOnly ? false : 'plaintext-only'}
+        data-inline-color-label={inlineColorLabel}
         data-markdown-node-id={nodeId}
         data-markdown-view-id={viewId}
+        data-read-only={String(readOnly)}
         data-spellcheck-code-blocks={String(checkCodeBlocks)}
-        data-spellcheck-enabled={String(spellCheck)}
+        data-spellcheck-enabled={String(nativeSpellCheck)}
         onClick={handleClick}
         onContextMenu={handleContextMenu}
         onDragOver={(event) => {
@@ -982,15 +1158,10 @@ export function RichSourceEditor({
         }}
         onScrollEnd={(event) => {
           scrollReporter.reportScrollEnd(event.currentTarget.scrollTop);
-          if (spellcheckScrollTimerRef.current !== undefined) {
-            window.clearTimeout(spellcheckScrollTimerRef.current);
-            spellcheckScrollTimerRef.current = undefined;
-            setSpellcheckViewportRevision((current) => current + 1);
-          }
         }}
         ref={editorRef}
         role="textbox"
-        spellCheck={spellCheck}
+        spellCheck={nativeSpellCheck}
         suppressContentEditableWarning
         tabIndex={0}
       />
@@ -1006,4 +1177,120 @@ export function RichSourceEditor({
       />
     </div>
   );
+}
+
+class RichSourceEditorLifecycle extends Component<
+  RichSourceEditorProps,
+  SourceEditorModeState
+> {
+  state: SourceEditorModeState = {
+    windowedNotes: new Set<string>(),
+  };
+
+  static getDerivedStateFromProps(
+    props: RichSourceEditorProps,
+    state: SourceEditorModeState,
+  ): SourceEditorModeState | null {
+    const noteKey = sourceEditorNoteKey(props);
+    if (
+      state.windowedNotes.has(noteKey) ||
+      !shouldWindowMarkdownSource(props.value)
+    ) {
+      return null;
+    }
+    const windowedNotes = new Set(state.windowedNotes);
+    windowedNotes.add(noteKey);
+    return { windowedNotes };
+  }
+
+  getSnapshotBeforeUpdate(
+    previousProps: RichSourceEditorProps,
+    previousState: SourceEditorModeState,
+  ): SourceEditorPromotionSnapshot | null {
+    const previousNoteKey = sourceEditorNoteKey(previousProps);
+    const noteKey = sourceEditorNoteKey(this.props);
+    const viewKey = sourceEditorViewKey(noteKey, this.props.viewId);
+    if (
+      previousNoteKey !== noteKey ||
+      sourceEditorViewKey(previousNoteKey, previousProps.viewId) !==
+        viewKey ||
+      previousState.windowedNotes.has(previousNoteKey) ||
+      !this.state.windowedNotes.has(noteKey)
+    ) {
+      return null;
+    }
+    const editor = previousProps.editorRef.current;
+    const matchingEditor =
+      editor?.dataset.windowed !== 'true' &&
+      editor?.dataset.markdownNodeId === previousProps.nodeId &&
+      (editor?.dataset.markdownViewId ?? '') ===
+        (previousProps.viewId ?? '');
+    const focused =
+      matchingEditor &&
+      editor.ownerDocument.activeElement === editor;
+    const promotedSelection = editor
+      ? promotionSelections.get(editor)
+      : undefined;
+    if (editor) {
+      promotionSelections.delete(editor);
+    }
+    return {
+      focused: Boolean(focused),
+      scrollLeft: editor?.scrollLeft ?? 0,
+      scrollTop: editor?.scrollTop ?? 0,
+      selection:
+        promotedSelection ??
+        (focused && editor
+          ? readSelection(editor)
+          : this.props.selection),
+      viewKey,
+    };
+  }
+
+  componentDidUpdate(
+    _previousProps: RichSourceEditorProps,
+    _previousState: SourceEditorModeState,
+    snapshot: SourceEditorPromotionSnapshot | null,
+  ): void {
+    const noteKey = sourceEditorNoteKey(this.props);
+    if (
+      !snapshot ||
+      snapshot.viewKey !==
+        sourceEditorViewKey(noteKey, this.props.viewId)
+    ) {
+      return;
+    }
+    const editor = this.props.editorRef.current;
+    if (
+      !editor ||
+      editor.dataset.windowed !== 'true' ||
+      editor.dataset.markdownNodeId !== this.props.nodeId ||
+      (editor.dataset.markdownViewId ?? '') !==
+        (this.props.viewId ?? '')
+    ) {
+      return;
+    }
+    if (snapshot.focused) {
+      editor.focus({ preventScroll: true });
+    }
+    writeSelection(editor, snapshot.selection);
+    editor.scrollLeft = snapshot.scrollLeft;
+    editor.scrollTop = snapshot.scrollTop;
+  }
+
+  render(): ReactNode {
+    return this.state.windowedNotes.has(
+      sourceEditorNoteKey(this.props),
+    ) ? (
+      <WindowedRichSourceEditor {...this.props} />
+    ) : (
+      <LegacyRichSourceEditor {...this.props} />
+    );
+  }
+}
+
+export function RichSourceEditor(
+  props: RichSourceEditorProps,
+) {
+  return <RichSourceEditorLifecycle {...props} />;
 }

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { renderMarkdownInto } from '../../src/renderer/projects/markdown-render';
 import { serializeImageDirective } from '../../src/shared/markdown';
@@ -36,6 +36,34 @@ describe('markdown DOM renderer', () => {
       'Lua',
     );
     expect(paragraph.lastChild?.textContent).toBe(' depois');
+  });
+
+  it('marks headings containing nested inline images without :has', () => {
+    const directive = serializeImageDirective({
+      version: 2,
+      instanceId: '223e4567-e89b-42d3-a456-426614174001',
+      assetId: '123e4567-e89b-42d3-a456-426614174000',
+      path: 'Media/Lua.png',
+      alt: 'Lua',
+      mode: 'inline',
+      align: 'left',
+      width: 160,
+      height: 90,
+      minWidth: 96,
+      maxWidth: 1200,
+      margin: 8,
+      ratioLock: true,
+      positionLock: false,
+      caption: '',
+    });
+    const heading = render(`# **before ${directive} after**`).querySelector(
+      'h1',
+    )!;
+
+    expect(
+      heading.classList.contains('markdown-view__heading--inline-image'),
+    ).toBe(true);
+    expect(heading.querySelector('.markdown-image--inline')).not.toBeNull();
   });
 
   it('renders headings, emphasis and safe links', () => {
@@ -248,6 +276,122 @@ describe('markdown DOM renderer', () => {
   });
 
   describe('incremental reconciliation', () => {
+    it(
+      'skips the global heading scan for an edit among 15,000 non-heading blocks',
+      () => {
+        const blocks = new Array<string>(15_000).fill('plain block');
+        const source = ['# Stable', ...blocks].join('\n\n');
+        const container = render(source);
+        const heading = container.children[0];
+        const unchangedTail = container.lastElementChild;
+        const edited = [...blocks];
+        edited[7_500] = 'edited block';
+        const headingQueries = vi.spyOn(
+          Element.prototype,
+          'querySelectorAll',
+        );
+
+        try {
+          renderMarkdownInto(
+            container,
+            ['# Stable', ...edited].join('\n\n'),
+          );
+
+          expect(headingQueries).not.toHaveBeenCalled();
+          expect(container.children[0]).toBe(heading);
+          expect(container.lastElementChild).toBe(unchangedTail);
+          expect(container.children[7_501]?.textContent).toBe(
+            'edited block',
+          );
+        } finally {
+          headingQueries.mockRestore();
+        }
+      },
+      15_000,
+    );
+
+    it.each([
+      {
+        initial:
+          'before [site](https://a.dev) and ![moon](https://a.dev/moon.png) after',
+        name: 'links and images',
+        next: 'before [site](https://b.dev) and ![lua](https://a.dev/lua.png) after',
+      },
+      {
+        initial: '- one\n- two\n- three',
+        name: 'lists',
+        next: '- one\n- changed\n- three',
+      },
+      {
+        initial:
+          '| Name | Value |\n| --- | ---: |\n| Alpha | 1 |\n| Beta | 2 |',
+        name: 'tables',
+        next:
+          '| Name | Value |\n| --- | ---: |\n| Alpha | 1 |\n| Beta | 20 |',
+      },
+      {
+        initial: '```ts\nconst value = 1;\n```',
+        name: 'fenced code',
+        next: '```ts\nconst value = 20;\n```',
+      },
+      {
+        initial: '> before\n> middle\n> after',
+        name: 'blockquotes',
+        next: '> before\n> changed\n> after',
+      },
+    ])('matches a full rebuild for local $name edits', ({ initial, next }) => {
+      const incremental = render(initial);
+
+      renderMarkdownInto(incremental, next);
+
+      expect(incremental.innerHTML).toBe(render(next).innerHTML);
+    });
+
+    it.each([
+      {
+        initial: '- one\n1. two',
+        name: 'merges adjacent lists',
+        next: '- one\n- two',
+      },
+      {
+        initial: '```\ncode\n```\n\nafter',
+        name: 'removes a closing fence',
+        next: '```\ncode\n``\n\nafter',
+      },
+      {
+        initial: 'Name | Value\nnot a divider\nAlpha | 1',
+        name: 'creates a table',
+        next: 'Name | Value\n--- | ---\nAlpha | 1',
+      },
+    ])(
+      'falls back safely when a local edit $name',
+      ({ initial, next }) => {
+        const incremental = render(initial);
+
+        renderMarkdownInto(incremental, next);
+
+        expect(incremental.innerHTML).toBe(render(next).innerHTML);
+      },
+    );
+
+    it('keeps block offsets current across blank and local edits', () => {
+      const container = render('one\n\ntwo\n\nthree');
+      const first = container.children[0];
+      const last = container.children[2];
+
+      renderMarkdownInto(container, 'one\n\n\ntwo\n\nthree');
+      renderMarkdownInto(
+        container,
+        'one\n\n\ntwo expanded\n\nthree',
+      );
+
+      expect(container.innerHTML).toBe(
+        render('one\n\n\ntwo expanded\n\nthree').innerHTML,
+      );
+      expect(container.children[0]).toBe(first);
+      expect(container.children[2]).toBe(last);
+    });
+
     it('preserves untouched blocks around an edited one', () => {
       const container = render('one\n\ntwo\n\nthree');
       const [first, middle, last] = [...container.children];
@@ -291,6 +435,28 @@ describe('markdown DOM renderer', () => {
       renderMarkdownInto(container, '# Other\n\ntext\n\n# Same');
 
       expect(container.children[2]).toBe(reusedHeading);
+      expect(reusedHeading.id).toBe('same');
+      expect(reusedHeading.dataset.markdownHeadingPath).toBe('["Same"]');
+    });
+
+    it('updates reused heading metadata after inserting an earlier heading', () => {
+      const container = render('text\n\n# Same');
+      const reusedHeading = container.children[1] as HTMLElement;
+
+      renderMarkdownInto(container, '# Same\n\ntext\n\n# Same');
+
+      expect(container.children[2]).toBe(reusedHeading);
+      expect(reusedHeading.id).toBe('same-2');
+      expect(reusedHeading.dataset.markdownHeadingPath).toBe('["Same"]');
+    });
+
+    it('updates reused heading metadata after removing an earlier heading', () => {
+      const container = render('# Same\n\ntext\n\n# Same');
+      const reusedHeading = container.children[2] as HTMLElement;
+
+      renderMarkdownInto(container, 'text\n\n# Same');
+
+      expect(container.children[1]).toBe(reusedHeading);
       expect(reusedHeading.id).toBe('same');
       expect(reusedHeading.dataset.markdownHeadingPath).toBe('["Same"]');
     });

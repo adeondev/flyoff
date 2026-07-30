@@ -1,3 +1,32 @@
+const graphemeSegmenter =
+  typeof Intl.Segmenter === 'function'
+    ? new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+    : undefined;
+
+function isSimpleLatinText(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    if (value.charCodeAt(index) > 0x02ff) {
+      return false;
+    }
+  }
+  return true;
+}
+
+export function countGraphemes(value: string): number {
+  if (isSimpleLatinText(value) && !value.includes('\r\n')) {
+    return value.length;
+  }
+  if (!graphemeSegmenter) {
+    return [...value].length;
+  }
+  let count = 0;
+  const segments = graphemeSegmenter.segment(value)[Symbol.iterator]();
+  while (!segments.next().done) {
+    count += 1;
+  }
+  return count;
+}
+
 function previousCodePointBoundary(value: string, offset: number): number {
   if (offset <= 0) {
     return 0;
@@ -34,10 +63,8 @@ export function previousGraphemeBoundary(
   if (bounded <= 0) {
     return 0;
   }
-  if (typeof Intl.Segmenter === 'function') {
-    const segment = new Intl.Segmenter(undefined, {
-      granularity: 'grapheme',
-    })
+  if (graphemeSegmenter) {
+    const segment = graphemeSegmenter
       .segment(value)
       .containing(bounded - 1);
     if (segment) {
@@ -55,10 +82,8 @@ export function nextGraphemeBoundary(
   if (bounded >= value.length) {
     return value.length;
   }
-  if (typeof Intl.Segmenter === 'function') {
-    const segment = new Intl.Segmenter(undefined, {
-      granularity: 'grapheme',
-    })
+  if (graphemeSegmenter) {
+    const segment = graphemeSegmenter
       .segment(value)
       .containing(bounded);
     if (segment) {

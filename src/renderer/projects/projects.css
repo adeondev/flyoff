@@ -1301,6 +1301,74 @@
   overflow-wrap: anywhere;
 }
 
+.markdown-source__editor[data-windowed='true'] {
+  position: relative;
+  cursor: text;
+  overflow-anchor: none;
+}
+
+.source-window__canvas {
+  min-width: 100%;
+  position: relative;
+}
+
+.source-window__lines {
+  inset: 0 0 auto;
+  min-width: 100%;
+  position: absolute;
+  transform-origin: top left;
+}
+
+.source-window__selections {
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+  z-index: 2;
+}
+
+.source-window__selection {
+  background: color-mix(
+    in srgb,
+    var(--color-accent) 28%,
+    transparent
+  );
+  pointer-events: none;
+  position: absolute;
+}
+
+.source-window__selection--widget {
+  border: 1px solid color-mix(
+    in srgb,
+    var(--color-accent-bright) 72%,
+    transparent
+  );
+  border-radius: 4px;
+}
+
+.source-window__caret {
+  background: var(--color-accent-bright);
+  pointer-events: none;
+  position: absolute;
+  width: 1px;
+  z-index: 3;
+}
+
+.source-window__input {
+  background: transparent;
+  border: 0;
+  color: transparent;
+  font: inherit;
+  height: 1px;
+  inset: 0 auto auto 0;
+  opacity: 0;
+  overflow: hidden;
+  padding: 0;
+  pointer-events: none;
+  position: absolute;
+  resize: none;
+  width: 1px;
+}
+
 :root[data-font-ligatures='false'] .markdown-source__editor,
 :root[data-font-ligatures='false'] .markdown-reading {
   font-variant-ligatures: none;
@@ -1322,8 +1390,8 @@
   clear: both;
 }
 
-.md-line:has(.md-source-image--wrap) + .md-line--heading,
-.md-line--heading:has(.md-source-image--inline) {
+.md-line--image-wrap + .md-line--heading,
+.md-line--heading.md-line--image-inline {
   clear: none;
 }
 
@@ -1359,8 +1427,16 @@
   text-underline-offset: 3px;
 }
 
+::highlight(flyoff-spelling-error) {
+  text-decoration-line: underline;
+  text-decoration-style: wavy;
+  text-decoration-color: var(--color-spelling-error);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
+}
+
 :root[data-highlight-active-line='true']
-  .markdown-source__editor:focus
+  .markdown-source__editor:is(:focus, :focus-within)
   .md-line--active {
   background: color-mix(in srgb, var(--color-accent) 7%, transparent);
 }
@@ -1686,7 +1762,10 @@
 }
 
 .md-line--code-end .md-line__content,
-.md-line--code:last-child .md-line__content {
+.markdown-source__editor:not([data-windowed='true'])
+  > .md-line--code:last-child
+  .md-line__content,
+.md-line--document-end.md-line--code .md-line__content {
   padding-bottom: 8px;
   border-bottom-right-radius: 10px;
   border-bottom-left-radius: 10px;
@@ -2202,12 +2281,27 @@
   white-space: pre-wrap;
 }
 
-.markdown-view > :first-child {
+.markdown-view > :first-child,
+.markdown-view__blocks > [data-markdown-block='0'] {
   margin-top: 0;
 }
 
-.markdown-view > :last-child {
+.markdown-view > :last-child,
+.markdown-view__blocks > .markdown-view__block--last {
   margin-bottom: 0;
+}
+
+/* Windowed reading view: the canvas holds the full document height while only
+   the visible blocks exist, and the layer is translated to the block offset. */
+.markdown-view__canvas {
+  position: relative;
+  width: 100%;
+}
+
+.markdown-view__blocks {
+  position: absolute;
+  top: 0;
+  inset-inline: 0;
 }
 
 .markdown-view h1,
@@ -2225,7 +2319,8 @@
 }
 
 .markdown-view > .markdown-image--wrap + :is(h1, h2, h3, h4, h5, h6),
-.markdown-view :is(h1, h2, h3, h4, h5, h6):has(.markdown-image--inline) {
+.markdown-view__blocks > .markdown-image--wrap + :is(h1, h2, h3, h4, h5, h6),
+.markdown-view .markdown-view__heading--inline-image {
   clear: none;
 }
 

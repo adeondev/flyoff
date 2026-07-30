@@ -232,6 +232,26 @@ describe('project workspace integration', () => {
     }
   });
 
+  it('preserves the note viewport while opening and returning from a new tab', async () => {
+    installProjectApi();
+    render(<App />);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Open den' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Roadmap' }));
+    const editor = await screen.findByRole('textbox', {
+      name: 'Markdown editor',
+    });
+    editor.scrollTop = 480;
+    fireEvent.scroll(editor);
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'New tab', exact: true }),
+    );
+    fireEvent.click(screen.getByRole('tab', { name: 'Roadmap' }));
+
+    await waitFor(() => expect(editor.scrollTop).toBe(480));
+  });
+
   it('records real note activation and closure without counting workspace setup', async () => {
     const recordProjectNoteActivity = vi.fn(async (event) => ({
       ok: true as const,

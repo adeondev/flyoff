@@ -3,6 +3,7 @@ import {
   forwardRef,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useRef,
   useState,
   type KeyboardEvent,
@@ -45,6 +46,7 @@ import {
   type MarkdownTypingColor,
 } from './source-typing-color';
 import { MarkdownReadingView } from './MarkdownReadingView';
+import { windowedMarkdownViewFor } from './source-engine/windowed-markdown-view';
 import { MarkdownFocusShelf } from './MarkdownFocusShelf';
 import { MarkdownSourceContextMenu } from './MarkdownSourceContextMenu';
 import { MarkdownToolbar } from './MarkdownToolbar';
@@ -61,6 +63,7 @@ import {
   writeSelection,
   type SourceSelection,
 } from './source-caret';
+import { getSourceDocumentModel } from './source-renderer';
 import { sourcePositionStatus } from './source-status';
 import type { SourceEditTransaction } from './markdown-history';
 import type { SourceContextEdit } from './source-context-actions';
@@ -94,6 +97,7 @@ export interface MarkdownEditorHandle {
 }
 
 export interface MarkdownEditorProps {
+  active?: boolean;
   controller: MarkdownDocumentController;
   document: MarkdownDocument;
   mode?: EditorMode;
@@ -143,6 +147,7 @@ export const MarkdownEditor = forwardRef<
   MarkdownEditorProps
 >(function MarkdownEditor(
   {
+    active = true,
     autoFocus = false,
     controller,
     document,
@@ -181,6 +186,11 @@ export const MarkdownEditor = forwardRef<
   const selectionFrameRef = useRef<number | undefined>(undefined);
   const pendingLiveSelectionRef = useRef(snapshot.selection);
   const nodeId = document.nodeId;
+  const sourceViewportRef = useRef({
+    key: `${nodeId}\u0000${viewId}`,
+    left: 0,
+    recorded: false,
+  });
   const publishLiveSelection = useCallback(
     (selection: SourceSelection): void => {
       pendingLiveSelectionRef.current = selection;
@@ -268,12 +278,49 @@ export const MarkdownEditor = forwardRef<
     [],
   );
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    const key = `${nodeId}\u0000${viewId}`;
+    if (sourceViewportRef.current.key !== key) {
+      sourceViewportRef.current = { key, left: 0, recorded: false };
+    }
     const editor = editorRef.current;
+    if (!active) {
+      // React applies `hidden` to the panel in the same commit that flips
+      // `active`, and it does so in the mutation phase — before this layout
+      // effect runs. By now the editor sits inside `display: none`, where
+      // `scrollTop` reads 0 no matter where the reader actually was. Reporting
+      // that zero persisted it and lost the position on every tab switch, so
+      // geometry is only trusted while the element still has a box. When it has
+      // none there is nothing new to report anyway: the scroll listener already
+      // persisted the real position while the note was on screen.
+      if (editor && editor.clientHeight > 0) {
+        sourceViewportRef.current.left = editor.scrollLeft;
+        sourceViewportRef.current.recorded = true;
+        if (editor.scrollTop !== scrollTop) {
+          onScrollChange?.(editor.scrollTop, false);
+        }
+      }
+      return;
+    }
     if (editor && editor.scrollTop !== scrollTop) {
       editor.scrollTop = scrollTop;
     }
-  }, [scrollTop]);
+    if (
+      editor &&
+      sourceViewportRef.current.recorded &&
+      editor.scrollLeft !== sourceViewportRef.current.left
+    ) {
+      editor.scrollLeft = sourceViewportRef.current.left;
+    }
+
+  }, [
+    active,
+    mode,
+    nodeId,
+    onScrollChange,
+    scrollTop,
+    viewId,
+  ]);
 
   useEffect(() => {
     if (!navigation || navigation.nodeId !== nodeId) {
@@ -281,6 +328,16 @@ export const MarkdownEditor = forwardRef<
     }
     const frame = requestAnimationFrame(() => {
       if (mode === 'reading') {
+        // A windowed reading view only mounts the visible blocks, so the
+        // target heading usually has no element to search for. It resolves
+        // the path against the document model and scrolls the block in.
+        const windowed = windowedMarkdownViewFor(readingRef.current);
+        if (windowed) {
+          if (!windowed.scrollToHeadingPath(navigation.headingPath)) {
+            windowed.scrollToTop();
+          }
+          return;
+        }
         const heading = [
           ...(readingRef.current?.querySelectorAll<HTMLElement>(
             '[data-markdown-heading-path]',
@@ -904,7 +961,16 @@ export const MarkdownEditor = forwardRef<
 
   const status = statusLabel(snapshot, translate);
   const busy = snapshot.status === 'saving' || snapshot.status === 'loading';
-  const position = sourcePositionStatus(snapshot.content, liveSelection);
+  const position =
+    mode !== 'reading' && editorPreferences.showStatusBar
+      ? sourcePositionStatus(
+          snapshot.content,
+          liveSelection,
+          editorRef.current
+            ? getSourceDocumentModel(editorRef.current)
+            : undefined,
+        )
+      : { column: 1, line: 1, selected: 0 };
   const focusLayout = editorPreferences.chromeLayout === 'focus';
   const importantStatus = snapshot.readOnly || snapshot.status !== 'saved';
   const modeMenuItems: readonly MenuItem[] = [
@@ -1095,6 +1161,14 @@ export const MarkdownEditor = forwardRef<
             onRedo={() => controller.redo(nodeId, viewId)}
             onRevealMediaAsset={onRevealMediaAsset}
             onScroll={(scrollPosition, settled) => {
+              const editor = editorRef.current;
+              if (editor) {
+                sourceViewportRef.current = {
+                  key: `${nodeId}\u0000${viewId}`,
+                  left: editor.scrollLeft,
+                  recorded: true,
+                };
+              }
               onScrollChange?.(scrollPosition, settled);
               splitScroll.handleSourceScroll();
             }}

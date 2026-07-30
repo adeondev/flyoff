@@ -251,25 +251,37 @@ function formatReplacement(
 function cleanupEmptyRuns(state: SourceEditorState): SourceEditorState {
   const emptyRun =
     /\[\]\{color\s*=\s*(?:"#[0-9a-fA-F]{3,8}"|'#[0-9a-fA-F]{3,8}'|#[0-9a-fA-F]{3,8})\s*\}|====(?:\{color\s*=\s*(?:"#[0-9a-fA-F]{3,8}"|'#[0-9a-fA-F]{3,8}'|#[0-9a-fA-F]{3,8})\s*\})?/g;
-  let content = '';
-  let sourceOffset = 0;
+  const caret = Math.min(state.selection.start, state.content.length);
+  const lineStart = state.content.lastIndexOf('\n', caret - 1) + 1;
+  const nextBreak = state.content.indexOf('\n', caret);
+  const lineEnd = nextBreak === -1 ? state.content.length : nextBreak;
+  const line = state.content.slice(lineStart, lineEnd);
+  if (!line.includes('[]') && !line.includes('====')) {
+    return state;
+  }
+
+  let content = state.content.slice(0, lineStart);
+  let sourceOffset = lineStart;
   let removedBeforeStart = 0;
   let removedBeforeEnd = 0;
+  let removed = false;
 
-  for (const match of state.content.matchAll(emptyRun)) {
-    content += state.content.slice(sourceOffset, match.index);
-    const matchEnd = match.index + match[0].length;
-    if (match.index < state.selection.start) {
+  for (const match of line.matchAll(emptyRun)) {
+    const matchStart = lineStart + match.index;
+    const matchEnd = matchStart + match[0].length;
+    content += state.content.slice(sourceOffset, matchStart);
+    if (matchStart < state.selection.start) {
       removedBeforeStart +=
-        Math.min(matchEnd, state.selection.start) - match.index;
+        Math.min(matchEnd, state.selection.start) - matchStart;
     }
-    if (match.index < state.selection.end) {
+    if (matchStart < state.selection.end) {
       removedBeforeEnd +=
-        Math.min(matchEnd, state.selection.end) - match.index;
+        Math.min(matchEnd, state.selection.end) - matchStart;
     }
     sourceOffset = matchEnd;
+    removed = true;
   }
-  if (sourceOffset === 0) {
+  if (!removed) {
     return state;
   }
   content += state.content.slice(sourceOffset);

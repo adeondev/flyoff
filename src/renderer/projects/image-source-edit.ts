@@ -1,5 +1,6 @@
 import {
   parseImageDirective,
+  parseImageDirectiveAt,
   serializeImageDirective,
   type ImageDirective,
 } from '../../shared/markdown';
@@ -20,7 +21,11 @@ export type ImageSourceOperation =
       intent: ImageDropIntent;
       directive: ImageDirective;
     }
-  | { type: 'delete'; sourceRange: ImageSourceRange }
+  | {
+      type: 'delete';
+      sourceRange: ImageSourceRange;
+      instanceId: string;
+    }
   | {
       type: 'duplicate';
       sourceRange: ImageSourceRange;
@@ -30,6 +35,11 @@ export type ImageSourceOperation =
 export interface ImageSourceEdit {
   caret: number;
   content: string;
+}
+
+export interface ResolvedImageSource {
+  directive: ImageDirective;
+  range: ImageSourceRange;
 }
 
 function validRange(
@@ -43,6 +53,48 @@ function validRange(
     range.end > range.start &&
     range.end <= content.length
   );
+}
+
+export function resolveImageSourceByInstance(
+  content: string,
+  instanceId: string,
+  preferredRange?: ImageSourceRange,
+): ResolvedImageSource | null {
+  if (preferredRange && validRange(content, preferredRange)) {
+    const directive = parseImageDirective(
+      content.slice(preferredRange.start, preferredRange.end),
+    );
+    if (directive?.instanceId === instanceId) {
+      return { directive, range: preferredRange };
+    }
+  }
+
+  const marker = `instance=${instanceId}`;
+  let markerStart = content.indexOf(marker);
+  while (markerStart !== -1) {
+    const lineStart =
+      content.lastIndexOf('\n', Math.max(0, markerStart - 1)) + 1;
+    let directiveStart = content.lastIndexOf('::image[', markerStart);
+    while (directiveStart >= lineStart) {
+      const parsed = parseImageDirectiveAt(content, directiveStart);
+      if (
+        parsed?.directive.instanceId === instanceId &&
+        parsed.start <= markerStart &&
+        parsed.end >= markerStart + marker.length
+      ) {
+        return {
+          directive: parsed.directive,
+          range: { start: parsed.start, end: parsed.end },
+        };
+      }
+      directiveStart = content.lastIndexOf(
+        '::image[',
+        directiveStart - 1,
+      );
+    }
+    markerStart = content.indexOf(marker, markerStart + marker.length);
+  }
+  return null;
 }
 
 function lineBounds(
@@ -165,6 +217,13 @@ export function rewriteImageSource(
     operation.sourceRange.end,
   );
   const current = parseImageDirective(currentSource);
+  const instanceId =
+    operation.type === 'delete'
+      ? operation.instanceId
+      : operation.directive.instanceId;
+  if (current?.instanceId !== instanceId) {
+    return null;
+  }
 
   if (operation.type === 'change') {
     const serialized = serializeImageDirective(operation.directive);

@@ -80,6 +80,81 @@ describe('MarkdownHistoryStore', () => {
     ).toEqual({ content: '', selection: selection(0) });
   });
 
+  it('keeps large-note typing local while preserving complete undo and redo', () => {
+    const lines = Array.from(
+      { length: 15_000 },
+      (_, index) => `line ${index}`,
+    );
+    const before = lines.join('\n');
+    const start = before.indexOf('line 7500') + 'line '.length;
+    const after =
+      before.slice(0, start) + 'X' + before.slice(start);
+    const history = new MarkdownHistoryStore();
+
+    history.record(
+      'note',
+      transaction(
+        before,
+        after,
+        selection(start),
+        selection(start + 1),
+      ),
+    );
+
+    const undone = history.undo('note', {
+      content: after,
+      selection: selection(start + 1),
+    });
+    expect(undone).toEqual({
+      content: before,
+      selection: selection(start),
+    });
+    expect(history.redo('note', undone!)).toEqual({
+      content: after,
+      selection: selection(start + 1),
+    });
+  });
+
+  it('derives local history around CRLF, multiline input and line deletion', () => {
+    const history = new MarkdownHistoryStore();
+    const first = 'one\r\ntwo\r\nthree';
+    const insertion = first.indexOf('two') + 1;
+    const second =
+      first.slice(0, insertion) + '\nnew' + first.slice(insertion);
+    history.record(
+      'note',
+      transaction(
+        first,
+        second,
+        selection(insertion),
+        selection(insertion + 4),
+        'insertFromPaste',
+      ),
+    );
+
+    const lineStart = second.indexOf('two');
+    const lineEnd = second.indexOf('\r\n', lineStart) + 2;
+    const third = second.slice(0, lineStart) + second.slice(lineEnd);
+    history.record(
+      'note',
+      transaction(
+        second,
+        third,
+        selection(lineStart + 1),
+        selection(lineStart),
+        'deleteEntireSoftLine',
+        100,
+      ),
+    );
+
+    const restoredSecond = history.undo('note', {
+      content: third,
+      selection: selection(lineStart),
+    });
+    expect(restoredSecond?.content).toBe(second);
+    expect(history.undo('note', restoredSecond!)?.content).toBe(first);
+  });
+
   it('does not coalesce after the window or after a moved selection', () => {
     const history = new MarkdownHistoryStore();
     history.record('note', transaction('', 'a', selection(0), selection(1)));

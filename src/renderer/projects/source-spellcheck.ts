@@ -3,15 +3,112 @@ import {
   type HighlightedSourceLine,
 } from './markdown-highlight';
 import type { SourceChangeRange } from './source-document-model';
+import { getSourceLineElements } from './source-renderer';
 
 const SPELLING_WORD =
   /[\p{L}\p{M}]+(?:['\u2019\u2010-][\p{L}\p{M}]+)*/gu;
 const IGNORED_SOURCE =
   /`[^`\n]*`|https?:\/\/[^\s<>()]+|\]\([^)\n]*\)|\[\[[^\]\n]*\]\]/gu;
 const SPELLING_ERROR_CLASS = 'md-spelling-error';
-export const SOURCE_SPELLCHECK_OVERSCAN_LINES = 120;
+const SPELLING_HIGHLIGHT_NAME = 'flyoff-spelling-error';
+export const SOURCE_SPELLCHECK_OVERSCAN_LINES = 8;
 export const PERSONAL_DICTIONARY_CHANGED_EVENT =
   'flyoff:personal-dictionary-changed';
+
+interface CustomHighlight {
+  add(range: Range): CustomHighlight;
+  delete(range: Range): boolean;
+  readonly size: number;
+}
+
+interface CustomHighlightRegistry {
+  set(name: string, highlight: CustomHighlight): void;
+}
+
+interface CustomHighlightState {
+  highlight: CustomHighlight;
+  registry: CustomHighlightRegistry;
+  roots: WeakMap<HTMLElement, Map<HTMLElement, Set<Range>>>;
+}
+
+const customHighlightStates = new WeakMap<Document, CustomHighlightState>();
+
+function customHighlightState(
+  root: HTMLElement,
+): CustomHighlightState | undefined {
+  const document = root.ownerDocument;
+  const existing = customHighlightStates.get(document);
+  if (existing) {
+    return existing;
+  }
+  const view = document.defaultView as
+    | (Window & {
+        CSS?: typeof CSS & {
+          highlights?: CustomHighlightRegistry;
+        };
+        Highlight?: new () => CustomHighlight;
+      })
+    | null;
+  const registry = view?.CSS?.highlights;
+  if (!view?.Highlight || !registry) {
+    return undefined;
+  }
+  const state = {
+    highlight: new view.Highlight(),
+    registry,
+    roots: new WeakMap(),
+  };
+  registry.set(SPELLING_HIGHLIGHT_NAME, state.highlight);
+  customHighlightStates.set(document, state);
+  return state;
+}
+
+function removeCustomHighlightRanges(
+  root: HTMLElement,
+  shouldRemove: (lineIndex: number) => boolean,
+): void {
+  const state = customHighlightStates.get(root.ownerDocument);
+  const lines = state?.roots.get(root);
+  if (!state || !lines) {
+    return;
+  }
+  for (const [line, ranges] of lines) {
+    const lineIndex = Number(line.dataset.line) - 1;
+    if (
+      root.contains(line) &&
+      Number.isInteger(lineIndex) &&
+      !shouldRemove(lineIndex)
+    ) {
+      continue;
+    }
+    for (const range of ranges) {
+      state.highlight.delete(range);
+    }
+    lines.delete(line);
+  }
+  if (lines.size === 0) {
+    state.roots.delete(root);
+  }
+}
+
+export function releaseSourceSpellingHighlights(
+  root: HTMLElement,
+  line: HTMLElement,
+): void {
+  const state = customHighlightStates.get(root.ownerDocument);
+  const lines = state?.roots.get(root);
+  const ranges = lines?.get(line);
+  if (!state || !lines || !ranges) {
+    return;
+  }
+  for (const range of ranges) {
+    state.highlight.delete(range);
+  }
+  lines.delete(line);
+  if (lines.size === 0) {
+    state.roots.delete(root);
+  }
+}
 
 function ignoredRanges(source: string): readonly [number, number][] {
   return [...source.matchAll(IGNORED_SOURCE)].map((match) => [
@@ -71,10 +168,18 @@ function sourceLinesInRange(
   range?: Pick<SourceChangeRange, 'endLine' | 'startLine'>,
 ): readonly HTMLElement[] {
   const start = Math.max(0, range?.startLine ?? 0);
-  const end = Math.min(
-    root.children.length,
-    range?.endLine ?? root.children.length,
-  );
+  const managed = getSourceLineElements(root);
+  if (managed) {
+    return managed.filter((line) => {
+      const index = Number(line.dataset.line) - 1;
+      return (
+        Number.isInteger(index) &&
+        index >= start &&
+        index < (range?.endLine ?? Number.POSITIVE_INFINITY)
+      );
+    });
+  }
+  const end = Math.min(root.children.length, range?.endLine ?? root.children.length);
   const lines: HTMLElement[] = [];
   for (let index = start; index < end; index += 1) {
     const line = root.children[index];
@@ -141,6 +246,11 @@ export function clearSourceSpellingErrorsOutsideRange(
   root: HTMLElement,
   range: Pick<SourceChangeRange, 'endLine' | 'startLine'>,
 ): void {
+  removeCustomHighlightRanges(
+    root,
+    (lineIndex) =>
+      lineIndex < range.startLine || lineIndex >= range.endLine,
+  );
   const affected = new Set<Node>();
   for (const marker of root.querySelectorAll<HTMLElement>(
     `.${SPELLING_ERROR_CLASS}`,
@@ -171,6 +281,12 @@ export function clearSourceSpellingErrors(
   root: HTMLElement,
   range?: Pick<SourceChangeRange, 'endLine' | 'startLine'>,
 ): void {
+  removeCustomHighlightRanges(
+    root,
+    (lineIndex) =>
+      !range ||
+      (lineIndex >= range.startLine && lineIndex < range.endLine),
+  );
   const affected = new Set<Node>();
   for (const line of sourceLinesInRange(root, range)) {
     for (const marker of line.querySelectorAll<HTMLElement>(
@@ -228,6 +344,24 @@ function markTextNode(node: Text, misspelled: ReadonlySet<string>): void {
   node.replaceWith(fragment);
 }
 
+function highlightTextNode(
+  node: Text,
+  misspelled: ReadonlySet<string>,
+  ranges: Set<Range>,
+  highlight: CustomHighlight,
+): void {
+  for (const match of node.data.matchAll(SPELLING_WORD)) {
+    if (!misspelled.has(match[0])) {
+      continue;
+    }
+    const range = node.ownerDocument.createRange();
+    range.setStart(node, match.index);
+    range.setEnd(node, match.index + match[0].length);
+    ranges.add(range);
+    highlight.add(range);
+  }
+}
+
 export function renderSourceSpellingErrors(
   root: HTMLElement,
   words: readonly string[],
@@ -240,6 +374,12 @@ export function renderSourceSpellingErrors(
     return;
   }
 
+  const customState = customHighlightState(root);
+  let customLines = customState?.roots.get(root);
+  if (customState && !customLines) {
+    customLines = new Map();
+    customState.roots.set(root, customLines);
+  }
   for (const line of sourceLinesInRange(root, range)) {
     if (line.classList.contains('md-line--code') && !checkCodeBlocks) {
       continue;
@@ -261,8 +401,37 @@ export function renderSourceSpellingErrors(
         nodes.push(node);
       }
     }
+    if (customState && customLines) {
+      const ranges = new Set<Range>();
+      for (const node of nodes) {
+        highlightTextNode(
+          node,
+          misspelled,
+          ranges,
+          customState.highlight,
+        );
+      }
+      if (ranges.size > 0) {
+        customLines.set(line, ranges);
+      }
+      continue;
+    }
     for (const node of nodes) {
       markTextNode(node, misspelled);
     }
   }
+}
+
+export function sourceSpellingErrorCount(root: HTMLElement): number {
+  const lines = customHighlightStates
+    .get(root.ownerDocument)
+    ?.roots.get(root);
+  if (lines) {
+    let count = 0;
+    for (const ranges of lines.values()) {
+      count += ranges.size;
+    }
+    return count;
+  }
+  return root.querySelectorAll(`.${SPELLING_ERROR_CLASS}`).length;
 }

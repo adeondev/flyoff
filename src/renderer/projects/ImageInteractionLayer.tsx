@@ -40,6 +40,7 @@ import {
   updateImageDropPreview,
   type ImageDragRect,
 } from './image-drag-coordinator';
+import { sourceLineIndexAtOffset } from './source-document-model';
 import { getSourceDocumentModel } from './source-renderer';
 import {
   readSelection,
@@ -60,9 +61,13 @@ import {
   type ImageDropIntent,
   type ImageInsertionPlacement,
   type ImageResizeDirection,
+  type ImageSelection,
   type ImageSourceRange,
 } from './image-interaction';
-import type { ImageSourceOperation } from './image-source-edit';
+import {
+  resolveImageSourceByInstance,
+  type ImageSourceOperation,
+} from './image-source-edit';
 export type { ImageSourceOperation } from './image-source-edit';
 
 interface ImageInteractionLayerProps {
@@ -171,6 +176,19 @@ function imageSourceRange(
     : null;
 }
 
+function sameImageSelection(
+  left: ImageSelection,
+  right: ImageSelection,
+): boolean {
+  return (
+    left.lineIndex === right.lineIndex &&
+    left.sourceRange.start === right.sourceRange.start &&
+    left.sourceRange.end === right.sourceRange.end &&
+    serializeImageDirective(left.directive) ===
+      serializeImageDirective(right.directive)
+  );
+}
+
 function imageHostAtPoint(
   editor: HTMLElement,
   clientX: number,
@@ -196,6 +214,7 @@ function imageHostAtPoint(
 
 interface BlockDropPreview {
   afterLast: boolean;
+  boundaryIndex: number;
   bounds: OverlayBounds;
   placement: ImageInsertionPlacement;
   sourceRect: ImageDragRect;
@@ -206,10 +225,53 @@ interface BlockDropPreview {
 interface BlockDropGeometry {
   contentBounds: readonly DOMRect[];
   editorBounds: DOMRect;
+  firstLineNumber: string | undefined;
+  lastLineNumber: string | undefined;
   layerBounds: DOMRect;
   lineBounds: readonly DOMRect[];
   lines: readonly HTMLElement[];
   scrollTop: number;
+}
+
+function mountedLineWindow(editor: HTMLElement): {
+  first?: HTMLElement;
+  last?: HTMLElement;
+} {
+  const first = editor.querySelector<HTMLElement>('.md-line') ?? undefined;
+  if (!first) {
+    return {};
+  }
+  let last: Element | null =
+    first.parentElement?.lastElementChild ?? first;
+  while (last && !last.classList.contains('md-line')) {
+    last = last.previousElementSibling;
+  }
+  return {
+    first,
+    last: last instanceof HTMLElement ? last : first,
+  };
+}
+
+function blockDropGeometryIsCurrent(
+  editor: HTMLElement,
+  geometry: BlockDropGeometry,
+): boolean {
+  if (
+    geometry.lines.some(
+      (line) => !line.isConnected || !editor.contains(line),
+    )
+  ) {
+    return false;
+  }
+  const current = mountedLineWindow(editor);
+  const first = geometry.lines[0];
+  const last = geometry.lines.at(-1);
+  return (
+    current.first === first &&
+    current.last === last &&
+    current.first?.dataset.line === geometry.firstLineNumber &&
+    current.last?.dataset.line === geometry.lastLineNumber
+  );
 }
 
 function captureBlockDropGeometry(
@@ -227,6 +289,8 @@ function captureBlockDropGeometry(
           ?.getBoundingClientRect() ?? line.getBoundingClientRect(),
     ),
     editorBounds: editor.getBoundingClientRect(),
+    firstLineNumber: lines[0]?.dataset.line,
+    lastLineNumber: lines.at(-1)?.dataset.line,
     layerBounds: layer.getBoundingClientRect(),
     lineBounds: lines.map((line) => line.getBoundingClientRect()),
     lines,
@@ -267,6 +331,16 @@ function resolveBlockDropPreview(
     lineBounds,
   );
   const targetLine = lines[Math.min(target, lines.length - 1)];
+  const targetLineIndex = Number(targetLine?.dataset.line) - 1;
+  const lastLineIndex = Number(lines.at(-1)?.dataset.line) - 1;
+  const boundaryIndex =
+    target >= lines.length
+      ? Number.isInteger(lastLineIndex)
+        ? lastLineIndex + 1
+        : 0
+      : Number.isInteger(targetLineIndex)
+        ? targetLineIndex
+        : target;
   const contentBounds =
     geometry.contentBounds[
       Math.min(target, geometry.contentBounds.length - 1)
@@ -297,6 +371,7 @@ function resolveBlockDropPreview(
   };
   return {
     afterLast: target >= lines.length,
+    boundaryIndex,
     bounds,
     placement,
     sourceRect: {
@@ -335,6 +410,12 @@ export function ImageInteractionLayer({
   const onInsertMediaAssetRef = useRef(onInsertMediaAsset);
   const onSelectionChangeRef = useRef(onSelectionChange);
   const resizeCleanupRef = useRef<() => void>(() => undefined);
+  const selectionSyncRef = useRef<{
+    end: number;
+    instanceId: string;
+    source: string;
+    start: number;
+  } | undefined>(undefined);
   const stateRef = useRef(state);
 
   useEffect(() => {
@@ -354,8 +435,16 @@ export function ImageInteractionLayer({
   }, [onSelectionChange]);
 
   const syncBounds = useCallback(() => {
+    if (!hostRef.current || !layerRef.current) {
+      return;
+    }
+    // Coalesce onto the pending frame instead of cancelling it. Cancelling and
+    // rescheduling starves the callback whenever the triggering event fires
+    // more than once per frame, which is what left a selected image's handles
+    // behind at their old position until the scroll stopped. The callback reads
+    // geometry when it runs, so keeping the earlier frame loses nothing.
     if (frameRef.current !== undefined) {
-      cancelAnimationFrame(frameRef.current);
+      return;
     }
     frameRef.current = requestAnimationFrame(() => {
       frameRef.current = undefined;
@@ -375,6 +464,132 @@ export function ImageInteractionLayer({
       });
     });
   }, []);
+
+  const refreshSelectionFromModel =
+    useCallback((): ImageSelection | null | undefined => {
+      const editor = editorRef.current;
+      const selected = stateRef.current.selection;
+      if (!editor || !selected) {
+        return undefined;
+      }
+      const model = getSourceDocumentModel(editor);
+      if (!model) {
+        return undefined;
+      }
+      const resolved = resolveImageSourceByInstance(
+        model.source,
+        selected.directive.instanceId,
+        selected.sourceRange,
+      );
+      if (!resolved) {
+        hostRef.current = null;
+        dispatch({ type: 'clear' });
+        setBounds(null);
+        return null;
+      }
+      const next = {
+        directive: resolved.directive,
+        lineIndex: sourceLineIndexAtOffset(model, resolved.range.start),
+        sourceRange: resolved.range,
+      };
+      if (!sameImageSelection(selected, next)) {
+        dispatch({ type: 'select', selection: next });
+      }
+      return next;
+    }, [editorRef]);
+
+  const performOperation = useCallback(
+    (operation: ImageSourceOperation): boolean => {
+      const editor = editorRef.current;
+      const model = editor ? getSourceDocumentModel(editor) : undefined;
+      const instanceId =
+        operation.type === 'delete'
+          ? operation.instanceId
+          : operation.directive.instanceId;
+      if (!model) {
+        return false;
+      }
+      const resolved = resolveImageSourceByInstance(
+        model.source,
+        instanceId,
+        operation.sourceRange,
+      );
+      if (!resolved) {
+        if (
+          stateRef.current.selection?.directive.instanceId === instanceId
+        ) {
+          hostRef.current = null;
+          dispatch({ type: 'clear' });
+          setBounds(null);
+        }
+        return false;
+      }
+      const selected = stateRef.current.selection;
+      if (selected?.directive.instanceId === instanceId) {
+        const next = {
+          directive: resolved.directive,
+          lineIndex: sourceLineIndexAtOffset(model, resolved.range.start),
+          sourceRange: resolved.range,
+        };
+        if (!sameImageSelection(selected, next)) {
+          dispatch({ type: 'select', selection: next });
+        }
+        selectionSyncRef.current = {
+          end: next.sourceRange.end,
+          instanceId,
+          source: model.source,
+          start: next.sourceRange.start,
+        };
+      }
+      onOperationRef.current?.({
+        ...operation,
+        sourceRange: resolved.range,
+      });
+      return true;
+    },
+    [editorRef],
+  );
+
+  useEffect(() => {
+    let active = true;
+    queueMicrotask(() => {
+      if (!active) {
+        return;
+      }
+      const editor = editorRef.current;
+      const selected = stateRef.current.selection;
+      const model = editor ? getSourceDocumentModel(editor) : undefined;
+      if (
+        !selected ||
+        !model ||
+        stateRef.current.phase === 'image-dragging'
+      ) {
+        return;
+      }
+      const synced = selectionSyncRef.current;
+      if (
+        synced?.source === model.source &&
+        synced.instanceId === selected.directive.instanceId &&
+        synced.start === selected.sourceRange.start &&
+        synced.end === selected.sourceRange.end
+      ) {
+        return;
+      }
+      const next = refreshSelectionFromModel();
+      if (!next) {
+        return;
+      }
+      selectionSyncRef.current = {
+        end: next.sourceRange.end,
+        instanceId: next.directive.instanceId,
+        source: model.source,
+        start: next.sourceRange.start,
+      };
+    });
+    return () => {
+      active = false;
+    };
+  });
 
   const selectHost = useCallback(
     (host: HTMLElement): void => {
@@ -426,76 +641,111 @@ export function ImageInteractionLayer({
     if (!editor) {
       return;
     }
-    const hydrate = (): void => {
-      for (const host of editor.querySelectorAll<HTMLElement>(
-        '.md-source-image__host[data-md-decoration]',
+    const hydratedHosts = new WeakSet<HTMLElement>();
+    const hydrateHost = (host: HTMLElement): void => {
+      if (hydratedHosts.has(host)) {
+        return;
+      }
+      const assetId = host.parentElement?.dataset.imageAsset;
+      const image = host.querySelector<HTMLImageElement>('img');
+      if (!assetId || !image) {
+        return;
+      }
+      hydratedHosts.add(host);
+      const source = mediaAssetUrl(assetId, projectId);
+      if (image.src !== source) {
+        image.src = source;
+      }
+      image.addEventListener(
+        'error',
+        () => host.parentElement?.classList.add('md-source-image--missing'),
+        { once: true },
+      );
+    };
+    const hydrateSubtree = (node: Node): void => {
+      if (!(node instanceof HTMLElement)) {
+        return;
+      }
+      if (
+        node.classList.contains('md-source-image__host') &&
+        node.hasAttribute('data-md-decoration')
+      ) {
+        hydrateHost(node);
+      }
+      for (const host of node.getElementsByClassName(
+        'md-source-image__host',
       )) {
-        const assetId = host.parentElement?.dataset.imageAsset;
-        const image = host.querySelector<HTMLImageElement>('img');
-        if (assetId && image) {
-          const source = mediaAssetUrl(assetId, projectId);
-          if (image.src !== source) {
-            image.src = source;
-          }
-          image.addEventListener(
-            'error',
-            () => host.parentElement?.classList.add('md-source-image--missing'),
-            { once: true },
-          );
+        if (
+          host instanceof HTMLElement &&
+          host.hasAttribute('data-md-decoration')
+        ) {
+          hydrateHost(host);
         }
       }
-      const selected = stateRef.current.selection;
-      if (selected && stateRef.current.phase !== 'image-dragging') {
-        const current = Array.from(
-          editor.querySelectorAll<HTMLElement>('.md-source-image'),
+    };
+    const refreshSelected = (): void => {
+      if (stateRef.current.phase === 'image-dragging') {
+        return;
+      }
+      const selected = refreshSelectionFromModel();
+      if (!selected) {
+        return;
+      }
+      const retainedHost = hostRef.current;
+      const retainedWrapper =
+        retainedHost?.isConnected &&
+        retainedHost.closest<HTMLElement>('.md-source-image')
+          ?.dataset.imageInstance === selected.directive.instanceId
+          ? retainedHost.closest<HTMLElement>('.md-source-image')
+          : null;
+      const current =
+        retainedWrapper ??
+        Array.from(
+          editor.getElementsByClassName('md-source-image'),
+          (element) => element as HTMLElement,
         ).find(
           (element) =>
             element.dataset.imageInstance === selected.directive.instanceId,
         );
-        const host = current?.querySelector<HTMLElement>(
+      const host =
+        retainedHost?.isConnected && retainedWrapper
+          ? retainedHost
+          : current?.querySelector<HTMLElement>(
           '.md-source-image__host',
         );
-        if (host) {
-          hostRef.current = host;
-          const line = host.closest<HTMLElement>('.md-line');
-          const model = getSourceDocumentModel(editor);
-          const lineIndex = Number(line?.dataset.line) - 1;
-          const source =
-            model && lineIndex >= 0
-              ? model.lines[lineIndex]?.source
-              : undefined;
-          const resolved =
-            current && model && source !== undefined
-              ? imageSourceRange(
-                  current,
-                  model.lineStarts[lineIndex] ?? 0,
-                  source,
-                )
-              : null;
-          if (
-            resolved &&
-            (selected.sourceRange.start !== resolved.range.start ||
-              selected.sourceRange.end !== resolved.range.end ||
-              selected.lineIndex !== lineIndex)
-          ) {
-            dispatch({
-              type: 'select',
-              selection: {
-                directive: resolved.directive,
-                lineIndex,
-                sourceRange: resolved.range,
-              },
-            });
-          }
-          syncBounds();
-        } else if (!hostRef.current?.isConnected) {
+      if (!host) {
+        if (!hostRef.current?.isConnected) {
           hostRef.current = null;
           setBounds(null);
         }
+        return;
       }
+      hostRef.current = host;
+      syncBounds();
     };
-    hydrate();
-    const observer = new MutationObserver(hydrate);
+    for (const host of editor.querySelectorAll<HTMLElement>(
+      '.md-source-image__host[data-md-decoration]',
+    )) {
+      hydrateHost(host);
+    }
+    refreshSelected();
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        const targetHost =
+          record.target instanceof Element
+            ? record.target.closest<HTMLElement>(
+                '.md-source-image__host[data-md-decoration]',
+              )
+            : null;
+        if (targetHost) {
+          hydrateHost(targetHost);
+        }
+        for (const node of record.addedNodes) {
+          hydrateSubtree(node);
+        }
+      }
+      refreshSelected();
+    });
     observer.observe(editor, { childList: true, subtree: true });
     const mediaChanged = (event: Event): void => {
       const removed = removedMediaAssetIds(event);
@@ -594,13 +844,23 @@ export function ImageInteractionLayer({
         activeDropLine = undefined;
       }
     };
-    const blockDropGeometry = (): BlockDropGeometry | undefined => {
+    const blockDropGeometry = (): {
+      geometry: BlockDropGeometry;
+      refreshed: boolean;
+    } | undefined => {
       const layer = layerRef.current;
       if (!layer) {
         return undefined;
       }
-      blockGeometry ??= captureBlockDropGeometry(editor, layer);
-      return blockGeometry;
+      let refreshed = false;
+      if (
+        !blockGeometry ||
+        !blockDropGeometryIsCurrent(editor, blockGeometry)
+      ) {
+        blockGeometry = captureBlockDropGeometry(editor, layer);
+        refreshed = true;
+      }
+      return { geometry: blockGeometry, refreshed };
     };
     const applyBlockDropTarget = (
       preview: BlockDropPreview,
@@ -856,14 +1116,15 @@ export function ImageInteractionLayer({
           updateImageDropPreview(undefined);
         }
       } else {
-        const geometry = blockDropGeometry();
-        if (!geometry) {
+        const geometrySnapshot = blockDropGeometry();
+        if (!geometrySnapshot) {
           drag.intent = null;
           drag.previewRect = undefined;
           publishDropBounds(null);
           updateImageDropPreview(undefined);
           return;
         }
+        const { geometry, refreshed } = geometrySnapshot;
         const preview = resolveBlockDropPreview(
           geometry,
           editor.scrollTop,
@@ -880,9 +1141,12 @@ export function ImageInteractionLayer({
         const nextIntent: ImageDropIntent = {
           kind: 'block-boundary',
           align: nextDirective.align,
-          boundaryIndex: preview.target,
+          boundaryIndex: preview.boundaryIndex,
         };
-        if (!sameImageDropIntent(drag.intent, nextIntent)) {
+        if (
+          refreshed ||
+          !sameImageDropIntent(drag.intent, nextIntent)
+        ) {
           applyBlockDropTarget(
             preview,
             nextDirective.align,
@@ -973,7 +1237,7 @@ export function ImageInteractionLayer({
       updateImageDropPreview(undefined);
       if (moved && completed.intent && completed.previewRect) {
         holdImageDrag({ x: event.clientX, y: event.clientY });
-        onOperationRef.current?.({
+        performOperation({
           type: 'move',
           sourceRange: completed.sourceRange,
           intent: completed.intent,
@@ -1013,17 +1277,18 @@ export function ImageInteractionLayer({
     const updateExternalPreview = (clientX: number, clientY: number): void => {
       const payload = imageDragSnapshot().payload;
       const model = getSourceDocumentModel(editor);
-      const geometry = blockDropGeometry();
+      const geometrySnapshot = blockDropGeometry();
       if (
         !payload ||
         payload.source !== 'gallery' ||
         payload.projectId !== projectId ||
         !model ||
-        !geometry
+        !geometrySnapshot
       ) {
         clearExternalDrop();
         return;
       }
+      const { geometry, refreshed } = geometrySnapshot;
       const preview = resolveBlockDropPreview(
         geometry,
         editor.scrollTop,
@@ -1035,10 +1300,13 @@ export function ImageInteractionLayer({
       );
       const nextIntent: ImageDropIntent = {
         align: preview.placement.align,
-        boundaryIndex: preview.target,
+        boundaryIndex: preview.boundaryIndex,
         kind: 'block-boundary',
       };
-      if (!sameImageDropIntent(externalDrop?.intent ?? null, nextIntent)) {
+      if (
+        refreshed ||
+        !sameImageDropIntent(externalDrop?.intent ?? null, nextIntent)
+      ) {
         applyBlockDropTarget(
           preview,
           preview.placement.align,
@@ -1048,7 +1316,8 @@ export function ImageInteractionLayer({
       externalDrop = {
         intent: nextIntent,
         instanceId: payload.instanceId,
-        offset: model.lineStarts[preview.target] ?? model.source.length,
+        offset:
+          model.lineStarts[preview.boundaryIndex] ?? model.source.length,
         placement: preview.placement,
         previewRect: preview.sourceRect,
       };
@@ -1154,8 +1423,9 @@ export function ImageInteractionLayer({
       event.clipboardData.setData('text/plain', serialized);
       event.clipboardData.setData(IMAGE_INSTANCE_TRANSFER, serialized);
       if (event.type === 'cut' && !readOnly) {
-        onOperationRef.current?.({
+        performOperation({
           type: 'delete',
+          instanceId: selection.directive.instanceId,
           sourceRange: selection.sourceRange,
         });
         hostRef.current = null;
@@ -1164,6 +1434,9 @@ export function ImageInteractionLayer({
       }
     };
     const blur = (): void => cancelDrag();
+    const input = (): void => {
+      queueMicrotask(() => refreshSelectionFromModel());
+    };
     const scroll = (): void => {
       syncBounds();
       if (lastPreview) {
@@ -1203,6 +1476,7 @@ export function ImageInteractionLayer({
     editor.addEventListener('scroll', scroll, { passive: true });
     editor.addEventListener('copy', clipboard, true);
     editor.addEventListener('cut', clipboard, true);
+    editor.addEventListener('input', input, true);
     window.addEventListener('keydown', keyDown, true);
     window.addEventListener('blur', blur);
     window.addEventListener('resize', resize);
@@ -1221,6 +1495,7 @@ export function ImageInteractionLayer({
       editor.removeEventListener('scroll', scroll);
       editor.removeEventListener('copy', clipboard, true);
       editor.removeEventListener('cut', clipboard, true);
+      editor.removeEventListener('input', input, true);
       window.removeEventListener('keydown', keyDown, true);
       window.removeEventListener('blur', blur);
       window.removeEventListener('resize', resize);
@@ -1242,7 +1517,15 @@ export function ImageInteractionLayer({
         finishImageDrag();
       }
     };
-  }, [editorRef, projectId, readOnly, selectHost, syncBounds]);
+  }, [
+    editorRef,
+    performOperation,
+    projectId,
+    readOnly,
+    refreshSelectionFromModel,
+    selectHost,
+    syncBounds,
+  ]);
 
   useEffect(
     () => () => {
@@ -1346,7 +1629,7 @@ export function ImageInteractionLayer({
     const commit = (): void => {
       cleanup();
       applyPreview();
-      onOperationRef.current?.({
+      performOperation({
         type: 'change',
         sourceRange: selection.sourceRange,
         directive: current,
@@ -1394,8 +1677,9 @@ export function ImageInteractionLayer({
     }
     if (event.key === 'Delete' && !readOnly) {
       event.preventDefault();
-      onOperationRef.current?.({
+      performOperation({
         type: 'delete',
+        instanceId: selection.directive.instanceId,
         sourceRange: selection.sourceRange,
       });
       dispatch({ type: 'clear' });
@@ -1417,7 +1701,7 @@ export function ImageInteractionLayer({
         false,
         editorRef.current?.clientWidth ?? selection.directive.maxWidth,
       );
-      onOperationRef.current?.({
+      performOperation({
         type: 'change',
         sourceRange: selection.sourceRange,
         directive,
@@ -1446,9 +1730,9 @@ export function ImageInteractionLayer({
       const align =
         alignments[
           Math.max(0, Math.min(alignments.length - 1, current + direction))
-        ]!;
+      ]!;
       const directive = { ...selection.directive, align };
-      onOperationRef.current?.({
+      performOperation({
         type: 'change',
         sourceRange: selection.sourceRange,
         directive,
@@ -1458,7 +1742,7 @@ export function ImageInteractionLayer({
         selection: { ...selection, directive },
       });
     } else {
-      onOperationRef.current?.({
+      performOperation({
         type: 'move',
         sourceRange: selection.sourceRange,
         intent: {
@@ -1502,7 +1786,7 @@ export function ImageInteractionLayer({
           assetId: asset.assetId,
           path: asset.relativePath,
         };
-        onOperationRef.current?.({
+        performOperation({
           type: 'change',
           sourceRange: selection.sourceRange,
           directive,
@@ -1695,8 +1979,9 @@ export function ImageInteractionLayer({
         .writeText(serializeImageDirective(selection.directive))
         .then(() => {
           if (action === 'cut' && !readOnly) {
-            onOperationRef.current?.({
+            performOperation({
               type: 'delete',
+              instanceId: selection.directive.instanceId,
               sourceRange: selection.sourceRange,
             });
           }
@@ -1704,7 +1989,7 @@ export function ImageInteractionLayer({
       return;
     }
     if (action === 'duplicate') {
-      onOperationRef.current?.({
+      performOperation({
         type: 'duplicate',
         sourceRange: selection.sourceRange,
         directive: selection.directive,
@@ -1735,7 +2020,7 @@ export function ImageInteractionLayer({
             assetId: asset.nodeId,
             path: asset.relativePath,
           };
-          onOperationRef.current?.({
+          performOperation({
             type: 'change',
             sourceRange: selection.sourceRange,
             directive,
@@ -1767,7 +2052,7 @@ export function ImageInteractionLayer({
               ? 1200
               : selection.directive.maxWidth,
       });
-      onOperationRef.current?.({
+      performOperation({
         type: 'change',
         sourceRange: selection.sourceRange,
         directive,
@@ -1779,8 +2064,9 @@ export function ImageInteractionLayer({
       return;
     }
     if (action === 'delete') {
-      onOperationRef.current?.({
+      performOperation({
         type: 'delete',
+        instanceId: selection.directive.instanceId,
         sourceRange: selection.sourceRange,
       });
       dispatch({ type: 'clear' });
@@ -1804,7 +2090,7 @@ export function ImageInteractionLayer({
           width,
           height: Math.round((width * asset.pixelHeight) / asset.pixelWidth),
         });
-        onOperationRef.current?.({
+        performOperation({
           type: 'change',
           sourceRange: selection.sourceRange,
           directive,
@@ -1844,7 +2130,7 @@ export function ImageInteractionLayer({
     } else {
       return;
     }
-    onOperationRef.current?.({
+    performOperation({
       type: 'change',
       sourceRange: selection.sourceRange,
       directive,
@@ -1945,7 +2231,7 @@ export function ImageInteractionLayer({
                       ? { alt: metadataValue }
                       : { caption: metadataValue }),
                   };
-                  onOperationRef.current?.({
+                  performOperation({
                     type: 'change',
                     sourceRange: selected.sourceRange,
                     directive,

@@ -8,11 +8,56 @@ import {
   writeSelection,
 } from '../../src/renderer/projects/source-caret';
 import {
+  createSourceLineElement,
   reconcileSource,
+  updateSourceLineElement,
   updateActiveSourceLine,
 } from '../../src/renderer/projects/source-renderer';
+import { highlightSourceLines } from '../../src/renderer/projects/markdown-highlight';
 
 describe('incremental source renderer', () => {
+  it('reuses compatible highlighted descendants and shifts source offsets', () => {
+    const root = document.createElement('div');
+    root.dataset.inlineColorLabel = 'Color';
+    const [before, after] = highlightSourceLines(
+      [
+        'Line 9: ==color=={color=#8F4FC4}',
+        'Line 120: ==color=={color=#8F4FC4}',
+      ].join('\n'),
+    );
+    const line = createSourceLineElement(root, before!, 8);
+    const content = line.querySelector<HTMLElement>('.md-line__content')!;
+    const highlight = content.querySelector('.md-tok-highlight');
+    const trigger = content.querySelector<HTMLElement>(
+      '.md-inline-color-trigger',
+    )!;
+    const previousStart = Number(trigger.dataset.mdColorStart);
+
+    updateSourceLineElement(root, line, after!, 119, before);
+
+    expect(line.dataset.line).toBe('120');
+    expect(line.querySelector('.md-line__content')).toBe(content);
+    expect(line.querySelector('.md-tok-highlight')).toBe(highlight);
+    expect(line.querySelector('.md-inline-color-trigger')).toBe(trigger);
+    expect(line.textContent).toContain('Line 120');
+    expect(Number(trigger.dataset.mdColorStart)).toBe(previousStart + 2);
+  });
+
+  it('rebuilds descendants when the Markdown structure changes', () => {
+    const root = document.createElement('div');
+    const [before] = highlightSourceLines('plain');
+    const [after] = highlightSourceLines('**strong**');
+    const line = createSourceLineElement(root, before!, 0);
+    const text = line.querySelector('.md-line__content')?.firstChild;
+
+    updateSourceLineElement(root, line, after!, 0, before);
+
+    expect(text?.isConnected).toBe(false);
+    expect(line.querySelector('.md-tok-strong')?.textContent).toContain(
+      'strong',
+    );
+  });
+
   it('creates canonical gutter and content cells for every line', () => {
     const root = document.createElement('div');
 
@@ -90,6 +135,20 @@ describe('incremental source renderer', () => {
 
     expect(root.querySelectorAll(':scope > .md-line')).toHaveLength(2);
     expect(readSource(root)).toBe('one\ntwo');
+  });
+
+  it('rejects a cached line replaced by the browser between inputs', () => {
+    const root = document.createElement('div');
+    reconcileSource(root, 'one\ntwo\nthree');
+    const replacement = document.createElement('div');
+    replacement.textContent = 'changed';
+    root.children[1]!.replaceWith(replacement);
+
+    expect(readSource(root)).toBe('one\nchanged\nthree');
+
+    reconcileSource(root, 'one\nchanged\nthree');
+    expect(root.querySelectorAll(':scope > .md-line')).toHaveLength(3);
+    expect(readSource(root)).toBe('one\nchanged\nthree');
   });
 
   it('keeps emoji Unicode and UTF-16 cursor offsets in the editable source', () => {

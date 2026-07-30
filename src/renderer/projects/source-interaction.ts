@@ -42,6 +42,7 @@ interface HorizontalKeyboardNavigation extends KeyboardNavigation {
 
 interface SourceMouseSelectionOptions {
   getContent?: () => string;
+  getSelection?: () => SourceSelection;
   isComposing: () => boolean;
   onSelectionChange: (
     content: string,
@@ -259,15 +260,33 @@ export function installSourceMouseSelection(
   let drag:
     | {
       anchor: number;
+      clientX: number;
+      clientY: number;
       content: string;
     }
     | undefined;
+  let autoScrollFrame: number | undefined;
+
+  function cancelAutoScroll(): void {
+    if (autoScrollFrame === undefined) {
+      return;
+    }
+    editor.ownerDocument.defaultView?.cancelAnimationFrame(
+      autoScrollFrame,
+    );
+    autoScrollFrame = undefined;
+  }
+
+  function finishDrag(): void {
+    drag = undefined;
+    cancelAutoScroll();
+  }
 
   function publish(
     content: string,
     next: SourceSelection,
   ): void {
-    const current = readSelection(editor);
+    const current = options.getSelection?.() ?? readSelection(editor);
     if (
       next.start === current.start &&
       next.end === current.end &&
@@ -277,6 +296,95 @@ export function installSourceMouseSelection(
     }
     writeSelection(editor, next);
     options.onSelectionChange(content, next);
+  }
+
+  function boundedDragPoint(): { x: number; y: number } | undefined {
+    if (!drag) {
+      return undefined;
+    }
+    const bounds = editor.getBoundingClientRect();
+    const horizontalInset = Math.min(1, bounds.width / 2);
+    const verticalInset = Math.min(1, bounds.height / 2);
+    return {
+      x: Math.min(
+        Math.max(drag.clientX, bounds.left + horizontalInset),
+        bounds.right - horizontalInset,
+      ),
+      y: Math.min(
+        Math.max(drag.clientY, bounds.top + verticalInset),
+        bounds.bottom - verticalInset,
+      ),
+    };
+  }
+
+  function publishDragPoint(): void {
+    if (!drag) {
+      return;
+    }
+    const point = boundedDragPoint();
+    if (!point) {
+      return;
+    }
+    const offset = sourceOffsetAtPoint(editor, point.x, point.y);
+    if (offset !== undefined) {
+      publish(
+        drag.content,
+        directedSelection(drag.anchor, offset),
+      );
+    }
+  }
+
+  function autoScrollDelta(): number {
+    if (!drag) {
+      return 0;
+    }
+    const bounds = editor.getBoundingClientRect();
+    const overflow =
+      drag.clientY < bounds.top
+        ? drag.clientY - bounds.top
+        : drag.clientY > bounds.bottom
+          ? drag.clientY - bounds.bottom
+          : 0;
+    if (overflow === 0) {
+      return 0;
+    }
+    const speed = Math.min(
+      32,
+      Math.max(4, Math.abs(overflow) * 0.35),
+    );
+    return Math.sign(overflow) * speed;
+  }
+
+  function scheduleAutoScroll(): void {
+    const view = editor.ownerDocument.defaultView;
+    if (
+      !view ||
+      autoScrollFrame !== undefined ||
+      autoScrollDelta() === 0
+    ) {
+      return;
+    }
+    autoScrollFrame = view.requestAnimationFrame(() => {
+      autoScrollFrame = undefined;
+      if (!drag) {
+        return;
+      }
+      const delta = autoScrollDelta();
+      const maximum = Math.max(
+        0,
+        editor.scrollHeight - editor.clientHeight,
+      );
+      const next = Math.min(
+        maximum,
+        Math.max(0, editor.scrollTop + delta),
+      );
+      if (delta === 0 || next === editor.scrollTop) {
+        return;
+      }
+      editor.scrollTop = next;
+      publishDragPoint();
+      scheduleAutoScroll();
+    });
   }
 
   function handleMouseDown(event: MouseEvent): void {
@@ -295,11 +403,16 @@ export function installSourceMouseSelection(
       event.preventDefault();
       editor.focus({ preventScroll: true });
       publish(content, directedSelection(anchor, offset));
-      drag = { anchor, content };
+      drag = {
+        anchor,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        content,
+      };
       return;
     }
 
-    drag = undefined;
+    finishDrag();
     if (event.detail !== 2 && event.detail !== 3) {
       return;
     }
@@ -316,29 +429,28 @@ export function installSourceMouseSelection(
   }
 
   function handleMouseMove(event: MouseEvent): void {
-    if (!drag || (event.buttons & 1) === 0) {
+    if (!drag) {
+      return;
+    }
+    if ((event.buttons & 1) === 0) {
+      finishDrag();
       return;
     }
 
-    const offset = sourceOffsetAtPoint(
-      editor,
-      event.clientX,
-      event.clientY,
-    );
-    if (offset === undefined) {
-      return;
-    }
-
+    drag.clientX = event.clientX;
+    drag.clientY = event.clientY;
     event.preventDefault();
-    publish(
-      drag.content,
-      directedSelection(drag.anchor, offset),
-    );
+    publishDragPoint();
+    if (autoScrollDelta() === 0) {
+      cancelAutoScroll();
+    } else {
+      scheduleAutoScroll();
+    }
   }
 
   function handleMouseUp(event: MouseEvent): void {
     if (event.button === 0) {
-      drag = undefined;
+      finishDrag();
     }
   }
 
@@ -349,7 +461,7 @@ export function installSourceMouseSelection(
   }
 
   function handleWindowBlur(): void {
-    drag = undefined;
+    finishDrag();
   }
 
   editor.addEventListener('mousedown', handleMouseDown);
@@ -362,6 +474,7 @@ export function installSourceMouseSelection(
   );
 
   return () => {
+    finishDrag();
     editor.removeEventListener('mousedown', handleMouseDown);
     editor.removeEventListener('dblclick', handleDoubleClick);
     editor.ownerDocument.removeEventListener('mousemove', handleMouseMove);

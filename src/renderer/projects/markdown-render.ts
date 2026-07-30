@@ -11,6 +11,10 @@ import {
 } from '../../shared/markdown';
 import { twemojiAssetUrl, twemojiSegments } from '../components/twemoji';
 import { colorContrastInk } from '../components/color';
+import {
+  markdownTextChange,
+  type MarkdownTextChange,
+} from './markdown-text-change';
 
 const SCHEME = /^([a-z][a-z0-9+.-]*):/i;
 const ALLOWED_ASSET_SCHEMES = /^(https?|flyoff|flyoff-media)$/i;
@@ -273,6 +277,14 @@ function inlineText(nodes: readonly InlineNode[]): string {
   return value;
 }
 
+function containsInlineImage(nodes: readonly InlineNode[]): boolean {
+  return nodes.some(
+    (node) =>
+      node.type === 'inline-image' ||
+      ('children' in node && containsInlineImage(node.children)),
+  );
+}
+
 interface RenderContext {
   headingIds: Map<string, number>;
   headingPath: string[];
@@ -307,6 +319,9 @@ function renderBlocks(
         applyHeadingMetadata(node, element, context);
         if (node.divided) {
           element.classList.add('markdown-view__heading--divided');
+        }
+        if (containsInlineImage(node.children)) {
+          element.classList.add('markdown-view__heading--inline-image');
         }
         renderInline(node.children, element, context.projectId);
         parent.appendChild(element);
@@ -511,6 +526,15 @@ interface MarkdownRenderState {
 
 const renderStates = new WeakMap<HTMLElement, MarkdownRenderState>();
 
+function containsLineBreak(
+  source: string,
+  start: number,
+  end: number,
+): boolean {
+  const offset = source.indexOf('\n', start);
+  return offset !== -1 && offset < end;
+}
+
 function collectHeadings(node: BlockNode, headings: Heading[]): void {
   if (node.type === 'heading') {
     headings.push(node);
@@ -531,6 +555,32 @@ function collectHeadings(node: BlockNode, headings: Heading[]): void {
   }
 }
 
+function containsHeading(node: BlockNode): boolean {
+  if (node.type === 'heading') {
+    return true;
+  }
+  if (node.type === 'blockquote') {
+    return node.children.some(containsHeading);
+  }
+  if (node.type === 'list') {
+    return node.children.some((item) =>
+      item.children.some(containsHeading),
+    );
+  }
+  return false;
+}
+
+function headingElementsIn(element: Element): HTMLElement[] {
+  return [
+    ...(element.matches(':is(h1, h2, h3, h4, h5, h6)')
+      ? [element as HTMLElement]
+      : []),
+    ...element.querySelectorAll<HTMLElement>(
+      ':is(h1, h2, h3, h4, h5, h6)',
+    ),
+  ];
+}
+
 function syncHeadingMetadata(
   node: BlockNode,
   element: ChildNode,
@@ -544,20 +594,113 @@ function syncHeadingMetadata(
   if (headings.length === 0) {
     return;
   }
-  const elements = [
-    ...(element.matches(':is(h1, h2, h3, h4, h5, h6)')
-      ? [element as HTMLElement]
-      : []),
-    ...element.querySelectorAll<HTMLElement>(
-      ':is(h1, h2, h3, h4, h5, h6)',
-    ),
-  ];
+  const elements = headingElementsIn(element);
   headings.forEach((heading, index) => {
     const headingElement = elements[index];
     if (headingElement) {
       applyHeadingMetadata(heading, headingElement, context);
     }
   });
+}
+
+/**
+ * Anchor id and heading path assigned to one heading, resolved against the
+ * whole document so a block rendered in isolation keeps the id it would have
+ * received in a full-document render.
+ */
+export interface MarkdownHeadingAssignment {
+  depth: number;
+  id: string;
+  path: readonly string[];
+  text: string;
+}
+
+/**
+ * Resolve heading anchors for every block without rendering the document.
+ *
+ * Slug de-duplication and the parent heading chain are stateful across the
+ * whole document, so a windowed view cannot derive them from the blocks it
+ * happens to have mounted. Only blocks that can contain an ATX heading are
+ * parsed — a block with no `#` has none — which keeps this proportional to the
+ * headings rather than to the document.
+ */
+export function buildMarkdownHeadingIndex(
+  blockSources: readonly string[],
+): Map<number, MarkdownHeadingAssignment[]> {
+  const index = new Map<number, MarkdownHeadingAssignment[]>();
+  const headingIds = new Map<string, number>();
+  const headingPath: string[] = [];
+
+  for (
+    let blockIndex = 0;
+    blockIndex < blockSources.length;
+    blockIndex += 1
+  ) {
+    const blockSource = blockSources[blockIndex]!;
+    if (!blockSource.includes('#')) {
+      continue;
+    }
+    const headings: Heading[] = [];
+    for (const node of parseMarkdown(blockSource).children) {
+      collectHeadings(node, headings);
+    }
+    if (headings.length === 0) {
+      continue;
+    }
+    index.set(
+      blockIndex,
+      headings.map((heading) => {
+        const text = inlineText(heading.children).trim();
+        headingPath.length = heading.depth;
+        headingPath[heading.depth - 1] = text;
+        const path = headingPath.filter(Boolean);
+        const slug = markdownHeadingSlug(text) || 'heading';
+        const count = headingIds.get(slug) ?? 0;
+        headingIds.set(slug, count + 1);
+        return {
+          depth: heading.depth,
+          id: count === 0 ? slug : `${slug}-${count + 1}`,
+          path,
+          text,
+        };
+      }),
+    );
+  }
+
+  return index;
+}
+
+/** Overwrite the ids a lone block guessed with the document-wide answers. */
+export function applyMarkdownHeadingAssignments(
+  element: Element,
+  assignments: readonly MarkdownHeadingAssignment[],
+): void {
+  const elements = headingElementsIn(element);
+  assignments.forEach((assignment, position) => {
+    const target = elements[position];
+    if (!target) {
+      return;
+    }
+    target.id = assignment.id;
+    target.dataset.markdownHeadingPath = JSON.stringify(assignment.path);
+  });
+}
+
+/** Render a single block, detached, for a windowed view to position itself. */
+export function renderMarkdownBlockElement(
+  node: BlockNode,
+  projectId?: string,
+): ChildNode | null {
+  const fragment = document.createDocumentFragment();
+  renderBlocks([node], fragment, renderContext(projectId));
+  return fragment.firstChild;
+}
+
+/** Parse one block segment, keeping its offsets in document coordinates. */
+export function parseMarkdownBlockSegment(
+  segment: MarkdownBlockSource,
+): BlockNode | null {
+  return parseChangedBlock(segment);
 }
 
 function renderContext(projectId?: string): RenderContext {
@@ -614,6 +757,161 @@ function parseChangedBlock(segment: MarkdownBlockSource): BlockNode | null {
   return node;
 }
 
+function blockIndexAtOffset(
+  blocks: readonly RenderedMarkdownBlock[],
+  offset: number,
+): number {
+  let low = 0;
+  let high = blocks.length - 1;
+
+  while (low <= high) {
+    const middle = (low + high) >>> 1;
+    if (blocks[middle]!.node.position.start <= offset) {
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+
+  return high;
+}
+
+function syncBlockPositions(
+  blocks: readonly RenderedMarkdownBlock[],
+  segments: readonly MarkdownBlockSource[],
+): void {
+  for (let index = 0; index < blocks.length; index += 1) {
+    const segment = segments[index]!;
+    blocks[index]!.node.position = {
+      end: segment.end,
+      start: segment.start,
+    };
+  }
+}
+
+function renderLocalBlockEdit(
+  container: HTMLElement,
+  state: MarkdownRenderState,
+  source: string,
+  change: MarkdownTextChange,
+): boolean {
+  if (
+    containsLineBreak(
+      state.source,
+      change.start,
+      change.previousEnd,
+    ) ||
+    containsLineBreak(source, change.start, change.nextEnd)
+  ) {
+    return false;
+  }
+
+  const blockIndex = blockIndexAtOffset(state.blocks, change.start);
+  const current = state.blocks[blockIndex];
+  if (!current) {
+    return false;
+  }
+
+  const delta = source.length - state.source.length;
+  const currentStart = current.node.position.start;
+  const currentEnd = current.node.position.end;
+  const nextCurrentEnd = currentEnd + delta;
+  if (
+    change.start < currentStart ||
+    change.previousEnd > currentEnd ||
+    change.nextEnd > nextCurrentEnd ||
+    nextCurrentEnd < currentStart
+  ) {
+    return false;
+  }
+
+  const firstIndex = Math.max(0, blockIndex - 1);
+  const lastIndex = Math.min(state.blocks.length - 1, blockIndex + 1);
+  const windowStart = state.blocks[firstIndex]!.node.position.start;
+  const windowEnd = state.blocks[lastIndex]!.node.position.end + delta;
+  if (windowEnd < windowStart || windowEnd > source.length) {
+    return false;
+  }
+
+  const segments = splitMarkdownBlocks(
+    source.slice(windowStart, windowEnd),
+  );
+  if (segments.length !== lastIndex - firstIndex + 1) {
+    return false;
+  }
+
+  const localBlockIndex = blockIndex - firstIndex;
+  let changedSegment: MarkdownBlockSource | undefined;
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index]!;
+    const previous = state.blocks[firstIndex + index]!;
+    const shift = index > localBlockIndex ? delta : 0;
+    const globalSegment = {
+      end: windowStart + segment.end,
+      source: segment.source,
+      start: windowStart + segment.start,
+    };
+    const expectedEnd =
+      previous.node.position.end +
+      (index >= localBlockIndex ? delta : 0);
+    if (
+      globalSegment.start !== previous.node.position.start + shift ||
+      globalSegment.end !== expectedEnd ||
+      (index !== localBlockIndex &&
+        globalSegment.source !== previous.source)
+    ) {
+      return false;
+    }
+    if (index === localBlockIndex) {
+      changedSegment = globalSegment;
+    }
+  }
+
+  if (!changedSegment) {
+    return false;
+  }
+  const node = parseChangedBlock(changedSegment);
+  if (
+    !node ||
+    node.type !== current.node.type ||
+    containsHeading(current.node) ||
+    containsHeading(node)
+  ) {
+    return false;
+  }
+
+  const fragment = document.createDocumentFragment();
+  renderBlocks([node], fragment, renderContext(state.projectId));
+  const element = fragment.firstChild;
+  if (!element) {
+    return false;
+  }
+
+  const blocks = state.blocks.slice();
+  blocks[blockIndex] = {
+    element,
+    node,
+    source: changedSegment.source,
+  };
+  if (delta !== 0) {
+    for (let index = blockIndex + 1; index < blocks.length; index += 1) {
+      const position = blocks[index]!.node.position;
+      blocks[index]!.node.position = {
+        end: position.end + delta,
+        start: position.start + delta,
+      };
+    }
+  }
+
+  container.replaceChild(element, current.element);
+  renderStates.set(container, {
+    blocks,
+    projectId: state.projectId,
+    source,
+  });
+  return true;
+}
+
 export function renderMarkdownInto(
   container: HTMLElement,
   source: string,
@@ -633,6 +931,11 @@ export function renderMarkdownInto(
     return;
   }
 
+  const textChange = markdownTextChange(state.source, source);
+  if (renderLocalBlockEdit(container, state, source, textChange)) {
+    return;
+  }
+
   const segments = splitMarkdownBlocks(source);
   let prefix = 0;
   while (
@@ -644,6 +947,7 @@ export function renderMarkdownInto(
   }
 
   if (state.blocks.length === segments.length && prefix === segments.length) {
+    syncBlockPositions(state.blocks, segments);
     renderStates.set(container, { ...state, source });
     return;
   }
@@ -663,6 +967,14 @@ export function renderMarkdownInto(
   const next: Array<RenderedMarkdownBlock | undefined> = new Array(
     segments.length,
   );
+  let headingsChanged = false;
+
+  for (let index = prefix; index < oldEnd; index += 1) {
+    if (containsHeading(state.blocks[index]!.node)) {
+      headingsChanged = true;
+      break;
+    }
+  }
 
   for (let index = 0; index < prefix; index += 1) {
     next[index] = state.blocks[index]!;
@@ -678,6 +990,7 @@ export function renderMarkdownInto(
       rebuildMarkdown(container, source, options.projectId);
       return;
     }
+    headingsChanged ||= containsHeading(node);
     next[index] = {
       element: document.createTextNode(''),
       node,
@@ -685,15 +998,28 @@ export function renderMarkdownInto(
     };
   }
 
+  syncBlockPositions(
+    next as RenderedMarkdownBlock[],
+    segments,
+  );
   const context = renderContext(options.projectId);
-  for (let index = 0; index < next.length; index += 1) {
-    const block = next[index]!;
-    if (index >= prefix && index < newEnd) {
+  if (headingsChanged) {
+    for (let index = 0; index < next.length; index += 1) {
+      const block = next[index]!;
+      if (index >= prefix && index < newEnd) {
+        const fragment = document.createDocumentFragment();
+        renderBlocks([block.node], fragment, context);
+        block.element = fragment.firstChild!;
+      } else {
+        syncHeadingMetadata(block.node, block.element, context);
+      }
+    }
+  } else {
+    for (let index = prefix; index < newEnd; index += 1) {
+      const block = next[index]!;
       const fragment = document.createDocumentFragment();
       renderBlocks([block.node], fragment, context);
       block.element = fragment.firstChild!;
-    } else {
-      syncHeadingMetadata(block.node, block.element, context);
     }
   }
 

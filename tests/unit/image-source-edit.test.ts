@@ -1,7 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { serializeImageDirective } from '../../src/shared/markdown';
-import { rewriteImageSource } from '../../src/renderer/projects/image-source-edit';
+import {
+  resolveImageSourceByInstance,
+  rewriteImageSource,
+} from '../../src/renderer/projects/image-source-edit';
 
 const image = {
   version: 2 as const,
@@ -64,5 +67,82 @@ describe('image source editing', () => {
       '323e4567-e89b-42d3-a456-426614174002',
     );
     expect(result?.content.match(new RegExp(image.assetId, 'g'))).toHaveLength(2);
+  });
+
+  it('rejects every operation when the cached range belongs to another image', () => {
+    const replacement = {
+      ...image,
+      instanceId: '423e4567-e89b-42d3-a456-426614174003',
+    };
+    const source = serializeImageDirective(replacement);
+    const sourceRange = { start: 0, end: source.length };
+
+    expect(
+      rewriteImageSource(source, {
+        type: 'change',
+        sourceRange,
+        directive: { ...image, width: 240 },
+      }),
+    ).toBeNull();
+    expect(
+      rewriteImageSource(source, {
+        type: 'move',
+        sourceRange,
+        intent: { kind: 'block-boundary', align: 'left', boundaryIndex: 0 },
+        directive: image,
+      }),
+    ).toBeNull();
+    expect(
+      rewriteImageSource(source, {
+        type: 'delete',
+        instanceId: image.instanceId,
+        sourceRange,
+      }),
+    ).toBeNull();
+    expect(
+      rewriteImageSource(source, {
+        type: 'duplicate',
+        sourceRange,
+        directive: image,
+      }),
+    ).toBeNull();
+  });
+
+  it('rejects a cached range that no longer contains an image directive', () => {
+    expect(
+      rewriteImageSource('plain text', {
+        type: 'delete',
+        instanceId: image.instanceId,
+        sourceRange: { start: 0, end: 10 },
+      }),
+    ).toBeNull();
+  });
+
+  it('deletes only a matching image instance', () => {
+    const block = { ...image, mode: 'block' as const, align: 'center' as const };
+    const token = serializeImageDirective(block);
+    const result = rewriteImageSource(`before\n${token}\nafter`, {
+      type: 'delete',
+      instanceId: block.instanceId,
+      sourceRange: { start: 7, end: 7 + token.length },
+    });
+
+    expect(result?.content).toBe('before\nafter');
+  });
+
+  it('relocates an image by instance id when text shifts before it', () => {
+    const token = serializeImageDirective(image);
+    const source = `new prefix\nbefore\n${token}\nafter`;
+    const start = source.indexOf(token);
+    const resolved = resolveImageSourceByInstance(
+      source,
+      image.instanceId,
+      { start: 7, end: 7 + token.length },
+    );
+
+    expect(resolved).toEqual({
+      directive: image,
+      range: { start, end: start + token.length },
+    });
   });
 });

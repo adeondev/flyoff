@@ -40,6 +40,21 @@ describe('source clipboard normalization', () => {
     ).toBe('one\n\nthree');
   });
 
+  it('does not parse an HTML mirror when multiline plain text is available', () => {
+    const payload = {
+      getData(format: string): string {
+        if (format === 'text/html') {
+          throw new Error('HTML should not be requested');
+        }
+        return 'one\ntwo\nthree';
+      },
+    };
+
+    expect(sourceTextFromTransfer(payload, document)).toBe(
+      'one\ntwo\nthree',
+    );
+  });
+
   it('extracts text without returning clipboard markup', () => {
     expect(
       sourceTextFromTransfer(

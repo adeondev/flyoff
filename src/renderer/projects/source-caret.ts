@@ -1,3 +1,14 @@
+import { sourceLineIndexAtOffset } from './source-document-model';
+import {
+  getSourceViewAdapter,
+  type SourceViewSelection,
+  type SourceViewSelectionDirection,
+} from './source-engine/source-view-adapter';
+import {
+  getSourceDocumentModel,
+  getSourceLineElements,
+} from './source-renderer';
+
 const BLOCK_ELEMENTS = new Set([
   'ADDRESS',
   'ARTICLE',
@@ -16,13 +27,8 @@ const BLOCK_ELEMENTS = new Set([
   'UL',
 ]);
 
-export type SourceSelectionDirection = 'forward' | 'backward' | 'none';
-
-export interface SourceSelection {
-  start: number;
-  end: number;
-  direction: SourceSelectionDirection;
-}
+export type SourceSelectionDirection = SourceViewSelectionDirection;
+export type SourceSelection = SourceViewSelection;
 
 interface Position {
   node: Node;
@@ -38,15 +44,29 @@ function lineContent(line: Element): Element {
   return content ?? line;
 }
 
-function canonicalLines(root: ParentNode): readonly Element[] | undefined {
-  const children = Array.from(root.childNodes);
+type SourceLines = ArrayLike<Element> & Iterable<Element>;
+
+function canonicalLines(root: ParentNode): SourceLines | undefined {
+  if (root instanceof HTMLElement) {
+    const managed = getSourceLineElements(root);
+    if (managed) {
+      return managed;
+    }
+  }
+
+  const children = root.children;
   if (
     children.length === 0 ||
-    children.some((child) => child.nodeType !== Node.ELEMENT_NODE || !isLine(child as Element))
+    root.childNodes.length !== children.length
   ) {
     return undefined;
   }
-  return children as Element[];
+  for (const child of children) {
+    if (!isLine(child)) {
+      return undefined;
+    }
+  }
+  return children;
 }
 
 function serializeNode(node: Node): string {
@@ -113,12 +133,21 @@ function serializeChildren(parent: ParentNode): string {
 
 function serializeRoot(root: ParentNode): string {
   const lines = canonicalLines(root);
-  return lines
-    ? lines.map((line) => serializeChildren(lineContent(line))).join('\n')
-    : serializeChildren(root);
+  if (!lines) {
+    return serializeChildren(root);
+  }
+  const output = new Array<string>(lines.length);
+  for (let index = 0; index < lines.length; index += 1) {
+    output[index] = serializeChildren(lineContent(lines[index]!));
+  }
+  return output.join('\n');
 }
 
 export function readSource(root: HTMLElement): string {
+  const adapter = getSourceViewAdapter(root);
+  if (adapter) {
+    return adapter.getModel().source;
+  }
   return serializeRoot(root).replace(/\r\n?/g, '\n');
 }
 
@@ -133,7 +162,7 @@ function clampOffset(container: Node, offset: number): number {
 function rootChildOffset(
   root: HTMLElement,
   offset: number,
-  lines: readonly Element[],
+  lines: SourceLines,
 ): number {
   const clamped = Math.min(Math.max(0, offset), lines.length);
   const model = getSourceDocumentModel(root);
@@ -282,6 +311,10 @@ export function sourceOffsetAtPoint(
   x: number,
   y: number,
 ): number | undefined {
+  const adapter = getSourceViewAdapter(root);
+  if (adapter) {
+    return adapter.sourceOffsetAtPoint(x, y);
+  }
   const direct = pointOffset(root, x, y);
   if (direct !== undefined) {
     return direct;
@@ -308,6 +341,15 @@ function selectionDirection(
 }
 
 export function readSelection(root: HTMLElement): SourceSelection {
+  const adapter = getSourceViewAdapter(root);
+  if (adapter) {
+    const selection = adapter.readSelection();
+    return {
+      start: selection.start,
+      end: selection.end,
+      direction: selection.direction,
+    };
+  }
   const selection = root.ownerDocument.getSelection();
 
   if (!selection || selection.rangeCount === 0) {
@@ -385,7 +427,7 @@ function positionAt(root: HTMLElement, target: number): Position {
     remaining -= length + 1;
   }
 
-  const last = lines.at(-1);
+  const last = lines[lines.length - 1];
   return last
     ? positionInLine(last, serializeChildren(lineContent(last)).length)
     : { node: root, offset: 0 };
@@ -416,12 +458,17 @@ export function writeSelection(
   startOrSelection: number | SourceSelection,
   end?: number,
 ): void {
+  const sourceSelection = normalizeSelection(startOrSelection, end);
+  const adapter = getSourceViewAdapter(root);
+  if (adapter) {
+    adapter.writeSelection(sourceSelection);
+    return;
+  }
   const selection = root.ownerDocument.getSelection();
   if (!selection) {
     return;
   }
 
-  const sourceSelection = normalizeSelection(startOrSelection, end);
   const from = positionAt(root, sourceSelection.start);
   const to = positionAt(root, sourceSelection.end);
   const range = root.ownerDocument.createRange();
@@ -450,6 +497,10 @@ export function sourceCaretRect(
   root: HTMLElement,
   target: number,
 ): DOMRect | undefined {
+  const adapter = getSourceViewAdapter(root);
+  if (adapter) {
+    return adapter.sourceCaretRect(target);
+  }
   const position = positionAt(root, target);
   const range = root.ownerDocument.createRange();
   try {
@@ -470,5 +521,3 @@ export function replaceRange(
 ): string {
   return source.slice(0, start) + inserted + source.slice(end);
 }
-import { sourceLineIndexAtOffset } from './source-document-model';
-import { getSourceDocumentModel } from './source-renderer';

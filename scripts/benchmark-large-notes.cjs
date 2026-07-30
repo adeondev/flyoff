@@ -11,6 +11,14 @@ app.commandLine.appendSwitch('ozone-platform', 'headless');
 app.commandLine.appendSwitch('disable-gpu');
 
 async function run() {
+  const requestedLines = Number.parseInt(
+    process.env.FLYOFF_BENCHMARK_LINES ?? '',
+    10,
+  );
+  const lineCount =
+    Number.isSafeInteger(requestedLines) && requestedLines > 0
+      ? requestedLines
+      : 1_766;
   const temporaryDirectory = await mkdtemp(
     path.join(tmpdir(), 'flyoff-large-notes-'),
   );
@@ -54,11 +62,37 @@ async function run() {
         'utf8',
       ),
     );
+    // Emulate a slower machine. Layout and style are main-thread CPU work, so
+    // a throttling multiplier is a closer proxy for a weak laptop than any GPU
+    // setting; the harness already runs without the GPU.
+    const throttleRate = Number.parseFloat(
+      process.env.FLYOFF_BENCHMARK_CPU_THROTTLE ?? '1',
+    );
+    const skipLegacy = process.env.FLYOFF_BENCHMARK_SKIP_LEGACY === '1';
+    // The CodeMirror reference costs a full extra editor mount; a throttled
+    // sweep usually only cares about Flyoff's own paths.
+    const skipReference =
+      process.env.FLYOFF_BENCHMARK_SKIP_REFERENCE === '1' ||
+      (Number.isFinite(throttleRate) && throttleRate > 1);
+    if (Number.isFinite(throttleRate) && throttleRate > 1) {
+      window.webContents.debugger.attach('1.3');
+      await window.webContents.debugger.sendCommand(
+        'Emulation.setCPUThrottlingRate',
+        { rate: throttleRate },
+      );
+      process.stderr.write(`CPU throttled ${throttleRate}x...\n`);
+    }
+
     process.stderr.write('Running benchmark cases...\n');
     const result = await window.webContents.executeJavaScript(
-      'window.runLargeNotesBenchmark()',
+      `window.runLargeNotesBenchmark(${lineCount}, ${JSON.stringify({
+        skipLegacy,
+        skipReference,
+      })})`,
       true,
     );
+    result.cpuThrottlingRate =
+      Number.isFinite(throttleRate) && throttleRate > 1 ? throttleRate : 1;
     process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
     window.destroy();
   } finally {

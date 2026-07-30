@@ -23,10 +23,35 @@ describe('markdown source highlighter', () => {
       caption: '',
     });
     const html = highlightSource(`antes ${directive} depois`);
+    expect(html).toContain('class="md-line md-line--image-inline"');
     expect(html).toContain('class="md-source-image md-source-image--inline');
     expect(html).toContain('data-image-source-start="6"');
     expect(html).toContain(`data-image-source-end="${6 + directive.length}"`);
     expect(html).toContain('class="md-source-image__syntax"');
+  });
+
+  it('marks wrap image rows for heading flow without relational selectors', () => {
+    const directive = serializeImageDirective({
+      version: 2,
+      instanceId: '223e4567-e89b-42d3-a456-426614174001',
+      assetId: '123e4567-e89b-42d3-a456-426614174000',
+      path: 'Media/Lua.png',
+      alt: 'Lua',
+      mode: 'wrap',
+      align: 'left',
+      width: 320,
+      height: 180,
+      minWidth: 96,
+      maxWidth: 1200,
+      margin: 8,
+      ratioLock: true,
+      positionLock: false,
+      caption: '',
+    });
+    const html = highlightSource(`${directive}\n# Heading`);
+
+    expect(html).toContain('class="md-line md-line--image-wrap"');
+    expect(html).toContain('class="md-line md-line--heading"');
   });
 
   it('escapes html so notes cannot inject markup', () => {

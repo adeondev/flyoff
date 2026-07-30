@@ -5,43 +5,54 @@ type ScrollPositionListener = (
   settled?: boolean,
 ) => void;
 
+const SCROLL_SETTLE_DELAY_MS = 80;
+
 export function useScrollPositionReporter(
   onScroll?: ScrollPositionListener,
 ) {
-  const frameRef = useRef<number | undefined>(undefined);
+  const lastReportedRef = useRef<number | undefined>(undefined);
   const pendingRef = useRef(0);
+  const settleTimerRef = useRef<number | undefined>(undefined);
 
-  const cancelFrame = useCallback((): void => {
-    if (frameRef.current !== undefined) {
-      cancelAnimationFrame(frameRef.current);
-      frameRef.current = undefined;
+  const cancelSettle = useCallback((): void => {
+    if (settleTimerRef.current !== undefined) {
+      window.clearTimeout(settleTimerRef.current);
+      settleTimerRef.current = undefined;
     }
   }, []);
 
   const reportScroll = useCallback(
     (scrollTop: number): void => {
       pendingRef.current = scrollTop;
-      if (frameRef.current !== undefined) {
-        return;
-      }
-      frameRef.current = requestAnimationFrame(() => {
-        frameRef.current = undefined;
-        onScroll?.(pendingRef.current, false);
-      });
+      cancelSettle();
+      lastReportedRef.current = scrollTop;
+      onScroll?.(scrollTop, false);
     },
-    [onScroll],
+    [cancelSettle, onScroll],
   );
 
   const reportScrollEnd = useCallback(
     (scrollTop: number): void => {
       pendingRef.current = scrollTop;
-      cancelFrame();
-      onScroll?.(scrollTop, true);
+      cancelSettle();
+      if (lastReportedRef.current !== scrollTop) {
+        lastReportedRef.current = scrollTop;
+        onScroll?.(scrollTop, false);
+      }
+      settleTimerRef.current = window.setTimeout(() => {
+        settleTimerRef.current = undefined;
+        onScroll?.(pendingRef.current, true);
+      }, SCROLL_SETTLE_DELAY_MS);
     },
-    [cancelFrame, onScroll],
+    [cancelSettle, onScroll],
   );
 
-  useEffect(() => cancelFrame, [cancelFrame]);
+  useEffect(
+    () => () => {
+      cancelSettle();
+    },
+    [cancelSettle],
+  );
 
   return { reportScroll, reportScrollEnd };
 }

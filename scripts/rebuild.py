@@ -61,7 +61,13 @@ USE_COLOR = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
 
 
 def log(level: str, message: str) -> None:
-    tag = {"info": "·", "ok": "✓", "warn": "!", "fail": "✗", "step": "▶"}[level]
+    tags = {"info": "·", "ok": "✓", "warn": "!", "fail": "✗", "step": "▶"}
+    fallback_tags = {"info": ".", "ok": "OK", "warn": "!", "fail": "X", "step": ">"}
+    tag = tags[level]
+    try:
+        tag.encode(sys.stdout.encoding or "utf-8")
+    except UnicodeEncodeError:
+        tag = fallback_tags[level]
     if USE_COLOR:
         print(f"{COLORS[level]}{tag}{RESET} {message}", flush=True)
     else:

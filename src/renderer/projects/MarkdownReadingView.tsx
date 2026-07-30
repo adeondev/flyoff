@@ -14,10 +14,12 @@ import type { Translate } from '../pages/page-types';
 import { ExternalLinkPopover } from './ExternalLinkPopover';
 import {
   isLargeMarkdownDocument,
+  shouldWindowMarkdownSource,
   SPLIT_PREVIEW_IDLE_MS,
   SPLIT_PREVIEW_MAX_LAG_MS,
 } from './editor-performance';
 import { renderMarkdownInto } from './markdown-render';
+import { WindowedMarkdownView } from './source-engine/windowed-markdown-view';
 import {
   MEDIA_LIBRARY_CHANGED_EVENT,
   removedMediaAssetIds,
@@ -82,6 +84,7 @@ export function MarkdownReadingView({
   const frameRef = useRef<number | undefined>(undefined);
   const idleTimerRef = useRef<number | undefined>(undefined);
   const maxTimerRef = useRef<number | undefined>(undefined);
+  const windowedRef = useRef<WindowedMarkdownView | undefined>(undefined);
   const [pendingLink, setPendingLink] = useState<{
     anchor: HTMLAnchorElement;
     url: string;
@@ -97,7 +100,24 @@ export function MarkdownReadingView({
       if (!container || renderedContentRef.current === latest) {
         return;
       }
-      renderMarkdownInto(container, latest, { projectId });
+      // Past the windowing threshold the cost of a reading view is Blink
+      // laying out every block, not building them, so only the visible ones
+      // are mounted. Smaller notes keep the plain tree, where native
+      // selection and find in page are worth more than the layout saved.
+      if (shouldWindowMarkdownSource(latest)) {
+        const view =
+          windowedRef.current ??
+          new WindowedMarkdownView(container, { projectId });
+        windowedRef.current = view;
+        view.setProjectId(projectId);
+        view.setSource(latest);
+      } else {
+        if (windowedRef.current) {
+          windowedRef.current.destroy();
+          windowedRef.current = undefined;
+        }
+        renderMarkdownInto(container, latest, { projectId });
+      }
       renderedContentRef.current = latest;
       setPendingLink(undefined);
     };
@@ -136,7 +156,11 @@ export function MarkdownReadingView({
   }, [containerRef, content, projectId, updatePolicy]);
 
   useEffect(
-    () => () => cancelScheduledRender(frameRef, idleTimerRef, maxTimerRef),
+    () => () => {
+      cancelScheduledRender(frameRef, idleTimerRef, maxTimerRef);
+      windowedRef.current?.destroy();
+      windowedRef.current = undefined;
+    },
     [],
   );
 

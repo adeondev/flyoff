@@ -6,9 +6,12 @@ import {
   clearSourceSpellingErrorsOutsideRange,
   clearSourceSpellingErrors,
   collectSourceSpellcheckWords,
+  releaseSourceSpellingHighlights,
   renderSourceSpellingErrors,
+  sourceSpellingErrorCount,
   sourceSpellcheckViewportRange,
 } from '../../src/renderer/projects/source-spellcheck';
+import { readSource } from '../../src/renderer/projects/source-caret';
 import { reconcileSource } from '../../src/renderer/projects/source-renderer';
 
 describe('source spellcheck', () => {
@@ -97,5 +100,86 @@ describe('source spellcheck', () => {
     expect(
       root.children[250]?.querySelector('[data-spelling-word="erradu"]'),
     ).not.toBeNull();
+  });
+
+  it('uses custom highlights without mutating editable text nodes when supported', () => {
+    class TestHighlight {
+      readonly ranges = new Set<Range>();
+
+      get size(): number {
+        return this.ranges.size;
+      }
+
+      add(range: Range): TestHighlight {
+        this.ranges.add(range);
+        return this;
+      }
+
+      delete(range: Range): boolean {
+        return this.ranges.delete(range);
+      }
+    }
+
+    const registry = new Map<string, TestHighlight>();
+    const cssDescriptor = Object.getOwnPropertyDescriptor(window, 'CSS');
+    const highlightDescriptor = Object.getOwnPropertyDescriptor(
+      window,
+      'Highlight',
+    );
+    try {
+      Object.defineProperties(window, {
+        CSS: {
+          configurable: true,
+          value: { highlights: registry },
+        },
+        Highlight: {
+          configurable: true,
+          value: TestHighlight,
+        },
+      });
+      const root = document.createElement('div');
+      reconcileSource(root, 'erradu\ncerto\nerradu');
+
+      renderSourceSpellingErrors(root, ['erradu'], false);
+
+      expect(sourceSpellingErrorCount(root)).toBe(2);
+      expect(root.querySelector('.md-spelling-error')).toBeNull();
+      expect(readSource(root)).toBe('erradu\ncerto\nerradu');
+
+      releaseSourceSpellingHighlights(
+        root,
+        root.children[0] as HTMLElement,
+      );
+      expect(sourceSpellingErrorCount(root)).toBe(1);
+      renderSourceSpellingErrors(root, ['erradu'], false, {
+        endLine: 1,
+        startLine: 0,
+      });
+      expect(sourceSpellingErrorCount(root)).toBe(2);
+
+      reconcileSource(root, 'erradu\ncerto');
+      clearSourceSpellingErrors(root, { endLine: 2, startLine: 2 });
+      expect(sourceSpellingErrorCount(root)).toBe(1);
+
+      clearSourceSpellingErrorsOutsideRange(root, {
+        endLine: 1,
+        startLine: 0,
+      });
+      expect(sourceSpellingErrorCount(root)).toBe(1);
+
+      clearSourceSpellingErrors(root);
+      expect(sourceSpellingErrorCount(root)).toBe(0);
+    } finally {
+      if (highlightDescriptor) {
+        Object.defineProperty(window, 'Highlight', highlightDescriptor);
+      } else {
+        Reflect.deleteProperty(window, 'Highlight');
+      }
+      if (cssDescriptor) {
+        Object.defineProperty(window, 'CSS', cssDescriptor);
+      } else {
+        Reflect.deleteProperty(window, 'CSS');
+      }
+    }
   });
 });

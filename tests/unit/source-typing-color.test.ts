@@ -136,6 +136,38 @@ describe('markdown typing colour', () => {
     expect(deleted).toEqual({ content: '', selection: selection(0) });
   });
 
+  it('cleans an empty run only on the line affected by deletion', () => {
+    const content = '[]{color=#8F4FC4}\nplain';
+    const deleted = resolveMarkdownTypingInput(
+      {
+        content,
+        selection: selection(content.length),
+      },
+      'deleteContentBackward',
+      null,
+      purple,
+    );
+
+    expect(deleted).toEqual({
+      content: '[]{color=#8F4FC4}\nplai',
+      selection: selection(content.length - 1),
+    });
+  });
+
+  it('cleans an empty run formed by joining adjacent lines', () => {
+    const deleted = resolveMarkdownTypingInput(
+      {
+        content: '[\n]{color=#8F4FC4}',
+        selection: selection(2),
+      },
+      'deleteContentBackward',
+      null,
+      purple,
+    );
+
+    expect(deleted).toEqual({ content: '', selection: selection(0) });
+  });
+
   it('post-processes the final IME insertion as a single styled edit', () => {
     const composed = applyMarkdownTypingComposition(
       { content: 'A ', selection: selection(2) },

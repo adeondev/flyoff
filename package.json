@@ -27,7 +27,7 @@
     "native:check": "npm run check --workspace=@flyoff/native-core",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --configLoader native --pool=threads",
+    "test": "vitest run --configLoader native --pool=threads --maxWorkers=2",
     "test:watch": "vitest --configLoader native --pool=threads",
     "test:native": "npm run native:check && npm run native:build && npm run test --workspace=@flyoff/native-core",
     "test:twine-live": "node --env-file=.env.local --import tsx scripts/evaluate-twine-live.ts",
@@ -52,6 +52,11 @@
     "saxes": "6.0.0"
   },
   "devDependencies": {
+    "@codemirror/commands": "^6.10.4",
+    "@codemirror/lang-markdown": "^6.5.1",
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/state": "^6.7.1",
+    "@codemirror/view": "^6.43.7",
     "@electron-forge/cli": "7.11.2",
     "@electron-forge/maker-deb": "7.11.2",
     "@electron-forge/maker-rpm": "7.11.2",

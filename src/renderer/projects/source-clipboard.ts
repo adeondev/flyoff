@@ -125,6 +125,9 @@ export function sourceTextFromTransfer(
   ownerDocument: Document,
 ): string {
   const plain = normalizeSourceText(transfer.getData('text/plain'));
+  if (plain.includes('\n')) {
+    return plain;
+  }
   const html = htmlSourceText(transfer.getData('text/html'), ownerDocument);
 
   if (!plain) {

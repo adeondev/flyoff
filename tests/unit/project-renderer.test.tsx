@@ -1194,6 +1194,57 @@ describe('project naming and creation dialog', () => {
 });
 
 describe('Markdown editor', () => {
+  it('does not persist a scroll position read from a hidden pane', () => {
+    const original: MarkdownDocument = {
+      nodeId: note.nodeId,
+      content: Array.from({ length: 40 }, (_, index) => `line ${index}`).join(
+        '\n',
+      ),
+      readOnly: false,
+      revision: '1'.repeat(64),
+    };
+    const controller = new MarkdownDocumentController({
+      reload: vi.fn(),
+      save: successfulSave(),
+    });
+    const onScrollChange = vi.fn();
+    const { container, rerender } = render(
+      <MarkdownEditor
+        active
+        controller={controller}
+        document={original}
+        onScrollChange={onScrollChange}
+        scrollTop={480}
+        translate={translate}
+      />,
+    );
+    const editor = container.querySelector<HTMLElement>(
+      '.markdown-source__editor',
+    )!;
+    // React applies `hidden` to the panel before this component's layout effect
+    // runs, so on deactivation the editor is already inside `display: none`,
+    // where `scrollTop` reads 0. Reporting that zero used to persist it and lose
+    // the reader's position on every tab switch.
+    Object.defineProperty(editor, 'clientHeight', {
+      configurable: true,
+      value: 0,
+    });
+    onScrollChange.mockClear();
+
+    rerender(
+      <MarkdownEditor
+        active={false}
+        controller={controller}
+        document={original}
+        onScrollChange={onScrollChange}
+        scrollTop={480}
+        translate={translate}
+      />,
+    );
+
+    expect(onScrollChange).not.toHaveBeenCalled();
+  });
+
   it('changes a source color token as one undoable operation', () => {
     const original: MarkdownDocument = {
       nodeId: note.nodeId,
@@ -1773,6 +1824,7 @@ describe('Markdown editor', () => {
   });
 
   it('restores and reports the source scroll position', () => {
+    vi.useFakeTimers();
     const original: MarkdownDocument = {
       nodeId: note.nodeId,
       content: Array.from({ length: 100 }, (_, index) => `Line ${index}`).join(
@@ -1802,7 +1854,71 @@ describe('Markdown editor', () => {
     expect(editor.scrollTop).toBe(72);
     editor.scrollTop = 144;
     fireEvent(editor, new Event('scrollend', { bubbles: true }));
-    expect(onScrollChange).toHaveBeenCalledWith(144, true);
+    expect(onScrollChange).toHaveBeenLastCalledWith(144, false);
+    act(() => vi.advanceTimersByTime(80));
+    expect(onScrollChange).toHaveBeenLastCalledWith(144, true);
+  });
+
+  it('preserves both source scroll axes across an immediate mode switch', () => {
+    const original: MarkdownDocument = {
+      nodeId: note.nodeId,
+      content: `${'x'.repeat(1_000)}\n${Array.from(
+        { length: 100 },
+        (_, index) => `Line ${index}`,
+      ).join('\n')}`,
+      readOnly: false,
+      revision: '1'.repeat(64),
+    };
+    const controller = new MarkdownDocumentController({
+      reload: vi.fn(async () => ({ ok: true as const, value: original })),
+      save: vi.fn(async () => ({ ok: true as const, value: original })),
+    });
+    const onScrollChange = vi.fn();
+    const view = render(
+      <MarkdownEditor
+        controller={controller}
+        document={original}
+        mode="edit"
+        onScrollChange={onScrollChange}
+        scrollTop={0}
+        translate={translate}
+      />,
+    );
+    const editor = screen.getByRole('textbox', {
+      name: 'projects.editorLabel',
+    });
+    editor.scrollLeft = 320;
+    editor.scrollTop = 144;
+    fireEvent.scroll(editor);
+
+    expect(onScrollChange).toHaveBeenLastCalledWith(144, false);
+
+    view.rerender(
+      <MarkdownEditor
+        controller={controller}
+        document={original}
+        mode="reading"
+        onScrollChange={onScrollChange}
+        scrollTop={144}
+        translate={translate}
+      />,
+    );
+    view.rerender(
+      <MarkdownEditor
+        controller={controller}
+        document={original}
+        mode="edit"
+        onScrollChange={onScrollChange}
+        scrollTop={144}
+        translate={translate}
+      />,
+    );
+
+    const restored = screen.getByRole('textbox', {
+      name: 'projects.editorLabel',
+    });
+    expect(restored.scrollTop).toBe(144);
+    expect(restored.scrollLeft).toBe(320);
   });
 
   it('commits Enter and multiline paste as visible, undoable steps', async () => {
