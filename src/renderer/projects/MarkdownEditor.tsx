@@ -191,6 +191,9 @@ export const MarkdownEditor = forwardRef<
     left: 0,
     recorded: false,
   });
+  const restoredScrollRef = useRef<
+    { element: HTMLElement; key: string } | undefined
+  >(undefined);
   const publishLiveSelection = useCallback(
     (selection: SourceSelection): void => {
       pendingLiveSelectionRef.current = selection;
@@ -300,10 +303,19 @@ export const MarkdownEditor = forwardRef<
           onScrollChange?.(editor.scrollTop, false);
         }
       }
+      restoredScrollRef.current = undefined;
       return;
     }
-    if (editor && editor.scrollTop !== scrollTop) {
-      editor.scrollTop = scrollTop;
+    // Restore the saved offset when the note comes back on screen, never while
+    // it is already on screen. A stored pixel offset belongs to the layout it
+    // was measured in; writing it back during a pane resize overrode the
+    // engine's own line-anchored correction and moved the reader.
+    const restored = restoredScrollRef.current;
+    if (editor && (restored?.element !== editor || restored.key !== key)) {
+      restoredScrollRef.current = { element: editor, key };
+      if (editor.scrollTop !== scrollTop) {
+        editor.scrollTop = scrollTop;
+      }
     }
     if (
       editor &&

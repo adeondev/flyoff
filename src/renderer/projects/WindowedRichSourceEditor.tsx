@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useRef,
@@ -96,6 +97,7 @@ interface ControlledSourceIdentity {
 }
 
 const SPELLCHECK_CACHE_MAX_ENTRIES = 16_384;
+const SPELLCHECK_VIEWPORT_REFRESH_MS = 100;
 
 function sameSelection(
   left: SourceSelection,
@@ -172,10 +174,34 @@ export function WindowedRichSourceEditor({
     onUndo,
   });
   const readOnlyRef = useRef(readOnly);
+  const spellCheckRef = useRef(spellCheck);
   const typingColorRef = useRef<MarkdownTypingColor | null>(typingColor);
   const [spellcheckRevision, setSpellcheckRevision] = useState(0);
   const [viewportRevision, setViewportRevision] = useState(0);
   const scrollReporter = useScrollPositionReporter(onScroll);
+  const scrollReporterRef = useRef(scrollReporter);
+  const refreshSpellcheckViewport = useCallback((): void => {
+    if (!spellCheckRef.current) {
+      return;
+    }
+    if (spellcheckTimerRef.current !== undefined) {
+      window.clearTimeout(spellcheckTimerRef.current);
+    }
+    spellcheckTimerRef.current = window.setTimeout(() => {
+      spellcheckTimerRef.current = undefined;
+      setViewportRevision((current) => current + 1);
+    }, SPELLCHECK_VIEWPORT_REFRESH_MS);
+  }, []);
+  const refreshSpellcheckViewportRef = useRef(refreshSpellcheckViewport);
+
+  // Passive, not layout: the view only reads these from a scroll, which cannot
+  // happen before paint, and a layout effect here re-ran on every commit of a
+  // promoting editor and cost seconds on a 2.000 line note.
+  useEffect(() => {
+    scrollReporterRef.current = scrollReporter;
+    refreshSpellcheckViewportRef.current = refreshSpellcheckViewport;
+    spellCheckRef.current = spellCheck;
+  });
 
   useEffect(() => {
     callbacksRef.current = {
@@ -236,6 +262,26 @@ export function WindowedRichSourceEditor({
     const initial = initialRef.current;
     const view = new WindowedSourceView(root, {
       ariaLabel: initial.ariaLabel,
+      // A scroll the view produced while re-anchoring after a layout change is
+      // not a reading position the reader chose, and it is not a new window to
+      // spell-check either: the render that follows it already reconciles the
+      // mounted lines. Persisting it fed a pixel offset measured at one pane
+      // width back in at another, and re-checking on every write cost 1,4 s of
+      // the 2.000 line promotion.
+      onScroll: (scrollTop, selfInduced) => {
+        if (selfInduced) {
+          return;
+        }
+        scrollReporterRef.current.reportScroll(scrollTop);
+        refreshSpellcheckViewportRef.current();
+      },
+      onScrollEnd: (scrollTop, selfInduced) => {
+        if (selfInduced) {
+          return;
+        }
+        scrollReporterRef.current.reportScrollEnd(scrollTop);
+        refreshSpellcheckViewportRef.current();
+      },
       readOnly: initial.readOnly,
       selection: initial.selection,
       source: initial.value,
@@ -263,12 +309,16 @@ export function WindowedRichSourceEditor({
       nextSelection: SourceSelection,
       inputType: string,
       timestamp: number,
+      change?: { from: number; insert: string; to: number },
     ): void => {
       view.setSource(content, nextSelection, {
+        // Passing the edit through lets the model apply it to the one line it
+        // touches instead of finding it by reading the whole document.
+        change,
         nextSelection,
         previousSelection: before.selection,
       });
-      view.revealOffset(
+      view.scheduleRevealOffset(
         nextSelection.direction === 'backward'
           ? nextSelection.start
           : nextSelection.end,
@@ -357,6 +407,15 @@ export function WindowedRichSourceEditor({
         after.selection,
         resolvedInputType,
         timestamp,
+        // Only when the content is exactly what the mirror produced and the
+        // edit was derived from the text the view still holds. Markdown typing
+        // rules can rewrite the content, and a controlled update can land
+        // between `beforeinput` and `input`; in either case the reported edit
+        // no longer describes this document and the model must derive it.
+        after.content === inputEdit.content &&
+          before.content === view.getModel().source
+          ? inputEdit.change
+          : undefined,
       );
     };
 
@@ -1040,18 +1099,6 @@ export function WindowedRichSourceEditor({
     } satisfies SourceInlineColorRequest);
   }
 
-  function refreshSpellcheckViewport(): void {
-    if (!spellCheck) {
-      return;
-    }
-    if (spellcheckTimerRef.current !== undefined) {
-      window.clearTimeout(spellcheckTimerRef.current);
-    }
-    spellcheckTimerRef.current = window.setTimeout(() => {
-      spellcheckTimerRef.current = undefined;
-      setViewportRevision((current) => current + 1);
-    }, 100);
-  }
 
   return (
     <div className="markdown-source">
@@ -1100,14 +1147,6 @@ export function WindowedRichSourceEditor({
         }}
         onKeyDown={handleKeyDown}
         onPointerDown={handleColorPointerDown}
-        onScroll={(event) => {
-          scrollReporter.reportScroll(event.currentTarget.scrollTop);
-          refreshSpellcheckViewport();
-        }}
-        onScrollEnd={(event) => {
-          scrollReporter.reportScrollEnd(event.currentTarget.scrollTop);
-          refreshSpellcheckViewport();
-        }}
         ref={editorRef}
         tabIndex={0}
       />

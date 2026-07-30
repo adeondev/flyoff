@@ -228,6 +228,170 @@ sublinhados usam CSS Custom Highlight no Chromium; a rodada registrada criou
 163 ranges e zero elementos de marcação no DOM. A revisão do documento inteiro
 existe apenas como diagnóstico do benchmark.
 
+## Régua de três vias: Flyoff, CodeMirror 6 e Monaco
+
+Máquina diferente das tabelas históricas abaixo, então **não compare os dois
+conjuntos**. Codespace Linux de 2 vCPU (AMD EPYC 9V74), 7,9 GB de RAM sem swap,
+Electron 43 offscreen, GPU desabilitada, host de 1.000 × 650 px, Node 24.14.
+Mediana de 7 rodadas completas, 60 teclas por rodada descartando 10, mesma
+fixture e mesmo ritmo de uma tarefa por tecla para os três editores.
+
+| 20 mil linhas / 1.208.000 caracteres | mediana | p95 | p99 | nós no DOM |
+|---|---:|---:|---:|---:|
+| **Flyoff** abertura aquecida | 16,20 ms | 29,40 ms | 29,40 ms | 259 |
+| CodeMirror 6 abertura aquecida | 16,30 ms | 17,10 ms | 17,10 ms | 20 |
+| Monaco abertura aquecida | 34,10 ms | 38,90 ms | 38,90 ms | 277 |
+| **Flyoff** tecla | 2,50 ms | 6,80 ms | 12,70 ms | |
+| CodeMirror 6 tecla | **1,10 ms** | 2,30 ms | 3,80 ms | |
+| Monaco tecla | **0,90 ms** | 2,70 ms | 3,40 ms | |
+| **Flyoff** scroll de roda | 16,70 ms | 16,90 ms | 19,80 ms | |
+| CodeMirror 6 scroll de roda | 16,70 ms | 17,40 ms | 19,80 ms | |
+| Monaco scroll de roda | 16,70 ms | 17,20 ms | 18,80 ms | |
+
+Leitura honesta: **abertura em paridade com o CodeMirror e o dobro da velocidade
+do Monaco; scroll em paridade com os dois, nos 60 FPS; edição ainda ~2,3× atrás
+do CodeMirror e ~2,8× atrás do Monaco**, com uma cauda pior (p99 12,7 ms contra
+3,8 e 3,4). A causa está medida em *O que sobra da diferença de edição*.
+
+Escala por tamanho, 3 rodadas cada:
+
+| linhas | Flyoff abertura | Flyoff tecla | CM6 abertura | CM6 tecla | Monaco abertura | Monaco tecla |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1.000 | 38,80 ms | 3,60 ms | 15,90 ms | 2,70 ms | 15,10 ms | 0,90 ms |
+| 10.000 | 15,70 ms | 2,60 ms | 16,50 ms | 1,30 ms | 25,50 ms | 0,90 ms |
+| 20.000 | 16,20 ms | 2,50 ms | 16,30 ms | 1,10 ms | 34,10 ms | 0,90 ms |
+
+A abertura do Flyoff é praticamente constante entre 10 e 20 mil linhas, como
+esperado de uma view proporcional ao viewport, e o Monaco cresce com o
+documento. Os 38,8 ms em 1.000 linhas são a view virtualizada rodando abaixo do
+corte que o aplicativo usa (`shouldWindowMarkdownSource`, 2.000 linhas), então
+não descrevem nenhum caminho real — mas mostram que a virtualização tem custo
+fixo e que o corte existe por um motivo.
+
+**50 mil e 100 mil linhas não foram medidos neste ambiente.** O renderer é
+derrubado por falta de memória antes de terminar — 7,9 GB sem swap, já com
+~6 GB ocupados pelo resto do Codespace. O escalonamento nesses tamanhos está
+medido no nível do modelo, em Node, na seção do achatamento.
+
+### A cauda da digitação, tecla por tecla
+
+Mediana não descreve o que se sente. `npm run profile:keystroke` roda 200 teclas
+guardando **cada** amostra e a divide em fases, envolvendo os próprios métodos do
+view na instância — um método de classe chamado como `this.metodo()` resolve pela
+instância primeiro, então uma propriedade própria mede sem alterar o que executa.
+O harness dirige o `WindowedSourceView` direto: **não há React, persistência nem
+IPC nessas medições**, o que já responde uma pergunta — os picos são do engine.
+
+Distribuição em 20 mil linhas, 200 teclas, antes da correção desta rodada:
+
+| tecla até | teclas |
+|---:|---:|
+| 4 ms | 54 |
+| 6 ms | 55 |
+| 10 ms | 45 |
+| 20 ms | 37 |
+| 50 ms | 6 |
+| acima de 50 ms | 3 |
+
+Cerca de uma tecla em cinco passa de 10 ms e três passaram de 50 ms. Por fase,
+somando as 200 teclas:
+
+| fase | mediana | p95 | p99 | máximo | fatia do total |
+|---|---:|---:|---:|---:|---:|
+| modelo do documento | 3,10 ms | 11,40 ms | 31,30 ms | 78,40 ms | **61,7%** |
+| leitura do mirror | 0,30 ms | 4,30 ms | 12,30 ms | 20,90 ms | 12,3% |
+| revelar o caret | 0,50 ms | 2,50 ms | 8,90 ms | 11,80 ms | 9,7% |
+| mutação do `textarea` | 0,30 ms | 1,30 ms | 4,90 ms | 15,40 ms | 6,4% |
+| reconciliar linhas | 0,20 ms | 1,70 ms | 3,30 ms | 6,50 ms | 4,5% |
+| medir linhas | 0,10 ms | 0,50 ms | 2,90 ms | 11,20 ms | 3,5% |
+| alturas, mirror, métricas, seleção, layout | 0,00 ms | ≤0,2 ms | ≤0,3 ms | ≤1,7 ms | 1,9% |
+
+#### Alocação e coletor
+
+O heap é lido a cada tecla. **Cada tecla aloca 1,47 MB de mediana** num documento
+de 1.207.865 caracteres, com uma coleta a cada ~12 teclas — 17 em 200 — e o heap
+indo de 8,1 MB a 28,3 MB ao longo da passagem. Das 12 teclas mais lentas, 4 caem
+exatamente em uma coleta; as outras são o modelo demorando sozinho.
+
+O 1,47 MB se decompõe em cerca de 1,21 MB — uma string nova de documento inteiro,
+que a edição produz e que a primeira leitura de caractere obriga o V8 a
+materializar — mais cerca de 0,31 MB do `lines.slice()` e dos dois
+`Int32Array.slice()` de offsets.
+
+> **Correção de medição.** Uma versão anterior desta seção registrou 2,59 MB por
+> tecla. Aquele número era do *harness*, não do editor: a verificação de
+> integridade comparava duas strings de 1,2 M caracteres a cada tecla, e comparar
+> strings de mesmo tamanho materializa as duas. A verificação passou a ser por
+> comprimento a cada tecla e por igualdade completa uma vez no fim. Os números de
+> antes/depois medidos com o harness antigo continuam válidos como **diferença**,
+> porque os dois lados usaram o mesmo harness, mas os valores absolutos daquelas
+> tabelas estão inflados.
+
+Isso responde “por que os picos”: **não é parsing, decoração, reconciliação de
+viewport, commit de DOM nem React — é a representação do documento**. Reconciliar
+linhas e medir somam menos de 10% do tempo; o modelo sozinho passa de 60%.
+
+#### Aplicar a edição descrita, em vez de deduzi-la do texto
+
+`applySourceInputMirrorEdit` já sabe exatamente o intervalo substituído e o texto
+inserido, mas jogava fora essa informação: o modelo recebia só o texto novo e
+redescobria a mudança lendo o documento. Agora o `SourceInputMirrorEdit` carrega
+`change: { from, insert, to }`, o hint de atualização o repassa, e
+`applyKnownSourceChange` monta a linha nova a partir da **linha antiga** mais o
+texto inserido — sem `slice` do documento e sem varredura.
+
+O hint só é passado sob duas condições, ambas O(1): o conteúdo resultante tem de
+ser exatamente o que o mirror produziu — as regras de digitação de Markdown podem
+reescrevê-lo — e o texto de que a edição foi derivada tem de ser, por identidade,
+o que o view ainda tem, porque uma atualização controlada pode cair entre
+`beforeinput` e `input`. Fora disso o modelo deduz a mudança como antes.
+
+O caminho antigo continua inteiro atrás de `setLocalSourceChangePathEnabled`, e
+`tests/unit/source-document-model-differential.test.ts` aplica 500 edições
+aleatórias — ASCII, acentuadas, emoji com par substituto, marcas de Markdown,
+CRLF, nos limites de linha e do documento — pelos **dois** caminhos, comparando
+texto, linhas, `lineStarts`, `lineGraphemeStarts`, estado de cerca e intervalo de
+mudança depois de cada edição, e exigindo que o caminho novo tenha realmente
+rodado. Uma edição que cruza linha é recusada pelo caminho novo, também coberto
+por teste.
+
+Mesma fixture, 200 teclas, harness já corrigido, alternando só o hint:
+
+| | sem `change` | com `change` |
+|---|---:|---:|
+| mediana | 2,70 ms | **2,60 ms** |
+| p95 | 6,80 ms | **5,50 ms** |
+| p99 | 13,40 ms | **11,00 ms** |
+| máximo | 33,10 ms | **14,50 ms** |
+| teclas acima de 8 ms | 15 de 200 | **8 de 200** |
+| alocação por tecla | 1.472 KB | 1.471 KB |
+
+A cauda encolhe; a alocação **não muda**. Isso é informação: o custo que sobra
+não é o modelo procurar a mudança, é o documento novo existir como uma string
+inteira. Enquanto `content` for uma string de documento inteiro atravessando a
+fronteira com o React, o controller e a persistência a cada tecla, uma
+materialização por tecla é estrutural — nenhum ajuste dentro do modelo a remove.
+Tirá-la exige que o documento deixe de ser uma string nessa fronteira, que é a
+migração descrita em *O que sobra da diferença de edição*.
+
+### Comportamento com CPU lenta### Comportamento com CPU lenta
+
+Uma rodada por configuração, fixture de 10 mil linhas, `--throttle` via
+`Emulation.setCPUThrottlingRate`. Rodada única: leia a ordem de grandeza, não o
+dígito.
+
+| | 1× | 4× |
+|---|---:|---:|
+| abertura aquecida | 20,70 ms | 56,50 ms |
+| tecla, mediana | 2,40 ms | 12,60 ms |
+| tecla, p95 | 3,70 ms | 32,80 ms |
+| scroll de roda, mediana | 16,60 ms | 25,50 ms |
+
+Ler e rolar continua utilizável a 4× — 25,5 ms por frame é cerca de 39 FPS.
+Digitar a 12,6 ms de mediana e 32,8 ms de p95 é perceptível, e é o mesmo custo
+por tecla da seção do achatamento multiplicado pela CPU mais lenta. A rodada de
+6× foi interrompida: neste Codespace ela não termina em tempo praticável.
+
 ## Resultados medidos
 
 As medições abaixo são um snapshot de uma execução no Electron Chromium
@@ -348,6 +512,149 @@ imagem; existe teste cobrindo os dois casos.
 
 A diferença caiu de ~3,5× para ~2,2×. O que resta está em `setSource` fora da
 pintura: cerca de 1,9 ms, contra 0,73 ms de JavaScript medido no profiler.
+
+### O que sobra da diferença de edição: achatar a string do documento
+
+O que ainda separa o Flyoff do CodeMirror por tecla foi localizado e medido, e
+não é micro-otimização perdida: é a representação do documento.
+
+Um perfil de CPU sobre `updateSourceDocumentModel` em Node, tempo próprio
+agregado por função, aponta para um lugar só:
+
+| função | tempo próprio |
+|---|---:|
+| `hintedSourceTextChange` | 47,4% |
+| `updateSingleSourceLine` | 12,8% |
+| coletor de lixo | 12,4% |
+
+`hintedSourceTextChange` não está varrendo o documento — ele está pagando o
+**achatamento** dele. Uma edição monta o texto seguinte por concatenação, e o V8
+guarda isso como uma corda (`ConsString`) até alguém ler um caractere. A primeira
+leitura materializa a string inteira. Medido isolando as duas fases:
+
+| nota | montar por concatenação | primeira leitura de caractere |
+|---|---:|---:|
+| 20 mil linhas / 1,27 MB | 0,0004 ms | **0,98 ms**, p95 2,43 ms |
+| 100 mil linhas / 6,39 MB | 0,0012 ms | **3,82 ms**, p95 8,83 ms |
+
+É uma passagem por todo o documento por tecla, linear no tamanho da nota, e é
+também a maior fonte de lixo do caminho de entrada — o que explica a cauda: em
+20 mil linhas a mediana da tecla é ~2,5 ms mas o p99 chega a ~13 ms.
+
+O CodeMirror não paga isso porque o documento dele é uma árvore de linhas, nunca
+uma string contígua. Uma tecla toca O(log n) nós.
+
+Duas tentativas foram medidas e **descartadas**, e vale registrar para ninguém
+repetir:
+
+1. **Adiar o achatamento para uma tarefa depois da pintura.** Isolado, funciona:
+   o caminho crítico cai de 1,34 ms para 0,0004 ms em 20 mil linhas. No editor
+   real não muda nada, porque `hintedSourceTextChange` lê um caractere da string
+   nova ainda dentro do `setSource` — quando a tarefa adiada roda, já está
+   achatada. O código foi removido em vez de ficar como complexidade morta.
+2. **Cachear `clientHeight` no caminho `writeOnly`.** A razão de tecla contra o
+   CodeMirror foi de 1,73× para 2,07× em 7 rodadas, ou seja, piorou; o flush de
+   layout que ela evitava acontecia de todo jeito no frame seguinte. Revertida.
+
+Adiar só ajuda se **nada** no caminho da tecla tocar a string nova, e três
+lugares tocam: `hintedSourceTextChange`, o `source.slice` de
+`updateSingleSourceLine` e o `createSourceInputMirror`. Fechar a diferença exige
+que os três parem de derivar da string inteira — a dica de atualização carregando
+o intervalo exato editado, a linha nova montada a partir da linha antiga, e a
+janela do mirror montada a partir das linhas. Isso é a primeira etapa de um
+documento por linhas, não um ajuste, e está registrado como a oportunidade de
+maior impacto que sobrou.
+
+### O que ainda separa a edição do CodeMirror: uma string por documento
+
+A diferença restante de edição não é micro-otimização perdida, é representação
+do documento, e tem número.
+
+Uma tecla produz o documento seguinte por concatenação. V8 guarda isso como uma
+*cons string* — construir custa nada — e só materializa a string contígua quando
+alguém lê um caractere dela. Esse alguém é o próprio caminho da tecla:
+`hintedSourceTextChange` chama `indexOf`, `updateSingleSourceLine` fatia por
+offset e `createSourceInputMirror` recorta a janela do caret. A primeira dessas
+operações achata o documento inteiro.
+
+Medido isolado, uma inserção de um caractere no meio do documento:
+
+| | construir a cons string | primeira leitura de caractere | segunda leitura |
+|---|---:|---:|---:|
+| 20 mil linhas, 1,27 MB | 0,0004 ms | **0,98 ms** (p95 2,43, máx 5,32) | 0,0004 ms |
+| 100 mil linhas, 6,39 MB | 0,0012 ms | **3,82 ms** (p95 8,83, máx 16,52) | 0,0012 ms |
+
+Um perfil de CPU do `updateSourceDocumentModel` isolado confirma de onde vem:
+`hintedSourceTextChange` responde por 47,4% do self time, `updateSingleSourceLine`
+por 12,8% e o coletor de lixo por 12,4% — a string achatada nova a cada tecla é
+também a maior fonte de garbage do editor, e é ela que produz a cauda de p99.
+
+É por isso que o CodeMirror ganha aqui: o documento dele é uma árvore de linhas,
+nunca uma string contígua, então uma tecla não toca 1,27 MB. Adiar o achatamento
+para uma tarefa ociosa **foi tentado e não funciona**: o caminho da tecla achata
+antes, então o adiamento vira no-op. Foi implementado, medido sem efeito e
+removido.
+
+Fechar a diferença exige que o caminho da tecla nunca toque a string do
+documento inteiro. Isso é possível sem trocar `source: string` por uma rope
+pública, em três partes:
+
+1. o hint da transação carrega a edição exata (`from`, `to`, `insert`) em vez de
+   ser re-derivada por diff — é o contrato de transação do CodeMirror;
+2. a linha nova é construída a partir da linha anterior mais o texto inserido,
+   nunca por `source.slice`;
+3. o mirror de entrada extrai a janela do caret das linhas, não da string.
+
+Com os três, nada achata o documento durante a tecla e a cons string pode ser
+achatada em tarefa ociosa — que aí passa a ter efeito, porque nada mais a força
+antes. Estimativa a partir dos números acima: 20 mil linhas de 2,5 ms para
+cerca de 1,5 ms; 100 mil linhas ganham perto de 3,8 ms por tecla.
+
+### Prova direta: a mesma nota sem acentos
+
+`scripts/keystroke-latency.cjs` mede 200 teclas na view virtualizada, dividindo o
+tempo por fase e registrando cada coleta de lixo. Ele aceita
+`FLYOFF_PROFILE_ABLATION=ascii`, que gera a **mesma quantidade de caracteres**
+sem nenhum acento. V8 então guarda o documento em um byte por caractere em vez de
+dois, o que corta pela metade os bytes que uma tecla precisa re-materializar sem
+mudar nada do trabalho de edição.
+
+Fixture de 20.000 linhas e 1.207.865 caracteres, 200 teclas, nesta máquina:
+
+| por tecla | com acentos (2 bytes) | só ASCII (1 byte) |
+|---|---:|---:|
+| mediana | 2,80 ms | 2,60 ms |
+| p95 | 10,40 ms | **5,00 ms** |
+| p99 | 21,70 ms | **7,90 ms** |
+| máximo | 49,80 ms | **21,20 ms** |
+| desvio padrão | 5,22 ms | **1,79 ms** |
+| fase `model`, total | 529,9 ms | 375,3 ms |
+| fase `model`, p99 | 15,90 ms | **5,40 ms** |
+
+A mediana quase não se move; a **cauda cai quase 3×**. Digitar não ficou mais
+barato — o documento ficou mais barato de copiar. É a confirmação direta de que
+a cauda de latência é a string do documento inteiro sendo refeita a cada tecla,
+e não layout, parsing ou reconciliação.
+
+Divisão por fase na fixture com acentos, somando 200 teclas:
+
+| fase | total | mediana | p99 | participação |
+|---|---:|---:|---:|---:|
+| `model` | 529,9 ms | 1,70 ms | 15,90 ms | **60,9%** |
+| `reveal` | 97,5 ms | 0,30 ms | 4,60 ms | 11,2% |
+| `inputRead` | 86,0 ms | 0,20 ms | 3,40 ms | 9,9% |
+| `inputMutation` | 58,0 ms | 0,20 ms | 2,50 ms | 6,7% |
+| `reconcileLines` | 38,5 ms | 0,10 ms | 2,20 ms | 4,4% |
+| `measureLines` | 32,6 ms | 0,10 ms | 1,90 ms | 3,7% |
+| resto | 26,4 ms | — | — | 3,0% |
+
+Foram 18 coletas de lixo em 200 teclas — uma a cada ~11 — com o heap indo de
+8,36 MB para 17,42 MB. Os índices das coletas coincidem com os picos de latência.
+
+`reveal` saiu do caminho síncrono por `scheduleRevealOffset`: a leitura do
+retângulo do caret passou para o frame já agendado, que ainda roda antes da
+pintura, então o caret aparece no mesmo quadro sem forçar layout no meio da
+entrada.
 
 ### Estado do E2E empacotado
 
@@ -497,6 +804,87 @@ A posição era destruída na **saída** da aba, não na volta. Agora a geometri
 lida enquanto o elemento tem caixa; sem caixa não há nada novo a reportar, porque
 o listener de scroll já persistiu a posição real enquanto a nota estava na tela.
 
+### Salto para cima ao abrir aba ou painel ao lado: causa raiz
+
+Reprodução: nota longa aberta, cursor deixado em algum ponto, rolagem para baixo
+alguns ecrãs, e então abrir uma aba ou dividir o painel. A nota subia — na
+medição do E2E empacotado, **20 linhas** — e ficava lá.
+
+A causa não estava na âncora de resize nem na estimativa de altura. Estava em
+`syncSelectionFromInput`, que terminava com `revealOffset(focus)` **sempre**.
+Esse método é um leitor: os chamadores usam ele para perguntar “qual é a seleção
+agora?” antes de copiar, recortar, compor ou publicar um evento. Mas o navegador
+também emite `selectionchange` quando o foco simplesmente **volta** para o
+editor, e é isso que uma operação de aba ou de painel faz. O caret não tinha se
+movido; mesmo assim o view rolava até ele.
+
+A magnitude é a distância entre o caret e o topo do viewport, porque
+`revealOffset` rola o **mínimo** necessário para expor a linha do caret. Ler
+alguns ecrãs abaixo de onde se clicou dá as “10 a 12 linhas, variando um pouco”
+do relato. Com o caret no offset 0, a nota ia para o topo: foi assim que o
+rastro apareceu, `scrollTop` de 107.913 para 22, com a pilha
+`writeScrollTop ← revealOffset ← syncSelectionFromInput ← selectionchange`.
+
+Rolar o caret para dentro da tela é efeito do caret **se mover**, nunca de ele
+ser lido — é o mesmo contrato do CodeMirror, onde `scrollIntoView` é um efeito
+pedido pela transação e não um efeito colateral de consultar o estado.
+`syncSelectionFromInput` só revela quando a seleção resultante difere da que o
+view já tinha. Navegação por setas e digitação continuam seguindo o caret,
+porque nesses casos ela realmente mudou.
+
+Coberto por `tests/unit/windowed-source-view.test.ts`
+(`does not scroll the caret into view when the selection is only re-read`), que
+falha sem a correção com `scrollTop` indo de 9.600 para 0.
+
+### Restauração por pixel disputando com a âncora do engine
+
+Corrigido o `revealOffset`, apareceu um segundo defeito atrás dele, intermitente:
+ao fechar o painel dividido a nota às vezes parava a 4.311 linhas do lugar, com
+`scrollTop` preso no valor medido na largura estreita enquanto o mapa de alturas
+já era o da largura cheia.
+
+Dois mecanismos se somavam:
+
+O view reporta cada evento de scroll para o React, inclusive os que ele mesmo
+escreve ao se reancorar. Uma animação de painel produz um desses por frame, e
+todos eram persistidos como se fossem leitura escolhida pelo usuário. O view já
+sabe distinguir os dois — `writeScrollTop` registra o valor pretendido — mas
+quem reportava era um listener de fora, que pode rodar antes do listener do
+próprio view. A classificação passou a sair do view, por
+`WindowedSourceViewOptions.onScroll(scrollTop, selfInduced)`, o que a torna
+independente da ordem de registro.
+
+E o `useLayoutEffect` do `MarkdownEditor` tinha `scrollTop` entre as
+dependências, então **qualquer** mudança do valor persistido era escrita de
+volta no DOM. Um offset em pixels pertence ao layout em que foi medido; escrevê-lo
+durante um resize sobrepunha a correção por linha do engine, e quem ganhava
+dependia da ordem do commit — daí a intermitência. A restauração agora acontece
+quando a nota **volta** para a tela ou troca de identidade, reconhecida pelo
+elemento e pela chave nota/view; enquanto ela está na tela, o engine é dono da
+posição.
+
+Verificado por `tests/e2e/large-note-scroll-anchor.spec.ts` no pacote real, em
+três execuções seguidas: divisão à direita, fechamento do painel e retorno de
+foco, todos com deriva 0.
+
+### Reset de layout descartado quando o editor fica sem caixa
+
+O terceiro defeito da mesma família apareceu ao **fechar** o painel dividido: a
+nota parava a milhares de linhas do lugar, com `scrollTop` ainda no valor medido
+na largura estreita e o mapa de alturas já reconstruído para a largura cheia.
+
+`resetLayout` começa recusando trabalho quando o elemento não tem caixa —
+`clientWidth` ou `clientHeight` zerados — o que é correto, porque medir ali
+devolve zero. Mas ele **descartava o pedido**: `requestLayoutReset` já tinha
+consumido o seu frame, e nada reagendava. Enquanto o painel é desmontado o
+editor sobrevivente passa por um instante sem caixa, e era justamente nesse
+instante que caía o reset da largura final. O resultado é um view ancorado na
+largura anterior.
+
+O pedido agora é lembrado (`layoutResetDeferred`) e refeito assim que existe
+geometria de novo, na primeira renderização que não seja o caminho de escrita
+pura de uma tecla — o caminho da tecla continua sem ler `clientWidth`.
+
 ### Corretor
 
 | escopo | frio | aquecido | p95 aquecido | resultado |
@@ -580,7 +968,41 @@ Três variáveis controlam a execução:
 | `FLYOFF_BENCHMARK_LINES` | tamanho da fixture, em linhas |
 | `FLYOFF_BENCHMARK_CPU_THROTTLE` | multiplicador de lentidão de CPU via CDP |
 | `FLYOFF_BENCHMARK_SKIP_LEGACY` | `1` pula os diagnósticos de DOM completo |
-| `FLYOFF_BENCHMARK_SKIP_REFERENCE` | `1` pula a régua do CodeMirror 6 |
+| `FLYOFF_BENCHMARK_SKIP_REFERENCE` | `1` pula as réguas do CodeMirror 6 e do Monaco |
+
+### Repetir a execução inteira, não só a amostra
+
+Uma rodada isolada em máquina compartilhada ou de dois núcleos se move mais do
+que a maioria das mudanças que vale a pena fazer. `npm run benchmark:compare`
+executa o benchmark várias vezes e reporta a mediana de cada medida entre
+rodadas, com p95, p99 e desvio padrão:
+
+```bash
+npm run benchmark:compare -- --runs=7 --lines=20000 --out=depois.json
+npm run benchmark:compare -- --runs=7 --compare=antes.json --out=depois.json
+```
+
+Ele também imprime **razões contra as réguas tiradas dentro de cada rodada**.
+Milissegundos absolutos variam entre lotes; uma razão contra um editor medido na
+mesma rodada cancela a parte dessa variação que atinge os dois. Não cancela a
+variação própria de cada editor — a mediana do CodeMirror se move entre 1,1 e
+1,5 ms nesta máquina — então uma diferença de menos de ~20% na razão não é
+conclusiva.
+
+Três correções de metodologia entraram junto:
+
+- **Monaco entrou como segunda régua**, com `wordWrap: 'on'` e minimapa
+  desligado, no mesmo host de 1.000 × 650 px. Como o CodeMirror, é
+  `devDependency` só do benchmark.
+- **60 amostras de edição por rodada, descartando 10**, contra 11 descartando 2.
+  Um p95 sobre 9 amostras é o segundo pior valor; não descreve cauda.
+- **O ritmo de digitação passou a ser uma tarefa por tecla**, `nextFrame()`
+  seguido de `nextTask()`, para os três editores. Antes o laço do Flyoff era
+  síncrono enquanto o do CodeMirror já cedia um frame — comparação de rajada
+  contra ritmo. Pior: resolver dentro de um callback de `requestAnimationFrame`
+  continua em microtask, dentro do mesmo callback, então nada que um editor adie
+  para uma tarefa chegava a rodar. Números de edição anteriores a esta mudança
+  não são comparáveis com os de agora.
 
 O throttle usa `Emulation.setCPUThrottlingRate` pelo debugger do Electron. É o
 controle certo para emular uma máquina fraca porque layout e style são trabalho
@@ -706,6 +1128,25 @@ habilitada na validação real.
 
 ## Invariantes e guardrails
 
+- Uma edição que o chamador conhece deve ser **repassada**, não redescoberta a
+  partir do texto. Redescobrir obriga a ler o documento novo, e a primeira
+  leitura de caractere materializa o documento inteiro.
+- Um caminho rápido de edição só vale acompanhado do caminho antigo e de um teste
+  diferencial que rode os dois sobre as mesmas edições aleatórias. Ele recusa o
+  que não sabe fazer — quebra de linha, edição cruzando linhas, base diferente —
+  em vez de tentar.
+- Ao medir alocação por tecla, verifique a integridade por **comprimento** no
+  laço e por igualdade completa uma vez no fim. Comparar duas strings de um
+  milhão de caracteres materializa as duas, e o número medido vira o do harness.
+- Rolar o caret para dentro da tela é efeito de ele **se mover**, nunca de ele
+  ser lido. `selectionchange` também dispara quando o foco volta para o editor;
+  revelar ali arrasta o leitor para onde o caret estiver.
+- Um `scrollTop` em pixels pertence ao layout em que foi medido. Restaure-o
+  quando a nota **volta** para a tela, não enquanto ela está nela — durante um
+  resize o engine é dono da posição e a corrige por linha.
+- Um scroll que o próprio view escreveu não é leitura escolhida pelo usuário e
+  não deve ser persistido. A classificação sai do view, porque um listener
+  registrado de fora pode rodar antes do dele.
 - Não reintroduzir um `contenteditable` com uma árvore para todas as linhas.
 - Não montar o documento de leitura inteiro no DOM. O custo dominante é layout,
   não parsing nem construção de nós, e ele volta inteiro junto com a árvore.

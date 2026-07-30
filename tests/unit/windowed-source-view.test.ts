@@ -97,6 +97,42 @@ describe('windowed source view', () => {
     }
   }
 
+  it('removes every listener and observer it installed when disposed', () => {
+    const root = editorRoot();
+    const added: [string, EventListenerOrEventListenerObject][] = [];
+    const removed: [string, EventListenerOrEventListenerObject][] = [];
+    const addSpy = vi
+      .spyOn(root, 'addEventListener')
+      .mockImplementation((type, listener) => {
+        added.push([type, listener as EventListenerOrEventListenerObject]);
+      });
+    const removeSpy = vi
+      .spyOn(root, 'removeEventListener')
+      .mockImplementation((type, listener) => {
+        removed.push([type, listener as EventListenerOrEventListenerObject]);
+      });
+    const view = new WindowedSourceView(root, {
+      ariaLabel: 'Editor',
+      readOnly: false,
+      selection: { direction: 'none', end: 0, start: 0 },
+      source: 'first\nsecond',
+    });
+    const disconnected = ResizeObserverStub.instances.map(() => false);
+    ResizeObserverStub.instances.forEach((observer, index) => {
+      vi.spyOn(observer, 'disconnect').mockImplementation(() => {
+        disconnected[index] = true;
+      });
+    });
+
+    expect(added.length).toBeGreaterThan(0);
+    view.dispose();
+
+    expect(removed).toEqual(added);
+    expect(disconnected.every(Boolean)).toBe(true);
+    addSpy.mockRestore();
+    removeSpy.mockRestore();
+  });
+
   it('remeasures resized rows and invalidates measurements on layout reset', () => {
     const view = createView();
     const first = view.getVisibleLineElements()[0]!;
@@ -336,6 +372,82 @@ describe('windowed source view', () => {
     expect(root.scrollTop).toBe(settledScrollTop + 24);
   });
 
+  it('reveals a scheduled caret in the next frame, not inside the edit', () => {
+    const source = Array.from(
+      { length: 900 },
+      (_, index) => `line ${index}`,
+    ).join('\n');
+    const view = createView(source);
+    const root = view.input.closest(
+      '.markdown-source__editor',
+    ) as HTMLDivElement;
+
+    root.scrollTop = 24 * 400;
+    root.dispatchEvent(new Event('scroll'));
+    flushFrames();
+    const readingPosition = root.scrollTop;
+
+    const target = view.getModel().lineStarts[100]!;
+    view.scheduleRevealOffset(target);
+
+    // Reading geometry back is what a keystroke must not pay for; nothing may
+    // have moved before the frame runs.
+    expect(root.scrollTop).toBe(readingPosition);
+
+    flushFrames();
+
+    expect(root.scrollTop).toBeLessThan(readingPosition);
+  });
+
+  it('does not scroll the caret into view when the selection is only re-read', () => {
+    const source = Array.from(
+      { length: 900 },
+      (_, index) => `line ${index}`,
+    ).join('\n');
+    const view = createView(source);
+    const root = view.input.closest(
+      '.markdown-source__editor',
+    ) as HTMLDivElement;
+
+    // The reader leaves the caret near the top and scrolls far past it, which
+    // is the state a note is in when a tab or pane is opened beside it.
+    view.writeSelection({ direction: 'none', end: 0, start: 0 });
+    flushFrames();
+    root.scrollTop = 24 * 400;
+    root.dispatchEvent(new Event('scroll'));
+    flushFrames();
+    const readingPosition = root.scrollTop;
+
+    // Focus coming back to the editor makes the document emit `selectionchange`
+    // even though the caret never moved.
+    expect(view.syncSelectionFromInput()).toEqual({
+      direction: 'none',
+      end: 0,
+      start: 0,
+    });
+    flushFrames();
+
+    expect(root.scrollTop).toBe(readingPosition);
+
+    // A caret that actually moves must still be followed.
+    const target = view.getModel().lineStarts[500]!;
+    view.input.setSelectionRange(
+      view.captureInputMirror().selectionStart,
+      view.captureInputMirror().selectionEnd,
+    );
+    view.writeSelection({ direction: 'none', end: target, start: target });
+    flushFrames();
+    root.scrollTop = 24 * 800;
+    root.dispatchEvent(new Event('scroll'));
+    flushFrames();
+    view.input.setSelectionRange(0, 0);
+
+    view.syncSelectionFromInput();
+    flushFrames();
+
+    expect(root.scrollTop).toBeLessThan(24 * 800);
+  });
+
   it('coalesces duplicate layout notifications and ignores hidden geometry', () => {
     const view = createView(
       Array.from({ length: 500 }, (_, index) => `line ${index}`).join('\n'),
@@ -452,6 +564,9 @@ describe('windowed source view', () => {
       'end',
     );
     expect(view.readInputEdit(source, mirror)).toEqual({
+      // The reported edit is what the document model applies without reading
+      // the note, so the offsets matter as much as the resulting text.
+      change: { from: source.length, insert: '漢字', to: source.length },
       content: `${source}漢字`,
       inserted: '漢字',
       selection: {

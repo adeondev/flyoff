@@ -33,6 +33,9 @@
     "test:twine-live": "node --env-file=.env.local --import tsx scripts/evaluate-twine-live.ts",
     "test:e2e": "playwright test",
     "benchmark:large-notes": "electron --no-sandbox --ozone-platform=headless --disable-gpu scripts/benchmark-large-notes.cjs",
+    "benchmark:compare": "node scripts/benchmark-compare.mjs",
+    "benchmark:scroll-anchor": "electron --no-sandbox --ozone-platform=headless --disable-gpu scripts/scroll-anchor-probe.cjs",
+    "profile:keystroke": "electron --no-sandbox --ozone-platform=headless --disable-gpu scripts/keystroke-latency.cjs",
     "assets:twemoji": "node scripts/sync-twemoji-assets.mjs",
     "seed:apollo-11": "tsx scripts/seed-apollo-11.ts",
     "verify": "npm run lint && npm run typecheck && npm run test && npm run test:native"
@@ -81,6 +84,7 @@
     "eslint-plugin-react-hooks": "7.1.1",
     "globals": "17.7.0",
     "jsdom": "29.1.1",
+    "monaco-editor": "^0.55.1",
     "node-loader": "2.1.0",
     "style-loader": "4.0.0",
     "ts-loader": "9.6.2",

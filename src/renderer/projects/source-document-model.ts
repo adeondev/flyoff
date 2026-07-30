@@ -22,6 +22,16 @@ export interface SourceDocumentModel {
 }
 
 export interface SourceDocumentUpdateHint {
+  /**
+   * The exact edit, when the caller already knows it.
+   *
+   * Without it the model has to find the change by reading the new document
+   * text, and that first character read is what makes V8 materialise the whole
+   * string — measured at 2,59 MB allocated per keystroke on a 1,2 M character
+   * note, with a collection every ~11 keys. With it, a single-line edit touches
+   * only the line it lands on.
+   */
+  change?: { from: number; insert: string; to: number };
   nextSelection: {
     end: number;
     start: number;
@@ -32,6 +42,24 @@ export interface SourceDocumentUpdateHint {
   };
 }
 
+
+/**
+ * The line-local edit path is new; the derivation-from-text path it short
+ * circuits is kept intact behind this switch so the two can be compared and so
+ * it can be turned off without a rebuild if it ever misbehaves.
+ */
+let localChangePathEnabled = true;
+
+/** Counts fast-path applications, so a test can prove it was exercised. */
+export const sourceDocumentModelDiagnostics = { localChangeApplied: 0 };
+
+export function setLocalSourceChangePathEnabled(enabled: boolean): void {
+  localChangePathEnabled = enabled;
+}
+
+export function isLocalSourceChangePathEnabled(): boolean {
+  return localChangePathEnabled;
+}
 
 function lineGraphemeSpan(
   line: HighlightedSourceLine,
@@ -199,6 +227,121 @@ function containsLineBreak(
   return offset !== -1 && offset < end;
 }
 
+/**
+ * Rebuild the model around a replacement that stays inside one line.
+ *
+ * Everything here works on the affected line and the offset indexes; the
+ * document text is stored, never read.
+ */
+function replaceSingleLine(
+  current: SourceDocumentModel,
+  source: string,
+  lineIndex: number,
+  nextLine: HighlightedSourceLine,
+  sourceDelta: number,
+): SourceDocumentModel {
+  const previousLine = current.lines[lineIndex]!;
+  const nextLines = current.lines.slice();
+  nextLines[lineIndex] = nextLine;
+
+  let fenceState = nextLine.fenceAfter;
+  let endLine = lineIndex + 1;
+  while (
+    endLine < nextLines.length &&
+    current.lines[endLine]!.fenceBefore !== fenceState
+  ) {
+    const previous = current.lines[endLine]!;
+    const highlighted = highlightSourceLine(previous.source, fenceState);
+    adoptSourceLineGraphemeCount(highlighted, previous.graphemeCount);
+    nextLines[endLine] = highlighted;
+    fenceState = highlighted.fenceAfter;
+    endLine += 1;
+  }
+
+  const lineStarts = current.lineStarts.slice();
+  for (let index = lineIndex + 1; index < lineStarts.length; index += 1) {
+    lineStarts[index] = lineStarts[index]! + sourceDelta;
+  }
+
+  const hasLineBreak = lineIndex + 1 < nextLines.length;
+  const previousGraphemes = lineGraphemeSpan(previousLine, hasLineBreak);
+  const nextGraphemes = lineGraphemeSpan(nextLine, hasLineBreak);
+  const graphemeDelta = nextGraphemes - previousGraphemes;
+  const lineGraphemeStarts = current.lineGraphemeStarts.slice();
+  for (
+    let index = lineIndex + 1;
+    index < lineGraphemeStarts.length;
+    index += 1
+  ) {
+    lineGraphemeStarts[index] = lineGraphemeStarts[index]! + graphemeDelta;
+  }
+
+  return {
+    change: {
+      endLine,
+      full: false,
+      previousEndLine: endLine,
+      startLine: lineIndex,
+    },
+    lineGraphemeStarts,
+    lines: nextLines,
+    lineStarts,
+    source,
+  };
+}
+
+/**
+ * Apply an edit the caller described exactly, without reading the document.
+ *
+ * This is the keystroke path. It reads `source.length`, which is O(1) even on a
+ * rope, and otherwise touches only the line the edit lands on — so V8 is never
+ * asked to materialise the new document string, and the model does no work
+ * proportional to the size of the note.
+ */
+function applyKnownSourceChange(
+  current: SourceDocumentModel,
+  source: string,
+  change: { from: number; insert: string; to: number },
+): SourceDocumentModel | undefined {
+  const { from, insert, to } = change;
+  if (from < 0 || to < from || to > current.source.length) {
+    return undefined;
+  }
+  const sourceDelta = insert.length - (to - from);
+  if (source.length !== current.source.length + sourceDelta) {
+    return undefined;
+  }
+  // A line break on either side changes how many lines exist, which the single
+  // line path cannot express.
+  if (insert.includes('\n') || insert.includes('\r')) {
+    return undefined;
+  }
+
+  const lineIndex = sourceLineIndexAtOffset(current, from);
+  const previousLine = current.lines[lineIndex];
+  const lineStart = current.lineStarts[lineIndex];
+  if (!previousLine || lineStart === undefined) {
+    return undefined;
+  }
+  const lineEnd = lineStart + previousLine.source.length;
+  if (to > lineEnd) {
+    return undefined;
+  }
+
+  const localStart = from - lineStart;
+  const localEnd = to - lineStart;
+  const nextLineSource =
+    previousLine.source.slice(0, localStart) +
+    insert +
+    previousLine.source.slice(localEnd);
+  const nextLine = highlightSourceLine(
+    nextLineSource,
+    previousLine.fenceBefore,
+  );
+  sourceDocumentModelDiagnostics.localChangeApplied += 1;
+  return replaceSingleLine(current, source, lineIndex, nextLine, sourceDelta);
+}
+
 function updateSingleSourceLine(
   current: SourceDocumentModel,
   source: string,
@@ -233,61 +376,11 @@ function updateSingleSourceLine(
     return undefined;
   }
 
-  const nextLines = current.lines.slice();
   const nextLine = highlightSourceLine(
     source.slice(lineStart, nextLineEnd),
     previousLine.fenceBefore,
   );
-  nextLines[lineIndex] = nextLine;
-
-  let fenceState = nextLine.fenceAfter;
-  let endLine = lineIndex + 1;
-  while (
-    endLine < nextLines.length &&
-    current.lines[endLine]!.fenceBefore !== fenceState
-  ) {
-    const previous = current.lines[endLine]!;
-    const highlighted = highlightSourceLine(previous.source, fenceState);
-    adoptSourceLineGraphemeCount(highlighted, previous.graphemeCount);
-    nextLines[endLine] = highlighted;
-    fenceState = highlighted.fenceAfter;
-    endLine += 1;
-  }
-
-  const lineStarts = current.lineStarts.slice();
-  for (let index = lineIndex + 1; index < lineStarts.length; index += 1) {
-    lineStarts[index] = lineStarts[index]! + sourceDelta;
-  }
-
-  const hasLineBreak = lineIndex + 1 < nextLines.length;
-  const previousGraphemes = lineGraphemeSpan(
-    previousLine,
-    hasLineBreak,
-  );
-  const nextGraphemes = lineGraphemeSpan(nextLine, hasLineBreak);
-  const graphemeDelta = nextGraphemes - previousGraphemes;
-  const lineGraphemeStarts = current.lineGraphemeStarts.slice();
-  for (
-    let index = lineIndex + 1;
-    index < lineGraphemeStarts.length;
-    index += 1
-  ) {
-    lineGraphemeStarts[index] =
-      lineGraphemeStarts[index]! + graphemeDelta;
-  }
-
-  return {
-    change: {
-      endLine,
-      full: false,
-      previousEndLine: endLine,
-      startLine: lineIndex,
-    },
-    lineGraphemeStarts,
-    lines: nextLines,
-    lineStarts,
-    source,
-  };
+  return replaceSingleLine(current, source, lineIndex, nextLine, sourceDelta);
 }
 
 export function createSourceDocumentModel(
@@ -316,6 +409,13 @@ export function updateSourceDocumentModel(
 ): SourceDocumentModel {
   if (source === current.source) {
     return current;
+  }
+
+  if (localChangePathEnabled && hint?.change) {
+    const local = applyKnownSourceChange(current, source, hint.change);
+    if (local) {
+      return local;
+    }
   }
 
   const textChange = sourceTextChange(current.source, source, hint);

@@ -42,6 +42,14 @@ interface WriteSelectionOptions {
 
 interface WindowedSourceViewOptions {
   ariaLabel: string;
+  /**
+   * Notified for every scroll of the editor, with whether the view produced it
+   * itself while re-anchoring. Listening here rather than on the element keeps
+   * the classification deterministic: a listener added elsewhere may run before
+   * the view has had the chance to recognise its own write.
+   */
+  onScroll?: (scrollTop: number, selfInduced: boolean) => void;
+  onScrollEnd?: (scrollTop: number, selfInduced: boolean) => void;
   readOnly: boolean;
   selection: SourceSelection;
   source: string;
@@ -261,6 +269,7 @@ export class WindowedSourceView implements SourceViewAdapter {
   private readonly handleInputFocusChange: () => void;
   private readonly handleRootFocus: (event: FocusEvent) => void;
   private readonly handleScroll: () => void;
+  private readonly handleScrollEnd: () => void;
   private readonly handleWindowResize: () => void;
   private activeLine = -1;
   private animationFrame?: number;
@@ -268,6 +277,8 @@ export class WindowedSourceView implements SourceViewAdapter {
   private layoutResetFrame?: number;
   private resizeAnchor?: { fraction: number; line: number };
   private resizeAnchorTimer?: number;
+  private layoutResetDeferred = false;
+  private pendingRevealOffset?: number;
   private programmaticScrollTop?: number;
   private scrollMeasurementTimer?: number;
   private composing = false;
@@ -299,6 +310,13 @@ export class WindowedSourceView implements SourceViewAdapter {
   private selection: SourceSelection;
   private selectionDirty = true;
   private scrolling = false;
+  /**
+   * Whether the scroll event being dispatched right now came from the view's
+   * own re-anchoring rather than from the reader. Listeners registered after
+   * the view's read it to avoid persisting a position the reader never chose;
+   * a pane animation writes one such position per frame.
+   */
+  private selfInducedScroll = false;
   private viewport: SourceViewport = {
     endLine: 0,
     startLine: 0,
@@ -359,6 +377,7 @@ export class WindowedSourceView implements SourceViewAdapter {
         this.programmaticScrollTop !== undefined &&
         Math.abs(this.root.scrollTop - this.programmaticScrollTop) <= 1;
       this.programmaticScrollTop = undefined;
+      this.selfInducedScroll = selfInduced;
       this.measurementDirty = true;
       if (!selfInduced) {
         // The reader is in control now; stop holding a resize anchor against
@@ -377,6 +396,10 @@ export class WindowedSourceView implements SourceViewAdapter {
         }
       }
       this.requestRender();
+      options.onScroll?.(this.root.scrollTop, selfInduced);
+    };
+    this.handleScrollEnd = () => {
+      options.onScrollEnd?.(this.root.scrollTop, this.selfInducedScroll);
     };
     this.handleWindowResize = () => this.requestLayoutReset();
     this.handleInputFocusChange = () => {
@@ -420,6 +443,9 @@ export class WindowedSourceView implements SourceViewAdapter {
     );
     this.input.addEventListener('compositionend', this.handleCompositionEnd);
     root.addEventListener('scroll', this.handleScroll, { passive: true });
+    root.addEventListener('scrollend', this.handleScrollEnd, {
+      passive: true,
+    });
     root.addEventListener('focus', this.handleRootFocus);
     root.ownerDocument.defaultView?.addEventListener(
       'resize',
@@ -486,6 +512,11 @@ export class WindowedSourceView implements SourceViewAdapter {
 
   getChangeRange() {
     return this.model.change;
+  }
+
+  /** True while handling a scroll event the view itself produced. */
+  isSelfInducedScroll(): boolean {
+    return this.selfInducedScroll;
   }
 
   getVisibleLineElements(): readonly HTMLElement[] {
@@ -583,7 +614,6 @@ export class WindowedSourceView implements SourceViewAdapter {
     this.render(effectiveScrollTop, !this.composing);
   }
 
-
   syncSelectionFromInput(): SourceSelection {
     const start = this.input.selectionStart ?? 0;
     const end = this.input.selectionEnd ?? start;
@@ -601,12 +631,19 @@ export class WindowedSourceView implements SourceViewAdapter {
       ),
       this.model.source.length,
     );
-    if (!sameSelection(this.selection, next)) {
+    // Scrolling the caret into view is an effect of the caret *moving*, never
+    // of the caret being read. `selectionchange` also fires when focus simply
+    // returns to the editor — opening a tab, closing a pane — and revealing
+    // there dragged the reader back to wherever the caret happened to sit.
+    const moved = !sameSelection(this.selection, next);
+    if (moved) {
       this.selectionDirty = true;
     }
     this.selection = next;
     this.updateActiveLine();
-    this.revealOffset(selectionFocus(this.selection));
+    if (moved) {
+      this.revealOffset(selectionFocus(this.selection));
+    }
     this.requestRender();
     return this.selection;
   }
@@ -756,6 +793,20 @@ export class WindowedSourceView implements SourceViewAdapter {
     );
   }
 
+  /**
+   * Reveal the caret in the next frame instead of now.
+   *
+   * Revealing reads the caret rectangle back out of the DOM, and on the
+   * keystroke path that read lands right after the edit was written — a forced
+   * layout in the middle of the input. Measured over 200 keys on a 20.000 line
+   * note it was 9,7% of the time spent per key, with a p99 of 8,9 ms. The frame
+   * still runs before paint, so the caret is on screen at the same time.
+   */
+  scheduleRevealOffset(offset: number): void {
+    this.pendingRevealOffset = offset;
+    this.requestRender();
+  }
+
   revealOffset(offset: number): void {
     const lineIndex = sourceLineIndexAtOffset(this.model, offset);
     const top = this.heightMap.offsetAtIndex(lineIndex);
@@ -835,6 +886,7 @@ export class WindowedSourceView implements SourceViewAdapter {
       this.handleCompositionEnd,
     );
     this.root.removeEventListener('scroll', this.handleScroll);
+    this.root.removeEventListener('scrollend', this.handleScrollEnd);
     this.root.removeEventListener('focus', this.handleRootFocus);
     this.root.ownerDocument.defaultView?.removeEventListener(
       'resize',
@@ -1179,8 +1231,14 @@ export class WindowedSourceView implements SourceViewAdapter {
       this.root.clientWidth <= 0 ||
       this.root.clientHeight <= 0
     ) {
+      // No box to measure against: a pane being taken apart, a tab going
+      // hidden. Dropping the request outright left the view anchored to the
+      // width it had before and the reader somewhere else entirely, so it is
+      // remembered and retried as soon as there is geometry again.
+      this.layoutResetDeferred = true;
       return;
     }
+    this.layoutResetDeferred = false;
     const signature = this.readLayoutSignature();
     if (signature === this.layoutSignature) {
       this.forceRender = true;
@@ -1336,6 +1394,11 @@ export class WindowedSourceView implements SourceViewAdapter {
     }
     this.animationFrame = view.requestAnimationFrame(() => {
       this.animationFrame = undefined;
+      const reveal = this.pendingRevealOffset;
+      if (reveal !== undefined) {
+        this.pendingRevealOffset = undefined;
+        this.revealOffset(reveal);
+      }
       this.render();
     });
   }
@@ -1350,6 +1413,14 @@ export class WindowedSourceView implements SourceViewAdapter {
   private render(knownScrollTop?: number, writeOnly = false): void {
     if (this.disposed) {
       return;
+    }
+    if (
+      this.layoutResetDeferred &&
+      !writeOnly &&
+      this.root.clientWidth > 0 &&
+      this.root.clientHeight > 0
+    ) {
+      this.resetLayout();
     }
     const paddingTop = this.paddingTop();
     const scrollTop =

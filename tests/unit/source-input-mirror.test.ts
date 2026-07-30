@@ -5,7 +5,34 @@ import {
   createSourceInputMirror,
   SOURCE_INPUT_MIRROR_MAX_CODE_UNITS,
   sourceSelectionFromMirror,
+  type SourceInputMirror,
+  type SourceInputMirrorSelection,
 } from '../../src/renderer/projects/source-engine/source-input-mirror';
+
+/**
+ * Every edit has to describe itself: splicing the reported `change` into the
+ * original source must reproduce `content`. The document model applies a
+ * keystroke from that description alone, without reading the document, so the
+ * invariant is checked on every case here rather than in one place.
+ */
+function applyEdit(
+  source: string,
+  mirror: SourceInputMirror,
+  nextValue: string,
+  selection: SourceInputMirrorSelection,
+) {
+  const result = applySourceInputMirrorEdit(
+    source,
+    mirror,
+    nextValue,
+    selection,
+  );
+  const { change, ...rest } = result;
+  expect(
+    source.slice(0, change.from) + change.insert + source.slice(change.to),
+  ).toBe(result.content);
+  return rest;
+}
 
 describe('source input mirror', () => {
   it('places carets near the center, start and end of the source', () => {
@@ -152,7 +179,7 @@ describe('source input mirror', () => {
     });
 
     expect(
-      applySourceInputMirrorEdit(
+      applyEdit(
         'abcdef',
         insertionMirror,
         'abcXdef',
@@ -170,7 +197,7 @@ describe('source input mirror', () => {
       start: 2,
     });
     expect(
-      applySourceInputMirrorEdit(
+      applyEdit(
         'abcdef',
         deletionMirror,
         'abef',
@@ -192,7 +219,7 @@ describe('source input mirror', () => {
     });
 
     expect(
-      applySourceInputMirrorEdit(
+      applyEdit(
         source,
         mirror,
         `${mirror.value}X`,
@@ -208,7 +235,7 @@ describe('source input mirror', () => {
       selection: { direction: 'none', end: 1, start: 1 },
     });
     expect(
-      applySourceInputMirrorEdit(
+      applyEdit(
         source,
         mirror,
         mirror.value.slice(0, -1),
@@ -236,7 +263,7 @@ describe('source input mirror', () => {
     const nextValue = `${mirror.value.slice(0, 6)}${composed}${mirror.value.slice(6)}`;
 
     expect(
-      applySourceInputMirrorEdit(source, mirror, nextValue, {
+      applyEdit(source, mirror, nextValue, {
         direction: 'backward',
         end: 6 + composed.length,
         start: 6,
@@ -259,7 +286,7 @@ describe('source input mirror', () => {
       4,
     );
     expect(
-      applySourceInputMirrorEdit('A😀B', emojiMirror, 'A😁B', {
+      applyEdit('A😀B', emojiMirror, 'A😁B', {
         direction: 'none',
         end: 3,
         start: 3,
@@ -281,7 +308,7 @@ describe('source input mirror', () => {
       value: 'a\nb',
     });
     expect(
-      applySourceInputMirrorEdit('a\r\nb', crlfMirror, 'a\nb', {
+      applyEdit('a\r\nb', crlfMirror, 'a\nb', {
         direction: 'none',
         end: 2,
         start: 2,
@@ -353,7 +380,7 @@ describe('source input mirror', () => {
       insertionMirror.value.slice(insertionMirror.selectionEnd);
 
     expect(
-      applySourceInputMirrorEdit(source, insertionMirror, insertedValue, {
+      applyEdit(source, insertionMirror, insertedValue, {
         direction: 'none',
         end: insertionMirror.selectionStart + 1,
         start: insertionMirror.selectionStart + 1,
@@ -374,7 +401,7 @@ describe('source input mirror', () => {
       start: source.length,
     });
     expect(
-      applySourceInputMirrorEdit(source, deletionMirror, 'a\nbc', {
+      applyEdit(source, deletionMirror, 'a\nbc', {
         direction: 'none',
         end: 3,
         start: 3,
@@ -405,7 +432,7 @@ describe('source input mirror', () => {
     expect(mirror.start).toBeGreaterThan(0);
     expect(mirror.value).not.toContain('\r');
     expect(
-      applySourceInputMirrorEdit(source, mirror, nextValue, {
+      applyEdit(source, mirror, nextValue, {
         direction: 'none',
         end: mirror.selectionStart + 1,
         start: mirror.selectionStart + 1,
@@ -455,7 +482,7 @@ describe('source input mirror', () => {
       '漢字' +
       mirror.value.slice(mirror.selectionEnd);
     expect(
-      applySourceInputMirrorEdit(source, mirror, composed, {
+      applyEdit(source, mirror, composed, {
         direction: 'none',
         end: mirror.selectionStart + 2,
         start: mirror.selectionStart + 2,
@@ -498,7 +525,7 @@ describe('source input mirror', () => {
     });
 
     expect(
-      applySourceInputMirrorEdit(
+      applyEdit(
         source,
         mirror,
         mirror.value,

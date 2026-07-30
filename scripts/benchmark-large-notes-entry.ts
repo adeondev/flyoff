@@ -1,6 +1,16 @@
-import { markdown } from '@codemirror/lang-markdown';
-import { EditorState } from '@codemirror/state';
-import { EditorView } from '@codemirror/view';
+import {
+  benchmarkWheelScroll,
+  forceLayout,
+  nextFrame,
+  nextTask,
+  summarize,
+  type BenchmarkResult,
+} from './benchmark/harness';
+import {
+  benchmarkCodeMirror,
+  benchmarkMonaco,
+  type ReferenceEditorBenchmark,
+} from './benchmark/reference-editors';
 
 import { renderMarkdownInto } from '../src/renderer/projects/markdown-render';
 import { SOURCE_INPUT_MIRROR_MAX_CODE_UNITS } from '../src/renderer/projects/source-engine/source-input-mirror';
@@ -25,15 +35,6 @@ import {
   sourceSpellcheckViewportRange,
 } from '../src/renderer/projects/source-spellcheck';
 import { serializeImageDirective } from '../src/shared/markdown';
-
-interface BenchmarkResult {
-  iterations: number;
-  maximumIndex: number;
-  maximumMs: number;
-  medianMs: number;
-  minimumMs: number;
-  p95Ms: number;
-}
 
 interface RenderBenchmark {
   coldDurationMs: number;
@@ -64,9 +65,11 @@ interface WindowedRenderBenchmark {
     inputMutation: BenchmarkResult;
     inputRead: BenchmarkResult;
     layout: BenchmarkResult;
+    reveal: BenchmarkResult;
     sourceUpdate: BenchmarkResult;
   };
   initial: BenchmarkResult;
+  keystroke: BenchmarkResult;
   interaction: {
     caretRect: BenchmarkResult;
     selectionRoundTrip: BenchmarkResult;
@@ -101,29 +104,6 @@ interface SpellcheckBenchmark {
   timing: BenchmarkResult;
 }
 
-/**
- * CodeMirror 6 on the same fixture, as an external reference point.
- *
- * It is a devDependency of the benchmark only — the application never imports
- * it and it is not in any shipped bundle. It exists so Flyoff's numbers can be
- * read against an editor whose large-document behaviour is well understood,
- * instead of only against Flyoff's own previous numbers.
- */
-interface ReferenceEditorBenchmark {
-  coldDurationMs: number;
-  descendantNodes: number;
-  edit: BenchmarkResult;
-  initial: BenchmarkResult;
-  scroll: {
-    frameTime: BenchmarkResult;
-  };
-  scrollHeight: number;
-  wheelScroll: {
-    frameTime: BenchmarkResult;
-    stepPx: number;
-  };
-}
-
 interface WindowedPreviewBenchmark extends RenderBenchmark {
   blocks: number;
   mountedBlocks: number;
@@ -152,25 +132,12 @@ declare global {
   }
 }
 
-function summarize(samples: readonly number[]): BenchmarkResult {
-  const sorted = [...samples].sort((left, right) => left - right);
-  const maximumMs = sorted.at(-1) ?? 0;
-  return {
-    iterations: sorted.length,
-    // Which sample spiked says more than the spike itself: a first-frame
-    // outlier is a warm-up, a mid-pass one is work landing on the wrong frame.
-    maximumIndex: samples.indexOf(maximumMs),
-    maximumMs,
-    medianMs: sorted[Math.floor(sorted.length / 2)] ?? 0,
-    minimumMs: sorted[0] ?? 0,
-    p95Ms: sorted[Math.ceil(sorted.length * 0.95) - 1] ?? 0,
-  };
-}
-
-function forceLayout(element: HTMLElement): void {
-  void element.offsetHeight;
-  void element.scrollHeight;
-}
+/**
+ * Enough keystrokes for a p95 that means something, plus a warm-up long enough
+ * for the first-key allocations and the JIT to stop dominating.
+ */
+const WINDOWED_EDIT_SAMPLES = 60;
+const WINDOWED_EDIT_WARMUP = 10;
 
 function benchmarkHost(kind: 'preview' | 'source'): {
   host: HTMLElement;
@@ -296,10 +263,6 @@ function validateStableLayout(): void {
   }
 }
 
-async function nextFrame(): Promise<void> {
-  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-}
-
 async function benchmarkScroll(target: HTMLElement): Promise<{
   distancePx: number;
   frameTime: BenchmarkResult;
@@ -331,39 +294,6 @@ async function benchmarkScroll(target: HTMLElement): Promise<{
     heightBeforePx,
     heightChangePx: heightAfterPx - heightBeforePx,
   };
-}
-
-/**
- * Scroll at a rate a person can actually produce.
- *
- * The full-pass scroll covers the whole document in 120 frames, which on a
- * 20.000 line note is about 1.900 px per frame — far more than the mounted
- * window, so every frame remounts all of it. That is a useful worst case but
- * it is not what a wheel or a trackpad does. A wheel notch is roughly 100 px,
- * so this pass keeps the window mostly intact between frames and reports what
- * ordinary reading costs.
- */
-async function benchmarkWheelScroll(
-  target: HTMLElement,
-  stepPx = 120,
-): Promise<WindowedRenderBenchmark['wheelScroll']> {
-  target.scrollTop = 0;
-  target.dispatchEvent(new Event('scroll'));
-  await nextFrame();
-  await nextFrame();
-
-  const samples: number[] = [];
-  let previous = performance.now();
-  for (let index = 1; index <= 90; index += 1) {
-    target.scrollTop = stepPx * index;
-    target.dispatchEvent(new Event('scroll'));
-    await nextFrame();
-    const current = performance.now();
-    samples.push(current - previous);
-    previous = current;
-  }
-
-  return { frameTime: summarize(samples), stepPx };
 }
 
 async function benchmarkWindowedScroll(
@@ -559,97 +489,6 @@ async function benchmarkWindowedPreview(
   return result;
 }
 
-async function benchmarkCodeMirror(
-  source: string,
-): Promise<ReferenceEditorBenchmark> {
-  // Line wrapping on, to match the Flyoff source editor. Without it CodeMirror
-  // can treat every line as one row and skip the measurement Flyoff has to do.
-  const extensions = [markdown(), EditorView.lineWrapping];
-
-  function host(): HTMLElement {
-    const element = document.createElement('main');
-    element.style.width = '1000px';
-    element.style.height = '650px';
-    document.body.appendChild(element);
-    return element;
-  }
-
-  const initialSamples: number[] = [];
-  for (let iteration = 0; iteration < 7; iteration += 1) {
-    const parent = host();
-    const startedAt = performance.now();
-    const view = new EditorView({
-      parent,
-      state: EditorState.create({ doc: source, extensions }),
-    });
-    forceLayout(view.scrollDOM);
-    await nextFrame();
-    forceLayout(view.scrollDOM);
-    initialSamples.push(performance.now() - startedAt);
-    view.destroy();
-    parent.remove();
-  }
-
-  const parent = host();
-  const view = new EditorView({
-    parent,
-    state: EditorState.create({ doc: source, extensions }),
-  });
-  const scroller = view.scrollDOM;
-  forceLayout(scroller);
-  await nextFrame();
-  forceLayout(scroller);
-
-  const marker = 'vida cotidiana';
-  const editOffset = Math.max(
-    0,
-    source.indexOf(marker, Math.floor(source.length / 3)),
-  );
-  const editSamples: number[] = [];
-  for (let iteration = 0; iteration < 11; iteration += 1) {
-    const startedAt = performance.now();
-    view.dispatch({
-      changes: { from: editOffset, insert: 'x' },
-      selection: { anchor: editOffset + 1 },
-    });
-    forceLayout(scroller);
-    editSamples.push(performance.now() - startedAt);
-    await nextFrame();
-  }
-
-  const descendantNodes = scroller.querySelectorAll('*').length;
-
-  scroller.scrollTop = 0;
-  await nextFrame();
-  await nextFrame();
-  const distancePx = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
-  const flingSamples: number[] = [];
-  let previous = performance.now();
-  for (let index = 1; index <= 120; index += 1) {
-    scroller.scrollTop = (distancePx * index) / 120;
-    await nextFrame();
-    const current = performance.now();
-    flingSamples.push(current - previous);
-    previous = current;
-  }
-
-  const wheelScroll = await benchmarkWheelScroll(scroller);
-  const scrollHeight = scroller.scrollHeight;
-
-  view.destroy();
-  parent.remove();
-
-  return {
-    coldDurationMs: initialSamples[0] ?? 0,
-    descendantNodes,
-    edit: summarize(editSamples.slice(2)),
-    initial: summarize(initialSamples.slice(2)),
-    scroll: { frameTime: summarize(flingSamples) },
-    scrollHeight,
-    wheelScroll,
-  };
-}
-
 function benchmarkSourceInteraction(
   target: HTMLElement,
   source: string,
@@ -824,9 +663,15 @@ async function benchmarkWindowedSource(
     const inputReadSamples: number[] = [];
     const sourceUpdateSamples: number[] = [];
     const layoutSamples: number[] = [];
+    const revealSamples: number[] = [];
+    const keystrokeSamples: number[] = [];
     let currentSource = source;
     let replacedLength = marker.length;
-    for (let iteration = 0; iteration < 11; iteration += 1) {
+    for (
+      let iteration = 0;
+      iteration < WINDOWED_EDIT_SAMPLES;
+      iteration += 1
+    ) {
       const inserted = `vida cotidiana ${iteration}`;
       view.writeSelection({
         direction: 'forward',
@@ -858,13 +703,20 @@ async function benchmarkWindowedSource(
         },
       });
       const sourceUpdatedAt = performance.now();
+      // What the application actually pays per key: the editor also scrolls the
+      // caret back into view before handing the transaction to React. Measuring
+      // only `setSource` understated the latency a person feels.
+      view.revealOffset(edit.selection.end);
+      const revealedAt = performance.now();
       forceLayout(target);
       const layoutForcedAt = performance.now();
+      keystrokeSamples.push(layoutForcedAt - startedAt);
       inputMutationSamples.push(inputMutatedAt - startedAt);
       inputReadSamples.push(inputReadAt - inputMutatedAt);
       sourceUpdateSamples.push(sourceUpdatedAt - inputReadAt);
-      layoutSamples.push(layoutForcedAt - sourceUpdatedAt);
-      editSamples.push(layoutForcedAt - startedAt);
+      revealSamples.push(revealedAt - sourceUpdatedAt);
+      layoutSamples.push(layoutForcedAt - revealedAt);
+      editSamples.push(sourceUpdatedAt - startedAt);
       currentSource = edit.content;
       replacedLength = inserted.length;
       const expected = `${before}${inserted}${after}`;
@@ -874,9 +726,17 @@ async function benchmarkWindowedSource(
       ) {
         throw new Error('Windowed source edit lost the complete model.');
       }
+      // A person does not type two keys inside one frame, and the reference
+      // editors are measured the same way. Without it the editor never reaches
+      // the point where deferred work runs, which measures a burst no keyboard
+      // produces and compares it against a paced one.
+      await nextFrame();
+      await nextTask();
     }
 
-    const lastSource = `${before}vida cotidiana 10${after}`;
+    const lastSource = `${before}vida cotidiana ${
+      WINDOWED_EDIT_SAMPLES - 1
+    }${after}`;
     if (
       currentSource !== lastSource ||
       view.getModel().source !== lastSource
@@ -901,14 +761,20 @@ async function benchmarkWindowedSource(
     return {
       coldDurationMs: initialSamples[0] ?? 0,
       descendantNodes: target.querySelectorAll('*').length,
-      edit: summarize(editSamples.slice(2)),
+      edit: summarize(editSamples.slice(WINDOWED_EDIT_WARMUP)),
       editBreakdown: {
-        inputMutation: summarize(inputMutationSamples.slice(2)),
-        inputRead: summarize(inputReadSamples.slice(2)),
-        layout: summarize(layoutSamples.slice(2)),
-        sourceUpdate: summarize(sourceUpdateSamples.slice(2)),
+        inputMutation: summarize(
+          inputMutationSamples.slice(WINDOWED_EDIT_WARMUP),
+        ),
+        inputRead: summarize(inputReadSamples.slice(WINDOWED_EDIT_WARMUP)),
+        layout: summarize(layoutSamples.slice(WINDOWED_EDIT_WARMUP)),
+        reveal: summarize(revealSamples.slice(WINDOWED_EDIT_WARMUP)),
+        sourceUpdate: summarize(
+          sourceUpdateSamples.slice(WINDOWED_EDIT_WARMUP),
+        ),
       },
       initial: summarize(initialSamples.slice(2)),
+      keystroke: summarize(keystrokeSamples.slice(WINDOWED_EDIT_WARMUP)),
       interaction,
       mountedLines,
       scroll,
@@ -998,7 +864,10 @@ window.runLargeNotesBenchmark = async (
   // about the shipped paths.
   const reference = options.skipReference
     ? {}
-    : { codemirror: await benchmarkCodeMirror(source) };
+    : {
+        codemirror: await benchmarkCodeMirror(source),
+        monaco: await benchmarkMonaco(source),
+      };
   const legacy = options.skipLegacy
     ? {}
     : {

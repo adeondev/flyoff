@@ -18,6 +18,13 @@ export interface SourceInputMirror {
 }
 
 export interface SourceInputMirrorEdit {
+  /**
+   * The edit itself, in document offsets. The mirror already knows exactly what
+   * was replaced, so handing it on lets the document model apply the change
+   * without deriving it back out of the text — which is what forced a
+   * whole-document scan and materialisation on every keystroke.
+   */
+  change: { from: number; insert: string; to: number };
   content: string;
   inserted: string;
   selection: SourceViewSelection;
@@ -359,6 +366,7 @@ export function applySourceInputMirrorEdit(
   });
   if (textareaValue === mirror.value) {
     return {
+      change: { from: 0, insert: '', to: 0 },
       content: source,
       inserted: '',
       selection: sourceSelectionFromMirror(
@@ -429,5 +437,14 @@ export function applySourceInputMirrorEdit(
               Math.max(0, nextSelection.start - diff.start),
             ),
         });
-  return { content, inserted, selection };
+  return {
+    change: {
+      from: replacement.start,
+      insert: inserted,
+      to: replacement.end,
+    },
+    content,
+    inserted,
+    selection,
+  };
 }
