@@ -135,7 +135,13 @@ test('keeps the reading position when a note is split into an adjacent pane', as
       args: [
         appPath,
         `--user-data-dir=${userDataPath}`,
-        '--no-sandbox',
+        // Every other spec gates this on Linux CI, and for a reason: the main
+        // process calls `app.enableSandbox()`, and passing `--no-sandbox`
+        // alongside it takes the browser process down with an access violation
+        // on Windows before the first window is created.
+        ...(process.platform === 'linux' && process.env.CI
+          ? ['--no-sandbox']
+          : []),
         ...(process.env.FLYOFF_E2E_HEADLESS
           ? ['--ozone-platform=headless', '--disable-gpu']
           : []),
