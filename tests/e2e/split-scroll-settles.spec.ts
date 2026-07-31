@@ -98,6 +98,51 @@ const installWatcher = () => {
     },
   });
 
+  // Coverage, sampled after every animation-frame callback for the frame. A
+  // sampler that re-registers itself inside `requestAnimationFrame` sits ahead
+  // of the view's own render in the queue and reads the previous frame's DOM,
+  // which reports lag the reader never saw.
+  const coverage: { gapPx: number; lines: number; t: number }[] = [];
+  (window as unknown as { __settleCoverage: typeof coverage }).__settleCoverage =
+    coverage;
+  const measureCoverage = () => {
+    const root = document.querySelector<HTMLElement>(
+      '.workspace-pane .markdown-source__editor',
+    );
+    if (root) {
+      const box = root.getBoundingClientRect();
+      const lines = root.querySelectorAll<HTMLElement>('.md-line');
+      const bands = 24;
+      const covered = new Array<boolean>(bands).fill(false);
+      for (const line of lines) {
+        const rect = line.getBoundingClientRect();
+        if (rect.bottom <= box.top || rect.top >= box.bottom) {
+          continue;
+        }
+        const from = Math.max(
+          0,
+          Math.floor(((rect.top - box.top) / box.height) * bands),
+        );
+        const to = Math.min(
+          bands - 1,
+          Math.ceil(((rect.bottom - box.top) / box.height) * bands) - 1,
+        );
+        for (let band = from; band <= to; band += 1) {
+          covered[band] = true;
+        }
+      }
+      coverage.push({
+        gapPx: Math.round(
+          (covered.filter((value) => !value).length / bands) * box.height,
+        ),
+        lines: lines.length,
+        t: Math.round(performance.now()),
+      });
+    }
+    requestAnimationFrame(() => setTimeout(measureCoverage, 0));
+  };
+  requestAnimationFrame(() => setTimeout(measureCoverage, 0));
+
   const sample = () => {
     const panes = document.querySelectorAll<HTMLElement>('.workspace-pane');
     panes.forEach((pane, paneIndex) => {
@@ -196,7 +241,7 @@ test('the note stops moving after a pane opens beside it', async () => {
     const page = await app.firstWindow();
     await page.waitForLoadState('domcontentloaded');
     await app.evaluate(({ BrowserWindow }) => {
-      BrowserWindow.getAllWindows()[0]?.setSize(1_600, 1_000);
+      BrowserWindow.getAllWindows()[0]?.setSize(1_400, 900);
     });
     await page.waitForFunction(() =>
       ['pt-BR', 'en-US'].includes(document.documentElement.lang),
@@ -262,11 +307,7 @@ test('the note stops moving after a pane opens beside it', async () => {
 
     // Read into the middle and leave the caret behind, as a reader would.
     await editor.evaluate((root) => {
-      root.scrollTop = Math.round(root.scrollHeight * 0.4);
-    });
-    await page.waitForTimeout(900);
-    await editor.evaluate((root) => {
-      root.scrollTop += 600;
+      root.scrollTop = Math.round(root.scrollHeight * 0.35);
     });
     await page.waitForTimeout(900);
 
@@ -281,6 +322,36 @@ test('the note stops moving after a pane opens beside it', async () => {
 
     const report = await page.evaluate(collectWatcher);
     console.log(`[settle] ${JSON.stringify(report)}`);
+
+    // The endpoint being right says nothing about the frames in between. The
+    // split rebuilds the height map into a new coordinate space and re-anchors
+    // the scroller into it; until a render moves the mounted lines to their new
+    // offsets, the viewport is looking at a region no line has been placed in.
+    // That frame is blank to the reader and invisible to a `scrollTop` check.
+    const frames = await page.evaluate(
+      () =>
+        (window as unknown as {
+          __settleCoverage: { gapPx: number; lines: number; t: number }[];
+        }).__settleCoverage,
+    );
+    const blank = frames.filter((frame) => frame.lines === 0);
+    const uncovered = frames.filter((frame) => frame.gapPx > 40);
+    console.log(
+      `[settle] frames=${frames.length} blank=${blank.length}` +
+        ` underCovered=${uncovered.length}` +
+        ` worst=${JSON.stringify(uncovered.slice(0, 4))}`,
+    );
+    expect(frames.length, 'the frame sampler produced no frames').toBeGreaterThan(
+      20,
+    );
+    expect(
+      blank.length,
+      `the editor rendered no lines at all on ${blank.length} frames`,
+    ).toBe(0);
+    expect(
+      uncovered.length,
+      `${uncovered.length} frames left a strip of the viewport with no text: ${JSON.stringify(uncovered.slice(0, 4))}`,
+    ).toBe(0);
 
     expect(
       report.writes,

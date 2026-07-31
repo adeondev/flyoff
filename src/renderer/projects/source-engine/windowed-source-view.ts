@@ -1298,7 +1298,16 @@ export class WindowedSourceView implements SourceViewAdapter {
     this.forceRender = true;
     this.measurementDirty = true;
     this.selectionDirty = true;
-    this.requestRender();
+    // Synchronously, in the same frame as the scroll write above.
+    //
+    // Rebuilding the height map moves every line to a new offset, and the
+    // re-anchor then moves the scroller into that new coordinate space. The
+    // mounted lines are still positioned by the old map until a render moves
+    // them, so deferring it to the next frame left exactly one frame where the
+    // scroller was looking at a region no line had been placed in yet — an
+    // 810 px viewport with 810 px of nothing in it, which is the blank flash a
+    // reader sees when a pane opens beside a note.
+    this.render();
   }
 
   /**
@@ -1502,6 +1511,13 @@ export class WindowedSourceView implements SourceViewAdapter {
     if (shouldMeasure) {
       this.measurementDirty = false;
       this.measureLines(scrollTop);
+      // Measuring replaces estimated heights with real ones, which can leave
+      // the mounted range too short to cover the viewport. Re-projecting here
+      // closes that strip in the same frame — but it has to be a projection,
+      // not another full render: calling `render` again read the scroll
+      // position and repainted the selection a second time per frame, and the
+      // forced layout that costs starved the frame budget outright.
+      this.coverViewportAfterMeasurement(scrollTop);
     }
     this.updateActiveLine();
     if (viewportDirty || this.selectionDirty) {
@@ -1516,6 +1532,41 @@ export class WindowedSourceView implements SourceViewAdapter {
         this.selectionDirty = false;
       }
     }
+  }
+
+  /**
+   * Re-mount the window against heights that were just measured.
+   *
+   * Only the projection and the mount: no scroll read, no selection paint, no
+   * measurement. One extra pass is enough because the heights it projects from
+   * are measured rather than estimated, and it stops as soon as the range it
+   * wants is the range already mounted.
+   */
+  private coverViewportAfterMeasurement(scrollTop: number): void {
+    const viewportHeight = Math.max(
+      this.lineHeight,
+      this.root.clientHeight || 800,
+    );
+    const overscan = Math.max(
+      viewportHeight * 0.5,
+      this.lineHeight * MIN_OVERSCAN_LINES,
+    );
+    const next = sourceViewport(this.heightMap, {
+      maximumLines: MAX_RENDERED_LINES,
+      overscan,
+      scrollTop,
+      viewportHeight,
+    });
+    if (
+      next.startLine === this.viewport.startLine &&
+      next.endLine === this.viewport.endLine
+    ) {
+      return;
+    }
+    this.viewport = next;
+    this.reconcileLines(next.startLine, next.endLine);
+    this.linesLayer.style.transform = `translateY(${Math.round(next.top)}px)`;
+    this.setCanvasHeight(next.totalHeight);
   }
 
   private reconcileLines(startLine: number, endLine: number): void {
