@@ -142,10 +142,56 @@ function mixedNoteFixture(): string {
   return parts.join('\n\n');
 }
 
+/**
+ * Blocks whose height is only known after an asynchronous load. Emoji render
+ * through `flyoff-asset://`, so the row they sit on is one height while the
+ * request is in flight and another once it resolves. A measurement taken
+ * before the load and trusted afterwards is what a converging loop cannot
+ * survive.
+ */
+function asyncNoteFixture(): string {
+  const emoji = '😀🌍🚀🧭📚🎯🔥🌈🧪🛠️';
+  const parts: string[] = [];
+  for (let index = 0; index < LINE_COUNT; index += 1) {
+    const bucket = index % 7;
+    if (bucket === 0) {
+      parts.push(`## Section ${index} ${emoji}`);
+    } else if (bucket === 1) {
+      parts.push(
+        `Paragraph ${index} ${emoji.repeat(4)} with emoji throughout that only settle once every glyph has been fetched. ${emoji}`,
+      );
+    } else if (bucket === 2) {
+      parts.push(`![missing ${index}](./assets/does-not-exist-${index}.png)`);
+    } else if (bucket === 3) {
+      parts.push(
+        `| ${emoji} | Column ${index} |\n| --- | --- |\n| ${emoji} | value |`,
+      );
+    } else if (bucket === 4) {
+      parts.push('```ts\n' + `const v${index} = ${index}; // ${emoji}\n`.repeat(4) + '```');
+    } else if (bucket === 5) {
+      parts.push(
+        Array.from(
+          { length: 5 },
+          (_, item) => `- ${emoji} item ${index}.${item} with a long enough label to wrap`,
+        ).join('\n'),
+      );
+    } else {
+      parts.push(
+        `Paragraph ${index}: ` + 'plain text that wraps a few times. '.repeat(10),
+      );
+    }
+  }
+  return parts.join('\n\n');
+}
+
 function noteFixture(): string {
-  return process.env.FLICKER_FIXTURE === 'mixed'
-    ? mixedNoteFixture()
-    : uniformNoteFixture();
+  if (process.env.FLICKER_FIXTURE === 'mixed') {
+    return mixedNoteFixture();
+  }
+  if (process.env.FLICKER_FIXTURE === 'async') {
+    return asyncNoteFixture();
+  }
+  return uniformNoteFixture();
 }
 
 /** Patches the scroll APIs once; the store is reset between scenarios. */
