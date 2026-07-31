@@ -36,6 +36,7 @@
     "benchmark:compare": "node scripts/benchmark-compare.mjs",
     "benchmark:scroll-anchor": "electron --no-sandbox --ozone-platform=headless --disable-gpu scripts/scroll-anchor-probe.cjs",
     "profile:keystroke": "electron --no-sandbox --ozone-platform=headless --disable-gpu scripts/keystroke-latency.cjs",
+    "profile:keystroke-allocation": "electron scripts/keystroke-allocation.cjs",
     "assets:twemoji": "node scripts/sync-twemoji-assets.mjs",
     "seed:apollo-11": "tsx scripts/seed-apollo-11.ts",
     "verify": "npm run lint && npm run typecheck && npm run test && npm run test:native"

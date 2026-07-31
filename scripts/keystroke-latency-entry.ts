@@ -25,6 +25,13 @@ interface KeystrokeProfile {
     heapStartBytes: number;
     /** Indexes of keystrokes during which the heap shrank. */
     collectionIndexes: number[];
+    /** Bytes charged to each phase, only when `heapPhases` is on. */
+    phaseBytes?: {
+      flatten: number;
+      readInputEdit: number;
+      rest: number;
+      setSource: number;
+    };
   };
   histogramMs: { count: number; upperMs: number }[];
   phases: Record<
@@ -54,7 +61,11 @@ declare global {
   interface Window {
     runKeystrokeLatencyProfile: (
       lineCount: number,
-      options?: { ablation?: string; samples?: number },
+      options?: {
+        ablation?: string;
+        heapPhases?: boolean;
+        samples?: number;
+      },
     ) => Promise<KeystrokeProfile>;
   }
   interface Performance {
@@ -208,10 +219,18 @@ interface Timers {
   [phase: string]: number;
 }
 
+/** Median over the samples that grew, ignoring the ones a collection crossed. */
+function positiveMedian(values: Float64Array): number {
+  const positive = [...values].filter((value) => value > 0);
+  positive.sort((left, right) => left - right);
+  return Math.round(positive[positive.length >> 1] ?? 0);
+}
+
 window.runKeystrokeLatencyProfile = async (lineCount, options = {}) => {
   document.body.style.margin = '0';
   const ablation = options.ablation ?? 'none';
   const sampleCount = options.samples ?? 200;
+  const heapPhases = options.heapPhases ?? false;
   const warmup = 20;
   // `derive-change` turns off the line-local edit path, so the same run can be
   // compared against the model deriving the change from the document text.
@@ -288,6 +307,14 @@ window.runKeystrokeLatencyProfile = async (lineCount, options = {}) => {
   const totals = new Float64Array(sampleCount);
   const heap = new Float64Array(sampleCount + 1);
   const readHeap = () => performance.memory?.usedJSHeapSize ?? 0;
+  // Heap readings between the phase boundaries, so the bytes can be charged to
+  // a phase the same way the milliseconds are. Off by default: each reading is
+  // a call into the host and four of them per key move the timings.
+  const heapPhasesEnabled = heapPhases;
+  const heapInputRead = new Float64Array(sampleCount);
+  const heapFlatten = new Float64Array(sampleCount);
+  const heapSetSource = new Float64Array(sampleCount);
+  const heapRest = new Float64Array(sampleCount);
 
   let currentSource = source;
   let replacedLength = marker.length;
@@ -311,6 +338,7 @@ window.runKeystrokeLatencyProfile = async (lineCount, options = {}) => {
       pending[phase] = 0;
     }
 
+    const h0 = heapPhasesEnabled ? readHeap() : 0;
     const t0 = performance.now();
     view.input.setRangeText(
       inserted,
@@ -319,13 +347,16 @@ window.runKeystrokeLatencyProfile = async (lineCount, options = {}) => {
       'end',
     );
     const t1 = performance.now();
+    const h1 = heapPhasesEnabled ? readHeap() : 0;
     const edit = view.readInputEdit(currentSource, mirror);
     const t2 = performance.now();
+    const h2 = heapPhasesEnabled ? readHeap() : 0;
     // Attribute the whole-document flatten explicitly: V8 keeps the new text as
     // a rope until the first character read, and that read would otherwise land
     // inside `setSource` and be charged to the model.
     const flattenProbe = edit.content.charCodeAt(0);
     const t3 = performance.now();
+    const h3 = heapPhasesEnabled ? readHeap() : 0;
     view.setSource(edit.content, edit.selection, {
       change: ablation === 'no-change-hint' ? undefined : edit.change,
       nextSelection: edit.selection,
@@ -335,6 +366,7 @@ window.runKeystrokeLatencyProfile = async (lineCount, options = {}) => {
       },
     });
     const t4 = performance.now();
+    const h4 = heapPhasesEnabled ? readHeap() : 0;
     view.revealOffset(edit.selection.end);
     const t5 = performance.now();
     void shell.target.offsetHeight;
@@ -385,7 +417,14 @@ window.runKeystrokeLatencyProfile = async (lineCount, options = {}) => {
       samples.reveal![index] = t5 - t4;
       samples.layout![index] = t6 - t5;
       totals[index] = t6 - t0;
-      heap[index + 1] = readHeap();
+      const h6 = readHeap();
+      heap[index + 1] = h6;
+      if (heapPhasesEnabled) {
+        heapInputRead[index] = h2 - h1;
+        heapFlatten[index] = h3 - h2;
+        heapSetSource[index] = h4 - h3;
+        heapRest[index] = h6 - h4 + (h1 - h0);
+      }
     }
 
     await nextFrame();
@@ -454,6 +493,18 @@ window.runKeystrokeLatencyProfile = async (lineCount, options = {}) => {
       growthMedianBytes: growth[growth.length >> 1] ?? 0,
       heapEndBytes: heap[sampleCount]!,
       heapStartBytes: heap[0]!,
+      // Median of the positive readings only: a keystroke that collected
+      // reports a negative delta that says nothing about what it allocated.
+      ...(heapPhases
+        ? {
+            phaseBytes: {
+              flatten: positiveMedian(heapFlatten),
+              readInputEdit: positiveMedian(heapInputRead),
+              rest: positiveMedian(heapRest),
+              setSource: positiveMedian(heapSetSource),
+            },
+          }
+        : {}),
     },
     histogramMs: histogram(totals),
     phases,

@@ -58,6 +58,7 @@ export default tseslint.config(
       'packages/native-core/**/*.{cjs,js}',
       'scripts/benchmark-large-notes.cjs',
       'scripts/profile-source.cjs',
+      'scripts/keystroke-allocation.cjs',
       'scripts/keystroke-latency.cjs',
       'scripts/scroll-anchor-probe.cjs',
     ],

@@ -72,6 +72,7 @@ async function run() {
     const result = await window.webContents.executeJavaScript(
       `window.runKeystrokeLatencyProfile(${lineCount}, ${JSON.stringify({
         ablation,
+        heapPhases: process.env.FLYOFF_PROFILE_HEAP_PHASES === '1',
         samples,
       })})`,
       true,
