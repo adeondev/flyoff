@@ -97,6 +97,106 @@ describe('windowed source view', () => {
     }
   }
 
+  /**
+   * One pass of the frames queued so far, without draining the frames those
+   * callbacks queue in turn. `flushFrames` runs to quiescence, which hides
+   * whether work happened in this frame or the next one — and that difference
+   * is the whole question here.
+   */
+  function runOneFramePass(): void {
+    for (const callback of frames.splice(0)) {
+      callback(performance.now());
+    }
+  }
+
+  it('repositions the lines in the same frame that re-anchors the scroll', () => {
+    const source = Array.from(
+      { length: 2_000 },
+      (_, index) =>
+        `line ${index} with enough text on it that a narrower editor wraps it`,
+    ).join('\n');
+    const view = createView(source);
+    const root = view.input.closest<HTMLElement>('.markdown-source__editor')!;
+    const layer = root.querySelector<HTMLElement>('.source-window__lines')!;
+    flushFrames();
+
+    root.scrollTop = 6_000;
+    root.dispatchEvent(new Event('scroll'));
+    flushFrames();
+
+    const scrollBefore = root.scrollTop;
+    const transformBefore = layer.style.transform;
+
+    // Halving the width is what opening a pane beside the note does: every
+    // line re-wraps, the height map is rebuilt, and the scroller is re-anchored
+    // into the new coordinate space.
+    Object.defineProperty(root, 'clientWidth', {
+      configurable: true,
+      value: 400,
+    });
+    ResizeObserverStub.instances[0]!.trigger();
+
+    // Exactly the frame the layout reset runs in, and nothing after it.
+    runOneFramePass();
+
+    expect(
+      root.scrollTop,
+      'the layout reset should have re-anchored the scroll position',
+    ).not.toBe(scrollBefore);
+    // The lines are placed by this transform. Leaving it at the old value
+    // while the scroller has already moved into the new coordinate space is a
+    // frame where the viewport looks at a region no line was placed in — the
+    // note visibly blanks and comes back when a pane opens beside it.
+    expect(
+      layer.style.transform,
+      'the line layer still holds the offset from the previous layout',
+    ).not.toBe(transformBefore);
+  });
+
+  // Skipped deliberately, not aspirationally. The close-split strip is real in
+  // the packaged app — one frame with 371 px of an 810 px viewport uncovered,
+  // in roughly one run in three — but it depends on lines actually re-wrapping,
+  // and jsdom does no layout, so this passes here whether the defect is present
+  // or not. Left as the shape the assertion should take once it can be driven
+  // from real geometry; it proves nothing today.
+  it.skip('mounts enough lines to cover the viewport when the pane widens', () => {
+    const source = Array.from(
+      { length: 2_000 },
+      (_, index) =>
+        `line ${index} with enough text on it that a narrower editor wraps it`,
+    ).join('\n');
+    const view = createView(source);
+    const root = view.input.closest<HTMLElement>('.markdown-source__editor')!;
+    // Start narrow, the way a note sits while a pane is open beside it.
+    Object.defineProperty(root, 'clientWidth', {
+      configurable: true,
+      value: 400,
+    });
+    ResizeObserverStub.instances[0]!.trigger();
+    flushFrames();
+    root.scrollTop = 6_000;
+    root.dispatchEvent(new Event('scroll'));
+    flushFrames();
+
+    // Closing the pane gives the width back. The lines that were wrapping stop
+    // wrapping, so the document shrinks under the viewport and a range
+    // projected from the old estimates no longer reaches the bottom of it.
+    Object.defineProperty(root, 'clientWidth', {
+      configurable: true,
+      value: 800,
+    });
+    ResizeObserverStub.instances[0]!.trigger();
+    runOneFramePass();
+
+    // A single row cannot be shorter than the line height, so covering the
+    // viewport takes at least this many lines however they are laid out.
+    const minimum = Math.ceil(root.clientHeight / 24);
+    expect(
+      view.getVisibleLineElements().length,
+      `only ${view.getVisibleLineElements().length} lines are mounted for a ${root.clientHeight}px viewport`,
+    ).toBeGreaterThanOrEqual(minimum);
+  });
+
   it('removes every listener and observer it installed when disposed', () => {
     const root = editorRoot();
     const added: [string, EventListenerOrEventListenerObject][] = [];
