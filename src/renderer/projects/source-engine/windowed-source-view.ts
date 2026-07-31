@@ -277,6 +277,17 @@ export class WindowedSourceView implements SourceViewAdapter {
   private compositionTimer?: number;
   private layoutResetFrame?: number;
   private resizeAnchor?: { fraction: number; line: number };
+  /**
+   * The reading position as of the last frame in which the height map and the
+   * text on screen still agreed.
+   *
+   * A resize is only observed after the browser has already re-wrapped the
+   * mounted lines, so capturing the anchor at that point captures a position
+   * the text has already moved to — the correction then preserves the wrong
+   * line and the reader sees the note shift. This is recorded while nothing is
+   * resizing, and is what the reset restores.
+   */
+  private stableAnchor?: { fraction: number; line: number };
   private resizeAnchorTimer?: number;
   private layoutResetDeferred = false;
   private pendingRevealOffset?: number;
@@ -456,8 +467,21 @@ export class WindowedSourceView implements SourceViewAdapter {
     const ResizeObserverConstructor =
       root.ownerDocument.defaultView?.ResizeObserver;
     if (ResizeObserverConstructor) {
+      // Synchronously, not on the next frame.
+      //
+      // The browser re-wraps the mounted lines the instant the width changes,
+      // so by the time this callback runs the text on screen is already taller
+      // or shorter than the height map says — while the scroll offset still
+      // describes the old wrap. Deferring the correction to an animation frame
+      // paints that disagreement first: during a pane animation, which changes
+      // the width on every frame, the reader watches the note step up and down
+      // by several lines before it settles.
+      //
+      // A resize observation is delivered after layout and before paint, which
+      // is the only place a correction can be made that the reader never sees.
+      // Nothing here resizes an observed element, so this cannot loop.
       this.resizeObserver = new ResizeObserverConstructor(() =>
-        this.requestLayoutReset(),
+        this.resetLayout(),
       );
       this.resizeObserver.observe(root);
       this.rowResizeObserver = new ResizeObserverConstructor(() => {
@@ -1263,7 +1287,8 @@ export class WindowedSourceView implements SourceViewAdapter {
     // the already-corrected scroll position each time let rounding compound
     // into a drift of tens of lines, always upward.
     const hadAnchor = this.resizeAnchor !== undefined;
-    const anchor = this.resizeAnchor ?? this.captureScrollAnchor();
+    const anchor =
+      this.resizeAnchor ?? this.stableAnchor ?? this.captureScrollAnchor();
     this.resizeAnchor = anchor;
     const view = this.root.ownerDocument.defaultView;
     if (view) {
@@ -1298,6 +1323,7 @@ export class WindowedSourceView implements SourceViewAdapter {
     this.forceRender = true;
     this.measurementDirty = true;
     this.selectionDirty = true;
+    const pinned = hadAnchor || anchor.line > 0 || anchor.fraction > 0;
     // Synchronously, in the same frame as the scroll write above.
     //
     // Rebuilding the height map moves every line to a new offset, and the
@@ -1308,6 +1334,59 @@ export class WindowedSourceView implements SourceViewAdapter {
     // 810 px viewport with 810 px of nothing in it, which is the blank flash a
     // reader sees when a pane opens beside a note.
     this.render();
+    if (pinned) {
+      this.pinAnchorToRenderedGeometry(anchor);
+    }
+  }
+
+  /**
+   * Put the anchor line exactly where it was, using the line itself.
+   *
+   * The scroll offset written above comes from a height map that was just
+   * rebuilt, so every line in it is an estimate. The estimate for the anchor is
+   * usually a few pixels out and occasionally much more, and a pane animation
+   * runs this once per frame at a different width each time — so the reader
+   * watches the note step up and down by a handful of lines before it settles.
+   *
+   * The lines are mounted by the render above, so the anchor's real position is
+   * now readable. Correcting against it makes the anchor land on the same pixel
+   * at every intermediate width, which is what turns the burst into one still
+   * image. The reads are cheap: one box for the scroller, one for the anchor.
+   */
+  private pinAnchorToRenderedGeometry(anchor: {
+    fraction: number;
+    line: number;
+  }): void {
+    // Not mounted means the estimates put the anchor outside the projected
+    // window; mounting it here to pin against was measured and made no
+    // difference to the residual excursion, so the frame is left on the
+    // estimate rather than paying for it.
+    const rendered = this.rendered.get(anchor.line);
+    if (!rendered || !rendered.element.isConnected) {
+      return;
+    }
+    const rect = rendered.element.getBoundingClientRect();
+    if (rect.height <= 0) {
+      return;
+    }
+    const rootRect = this.root.getBoundingClientRect();
+    // Where the anchor should sit: `fraction` of its own height above the top
+    // edge, the same quantity `captureScrollAnchor` recorded.
+    const desired = -anchor.fraction * rect.height;
+    const delta = rect.top - rootRect.top - desired;
+    if (Math.abs(delta) <= 0.5) {
+      return;
+    }
+    this.writeScrollTop(this.root.scrollTop + delta);
+    // Projection and mount for the corrected offset. Deliberately not a full
+    // `render`: that reads the scroll position back and repaints the selection
+    // a second time in the same frame, and during a pane animation — which runs
+    // this on every frame — the forced layout that costs starved the frame
+    // budget outright.
+    this.forceRender = true;
+    this.coverViewportAfterMeasurement(
+      Math.max(0, this.root.scrollTop - this.paddingTop()),
+    );
   }
 
   /**
@@ -1518,6 +1597,11 @@ export class WindowedSourceView implements SourceViewAdapter {
       // position and repainted the selection a second time per frame, and the
       // forced layout that costs starved the frame budget outright.
       this.coverViewportAfterMeasurement(scrollTop);
+    }
+    // Recorded only while no resize is in flight, so it always describes a
+    // frame in which the map and the text on screen agreed.
+    if (this.resizeAnchor === undefined && !writeOnly) {
+      this.stableAnchor = this.captureScrollAnchor();
     }
     this.updateActiveLine();
     if (viewportDirty || this.selectionDirty) {

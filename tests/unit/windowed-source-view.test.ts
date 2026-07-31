@@ -265,7 +265,7 @@ describe('windowed source view', () => {
     expect(canvas.style.height).toBe('48px');
   });
 
-  it('captures the scroll anchor once across a burst of layout resets', () => {
+  it('does not re-derive the scroll anchor during a burst of layout resets', () => {
     const source = Array.from(
       { length: 900 },
       (_, index) => `line ${index} com texto suficiente para ocupar espaco`,
@@ -303,7 +303,13 @@ describe('windowed source view', () => {
     }
 
     expect(rebuildHeightMap.mock.calls.length).toBeGreaterThan(1);
-    expect(captureScrollAnchor).toHaveBeenCalledOnce();
+    // Not derived during the burst at all. A resize is only observed after the
+    // browser has re-wrapped the mounted lines, so anything read once the burst
+    // has started already describes a position the text has moved to. The
+    // anchor restored across the burst is the one recorded on the last frame in
+    // which the height map and the text on screen still agreed, which is why
+    // this is now zero rather than one.
+    expect(captureScrollAnchor).not.toHaveBeenCalled();
   });
 
   it('does not let its own scroll correction count as the reader scrolling', async () => {
