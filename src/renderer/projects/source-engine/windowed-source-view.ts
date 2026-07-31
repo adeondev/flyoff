@@ -68,6 +68,19 @@ const SCROLL_MEASUREMENT_IDLE_MS = 80;
  * anchor is taken once and held across the whole burst instead.
  */
 const RESIZE_ANCHOR_RELEASE_MS = 200;
+/**
+ * How many times a layout reset may correct the anchor against real geometry
+ * before giving up. CodeMirror's measure cycle uses six and warns when it is
+ * exhausted; the bound is what matters, so that a layout which will not settle
+ * costs a known amount rather than spinning.
+ */
+const MAX_ANCHOR_STABILIZATION_PASSES = 6;
+/**
+ * Below this the anchor is on the pixel it was on. Sub-pixel corrections are
+ * not worth a forced layout, and chasing them across fractional line heights
+ * is what oscillates.
+ */
+const ANCHOR_STABLE_TOLERANCE_PX = 1;
 const DEFAULT_WRAP_CHAR_FACTOR = 0.54;
 /** Ignore very short lines when learning: they bound the factor too loosely. */
 const WRAP_CALIBRATION_MINIMUM_LENGTH = 24;
@@ -288,6 +301,22 @@ export class WindowedSourceView implements SourceViewAdapter {
    * resizing, and is what the reset restores.
    */
   private stableAnchor?: { fraction: number; line: number };
+  /**
+   * Incremented by every layout reset. Async work carries the value it was
+   * started for and drops out when a newer width has taken over.
+   */
+  private layoutGeneration = 0;
+  /** The width the current height map was built for. */
+  private layoutWidth = -1;
+  /** Guards the reset that `render` can trigger from re-entering itself. */
+  private resettingLayout = false;
+  /** Convergence counters, read by tests and by the resize benchmark. */
+  readonly anchorStabilization = {
+    abandoned: 0,
+    passes: 0,
+    resets: 0,
+    unconverged: 0,
+  };
   private resizeAnchorTimer?: number;
   private layoutResetDeferred = false;
   private pendingRevealOffset?: number;
@@ -1272,10 +1301,13 @@ export class WindowedSourceView implements SourceViewAdapter {
       return;
     }
     this.layoutResetDeferred = false;
+    this.resettingLayout = true;
+    this.layoutWidth = this.root.clientWidth;
     const signature = this.readLayoutSignature();
     if (signature === this.layoutSignature) {
       this.forceRender = true;
       this.selectionDirty = true;
+      this.resettingLayout = false;
       this.requestRender();
       return;
     }
@@ -1301,6 +1333,7 @@ export class WindowedSourceView implements SourceViewAdapter {
       }, RESIZE_ANCHOR_RELEASE_MS);
     }
 
+    this.layoutGeneration += 1;
     this.measuredHeights = new WeakMap();
     for (const rendered of this.rendered.values()) {
       rendered.measuredHeight = undefined;
@@ -1335,58 +1368,95 @@ export class WindowedSourceView implements SourceViewAdapter {
     // reader sees when a pane opens beside a note.
     this.render();
     if (pinned) {
-      this.pinAnchorToRenderedGeometry(anchor);
+      this.stabilizeAnchor(anchor);
     }
+    this.resettingLayout = false;
   }
 
   /**
-   * Put the anchor line exactly where it was, using the line itself.
+   * Bring the anchor line to rest on the pixel it was on, before this frame is
+   * painted.
    *
-   * The scroll offset written above comes from a height map that was just
-   * rebuilt, so every line in it is an estimate. The estimate for the anchor is
-   * usually a few pixels out and occasionally much more, and a pane animation
-   * runs this once per frame at a different width each time — so the reader
-   * watches the note step up and down by a handful of lines before it settles.
+   * One correction is not enough. The scroll offset written by the reset comes
+   * from a height map that was just rebuilt, so every line in it is an
+   * estimate; correcting against the anchor's real box moves the scroller,
+   * which changes which lines are mounted, which replaces more estimates with
+   * measurements and moves the anchor again. A single pass leaves whatever
+   * error the second pass would have removed — measured as an excursion of up
+   * to four lines while a pane animates.
    *
-   * The lines are mounted by the render above, so the anchor's real position is
-   * now readable. Correcting against it makes the anchor land on the same pixel
-   * at every intermediate width, which is what turns the burst into one still
-   * image. The reads are cheap: one box for the scroller, one for the anchor.
+   * So it iterates to a fixed point, the way CodeMirror's measure cycle does
+   * (`EditorView.measure`, which re-derives its anchor's top after each update
+   * and re-scrolls by the difference until the change falls under a pixel,
+   * giving up after six passes). The bound matters more than the tolerance: a
+   * layout that will not settle must cost a known amount and then stop, never
+   * spin.
+   *
+   * Progress is required as well as error. If a pass does not reduce the error
+   * meaningfully the loop stops, because continuing would be oscillation rather
+   * than convergence.
    */
-  private pinAnchorToRenderedGeometry(anchor: {
+  private stabilizeAnchor(anchor: {
     fraction: number;
     line: number;
   }): void {
-    // Not mounted means the estimates put the anchor outside the projected
-    // window; mounting it here to pin against was measured and made no
-    // difference to the residual excursion, so the frame is left on the
-    // estimate rather than paying for it.
-    const rendered = this.rendered.get(anchor.line);
-    if (!rendered || !rendered.element.isConnected) {
-      return;
+    const generation = this.layoutGeneration;
+    let passes = 0;
+    let previousError = Number.POSITIVE_INFINITY;
+
+    for (; passes < MAX_ANCHOR_STABILIZATION_PASSES; passes += 1) {
+      // A newer width arrived while this was running; its own reset owns the
+      // view now and anything computed here is against stale geometry.
+      if (this.layoutGeneration !== generation || this.disposed) {
+        break;
+      }
+      // Both sides of this comparison come from the height map, never one from
+      // the map and one from a DOM rectangle. Correcting against a rectangle
+      // re-mounts a different set of lines, whose measurements move the map
+      // under the next pass, and the loop oscillated by about a line height
+      // instead of converging.
+      const target =
+        this.heightMap.offsetAtIndex(anchor.line) +
+        anchor.fraction * this.heightMap.heightAt(anchor.line) +
+        this.paddingTop();
+      const error = target - this.root.scrollTop;
+      if (Math.abs(error) <= ANCHOR_STABLE_TOLERANCE_PX) {
+        break;
+      }
+      // Converging means the error shrinks. Requiring it to shrink by a fixed
+      // share instead stopped the loop while it was still 24 px out, because a
+      // pass that removes only a little is still removing it — the hard pass
+      // limit is what bounds the cost, not this.
+      if (Math.abs(error) >= Math.abs(previousError)) {
+        this.anchorStabilization.abandoned += 1;
+        break;
+      }
+      previousError = error;
+      this.writeScrollTop(target);
+      // Mount the window the corrected offset needs and measure it, so the map
+      // the next pass compares against has real heights where it can. Kept to
+      // projection plus measurement rather than a full `render`: repainting the
+      // selection on every pass of every frame of a pane animation starved the
+      // frame budget outright when it was tried.
+      this.forceRender = true;
+      const scrollTop = Math.max(0, this.root.scrollTop - this.paddingTop());
+      this.coverViewportAfterMeasurement(scrollTop);
+      this.measureLines(scrollTop);
     }
-    const rect = rendered.element.getBoundingClientRect();
-    if (rect.height <= 0) {
-      return;
+
+    this.anchorStabilization.passes += passes;
+    this.anchorStabilization.resets += 1;
+    if (passes >= MAX_ANCHOR_STABILIZATION_PASSES) {
+      this.anchorStabilization.unconverged += 1;
     }
-    const rootRect = this.root.getBoundingClientRect();
-    // Where the anchor should sit: `fraction` of its own height above the top
-    // edge, the same quantity `captureScrollAnchor` recorded.
-    const desired = -anchor.fraction * rect.height;
-    const delta = rect.top - rootRect.top - desired;
-    if (Math.abs(delta) <= 0.5) {
-      return;
-    }
-    this.writeScrollTop(this.root.scrollTop + delta);
-    // Projection and mount for the corrected offset. Deliberately not a full
-    // `render`: that reads the scroll position back and repaints the selection
-    // a second time in the same frame, and during a pane animation — which runs
-    // this on every frame — the forced layout that costs starved the frame
-    // budget outright.
-    this.forceRender = true;
-    this.coverViewportAfterMeasurement(
-      Math.max(0, this.root.scrollTop - this.paddingTop()),
-    );
+    // Readable from a packaged run without a debugger attached: which reset
+    // this was, how many corrections it took, and what error it stopped on.
+    this.root.dataset.anchorPasses = String(passes);
+    this.root.dataset.anchorError = Number.isFinite(previousError)
+      ? previousError.toFixed(1)
+      : 'none';
+    this.root.dataset.anchorLine = String(anchor.line);
+    this.root.dataset.anchorGeneration = String(generation);
   }
 
   /**
@@ -1512,8 +1582,15 @@ export class WindowedSourceView implements SourceViewAdapter {
       return;
     }
     if (
-      this.layoutResetDeferred &&
+      (this.layoutResetDeferred ||
+        // A resize observation can be missed: while a pane is being taken
+        // apart the editor is briefly boxless, the reset defers, and the frame
+        // that follows paints text the browser has already re-wrapped against
+        // a map built for the old width. Catching the discrepancy here anchors
+        // that frame too instead of leaving it to the next observation.
+        (this.layoutWidth >= 0 && this.layoutWidth !== this.root.clientWidth)) &&
       !writeOnly &&
+      !this.resettingLayout &&
       this.root.clientWidth > 0 &&
       this.root.clientHeight > 0
     ) {

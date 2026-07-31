@@ -68,6 +68,9 @@ const installTrace = () => {
     width: number;
   }
   interface Frame {
+    err: string;
+    gen: string;
+    passes: string;
     anchor: number;
     anchorPx: number;
     gapPx: number;
@@ -174,6 +177,9 @@ const installTrace = () => {
         const read = readAnchor(root);
         store.frames.push({
           ...read,
+          passes: root.dataset.anchorPasses ?? "-",
+          err: root.dataset.anchorError ?? "-",
+          gen: root.dataset.anchorGeneration ?? "-",
           scrollTop: Math.round(descriptor.get!.call(root) as number),
           t: Math.round(performance.now()),
           width: root.clientWidth,
@@ -201,6 +207,9 @@ const collectTrace = () => {
     window as unknown as {
       __paneTrace: {
         frames: {
+          err: string;
+          gen: string;
+          passes: string;
           anchor: number;
           anchorPx: number;
           gapPx: number;
@@ -266,7 +275,7 @@ async function trace(
           frame.width !== frames[index - 1]!.width,
       )
       .slice(0, 40)
-      .map((frame) => `${frame.t}:${frame.anchor}@${frame.width}`)
+      .map((frame) => `${frame.t}:${frame.anchor}@${frame.width}/g${frame.gen}p${frame.passes}e${frame.err}`)
       .join(' ')}`,
   );
   console.log('  --- scroll writes, in order ---');
