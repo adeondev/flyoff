@@ -1,3 +1,9 @@
+import {
+  editedCharCodeAt,
+  editedLength,
+  sliceEditedDocument,
+  spliceSourceDocument,
+} from './source-document-text';
 import type {
   SourceViewSelection,
   SourceViewSelectionDirection,
@@ -84,24 +90,57 @@ function normalizedDirection(
   return direction === 'backward' ? 'backward' : 'forward';
 }
 
-function normalizedSelection(
-  value: string,
+/**
+ * A document the caller can read a character of without holding it as one
+ * string. Reading the new document is what materialised it on every keystroke.
+ */
+interface ReadableDocument {
+  charCodeAt(offset: number): number;
+  length: number;
+}
+
+/**
+ * The document text, readable in windows without existing as one string.
+ *
+ * A plain string satisfies this, which is what every caller outside the
+ * keystroke path passes. The view passes a reader backed by the model's lines
+ * instead, because slicing the caret window out of the document string is the
+ * last thing on the edit path that materialised the whole note.
+ */
+export interface SourceTextReader extends ReadableDocument {
+  slice(start: number, end: number): string;
+}
+
+function splitsUnitIn(document: ReadableDocument, offset: number): boolean {
+  if (offset <= 0 || offset >= document.length) {
+    return false;
+  }
+  return (
+    (document.charCodeAt(offset - 1) === 0x0d &&
+      document.charCodeAt(offset) === 0x0a) ||
+    (isHighSurrogate(document.charCodeAt(offset - 1)) &&
+      isLowSurrogate(document.charCodeAt(offset)))
+  );
+}
+
+function normalizedSelectionIn(
+  document: ReadableDocument,
   selection: SourceViewSelection,
 ): SourceViewSelection {
-  const first = clampedOffset(selection.start, value.length);
-  const second = clampedOffset(selection.end, value.length);
+  const first = clampedOffset(selection.start, document.length);
+  const second = clampedOffset(selection.end, document.length);
   let start = Math.min(first, second);
   let end = Math.max(first, second);
   if (start === end) {
-    if (splitsSourceUnit(value, start)) {
+    if (splitsUnitIn(document, start)) {
       start -= 1;
       end = start;
     }
   } else {
-    if (splitsSourceUnit(value, start)) {
+    if (splitsUnitIn(document, start)) {
       start -= 1;
     }
-    if (splitsSourceUnit(value, end)) {
+    if (splitsUnitIn(document, end)) {
       end += 1;
     }
   }
@@ -110,6 +149,13 @@ function normalizedSelection(
     end,
     start,
   };
+}
+
+function normalizedSelection(
+  value: string,
+  selection: SourceViewSelection,
+): SourceViewSelection {
+  return normalizedSelectionIn(value, selection);
 }
 
 function normalizedMaximum(maxCodeUnits: number): number {
@@ -122,31 +168,44 @@ function normalizedMaximum(maxCodeUnits: number): number {
   );
 }
 
+/**
+ * Normalise an already-extracted window. Split out so the window can be
+ * assembled from the pieces of an edit rather than sliced out of the new
+ * document, which is what used to materialise it.
+ */
+function normalizedWindow(
+  window: string,
+  absoluteStart: number,
+): NormalizedSourceWindow {
+  const normalized = window.replace(/\r\n?/g, '\n');
+  if (window.length === normalized.length) {
+    return { value: normalized };
+  }
+  const value: string[] = [];
+  const sourceOffsets = [absoluteStart];
+  let offset = 0;
+  while (offset < window.length) {
+    if (window.charCodeAt(offset) === 0x0d) {
+      offset +=
+        offset + 1 < window.length && window.charCodeAt(offset + 1) === 0x0a
+          ? 2
+          : 1;
+      value.push('\n');
+    } else {
+      value.push(window[offset]!);
+      offset += 1;
+    }
+    sourceOffsets.push(absoluteStart + offset);
+  }
+  return { sourceOffsets, value: value.join('') };
+}
+
 function normalizedSourceWindow(
   source: string,
   start: number,
   end: number,
 ): NormalizedSourceWindow {
-  const raw = source.slice(start, end);
-  const normalized = raw.replace(/\r\n?/g, '\n');
-  if (raw.length === normalized.length) {
-    return { value: normalized };
-  }
-  const value: string[] = [];
-  const sourceOffsets = [start];
-  let offset = start;
-  while (offset < end) {
-    if (source.charCodeAt(offset) === 0x0d) {
-      offset +=
-        offset + 1 < end && source.charCodeAt(offset + 1) === 0x0a ? 2 : 1;
-      value.push('\n');
-    } else {
-      value.push(source[offset]!);
-      offset += 1;
-    }
-    sourceOffsets.push(offset);
-  }
-  return { sourceOffsets, value: value.join('') };
+  return normalizedWindow(source.slice(start, end), start);
 }
 
 function mirrorOffsetAtSourceOffset(
@@ -247,8 +306,10 @@ export function createSourceInputMirror(
   source: string,
   selection: SourceViewSelection,
   maxCodeUnits = SOURCE_INPUT_MIRROR_MAX_CODE_UNITS,
+  reader?: SourceTextReader,
 ): SourceInputMirror {
-  const sourceSelection = normalizedSelection(source, selection);
+  const text: SourceTextReader = reader ?? source;
+  const sourceSelection = normalizedSelectionIn(text, selection);
   const maximum = normalizedMaximum(maxCodeUnits);
   const focus = selectionFocus(sourceSelection);
   const selectionMapped =
@@ -258,22 +319,22 @@ export function createSourceInputMirror(
   const lowestStart = Math.max(0, requiredEnd - maximum);
   const highestStart = Math.min(
     requiredStart,
-    Math.max(0, source.length - maximum),
+    Math.max(0, text.length - maximum),
   );
   const preferredStart = focus - Math.floor(maximum / 2);
   let start = Math.min(
     highestStart,
     Math.max(lowestStart, preferredStart),
   );
-  let end = Math.min(source.length, start + maximum);
-  if (splitsSourceUnit(source, start)) {
+  let end = Math.min(text.length, start + maximum);
+  if (splitsUnitIn(text, start)) {
     start += 1;
   }
-  if (splitsSourceUnit(source, end)) {
+  if (splitsUnitIn(text, end)) {
     end -= 1;
   }
 
-  const normalized = normalizedSourceWindow(source, start, end);
+  const normalized = normalizedWindow(text.slice(start, end), start);
   const localFocus = mirrorOffsetAtSourceOffset(
     normalized.sourceOffsets,
     focus,
@@ -342,7 +403,13 @@ export function applySourceInputMirrorEdit(
   mirror: SourceInputMirror,
   nextValue: string,
   localSelection: SourceInputMirrorSelection,
+  reader?: SourceTextReader,
 ): SourceInputMirrorEdit {
+  // `source` is the document as it stands, which after the previous keystroke
+  // is a cons of pieces rather than one string. Reading it here would join it,
+  // so the current document is read through the same line-backed reader the
+  // mirror uses.
+  const currentText: SourceTextReader = reader ?? source;
   const normalizedNext = normalizedSourceWindow(
     nextValue,
     0,
@@ -380,8 +447,8 @@ export function applySourceInputMirrorEdit(
 
   const diff = mirrorDiff(mirror.value, textareaValue);
   const inserted = textareaValue.slice(diff.start, diff.nextEnd);
-  const replacement = normalizedSelection(
-    source,
+  const replacement = normalizedSelectionIn(
+    currentText,
     mirror.selectionMapped
       ? {
           direction: 'forward',
@@ -390,10 +457,32 @@ export function applySourceInputMirrorEdit(
         }
       : mirror.sourceSelection,
   );
-  const content =
-    source.slice(0, replacement.start) +
-    inserted +
-    source.slice(replacement.end);
+  const content = spliceSourceDocument(
+    source,
+    replacement.start,
+    replacement.end,
+    inserted,
+  );
+  // Everything below reads the *edited* document through these, never through
+  // `content`. Reading `content` is what forced V8 to materialise the whole
+  // note on every keystroke, and it also flattened it for the next one, which
+  // no longer holds it as one string.
+  const edited: ReadableDocument = {
+    charCodeAt: (offset) =>
+      editedCharCodeAt(
+        currentText,
+        replacement.start,
+        replacement.end,
+        inserted,
+        offset,
+      ),
+    length: editedLength(
+      currentText,
+      replacement.start,
+      replacement.end,
+      inserted,
+    ),
+  };
   const selection =
     mirror.selectionMapped
       ? (() => {
@@ -401,12 +490,18 @@ export function applySourceInputMirrorEdit(
             mirror.end -
             (replacement.end - replacement.start) +
             inserted.length;
-          const nextWindow = normalizedSourceWindow(
-            content,
+          const nextWindow = normalizedWindow(
+            sliceEditedDocument(
+              currentText,
+              replacement.start,
+              replacement.end,
+              inserted,
+              mirror.start,
+              nextWindowEnd,
+            ),
             mirror.start,
-            nextWindowEnd,
           );
-          return normalizedSelection(content, {
+          return normalizedSelectionIn(edited, {
             direction: nextSelection.direction,
             end: sourceOffsetAtWindowOffset(
               nextWindow.sourceOffsets,
@@ -422,7 +517,7 @@ export function applySourceInputMirrorEdit(
             ),
           });
         })()
-      : normalizedSelection(content, {
+      : normalizedSelectionIn(edited, {
           direction: nextSelection.direction,
           end:
             replacement.start +

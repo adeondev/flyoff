@@ -334,6 +334,13 @@ function applyKnownSourceChange(
     previousLine.source.slice(0, localStart) +
     insert +
     previousLine.source.slice(localEnd);
+  // An edit can describe a replacement that puts back exactly what was there.
+  // The document is unchanged, and saying so here is what keeps this path
+  // agreeing with the one that compares the two documents instead — the edit
+  // is confined to this line, so the line is the whole question.
+  if (nextLineSource === previousLine.source) {
+    return current;
+  }
   const nextLine = highlightSourceLine(
     nextLineSource,
     previousLine.fenceBefore,
@@ -407,15 +414,25 @@ export function updateSourceDocumentModel(
   source: string,
   hint?: SourceDocumentUpdateHint,
 ): SourceDocumentModel {
-  if (source === current.source) {
-    return current;
-  }
-
-  if (localChangePathEnabled && hint?.change) {
+  // Before the equality check, not after it. `===` on two strings of the same
+  // length compares their characters, and the new document is a cons of pieces
+  // V8 has not joined, so that comparison joined the whole note — every
+  // same-length edit paid for a full copy of the document. A described edit
+  // says what changed without anyone having to look.
+  if (
+    localChangePathEnabled &&
+    hint?.change &&
+    (hint.change.from !== hint.change.to || hint.change.insert.length > 0)
+  ) {
     const local = applyKnownSourceChange(current, source, hint.change);
     if (local) {
       return local;
     }
+  }
+
+  // A genuine no-op arrives as the same string, so this is an identity check.
+  if (source === current.source) {
+    return current;
   }
 
   const textChange = sourceTextChange(current.source, source, hint);
@@ -488,6 +505,73 @@ export function updateSourceDocumentModel(
     lines: nextLines,
     lineStarts: indexes.source,
     source,
+  };
+}
+
+/**
+ * Read the document through its lines instead of through its text.
+ *
+ * The model keeps the whole document as one string, but a keystroke leaves
+ * that string as a cons of pieces V8 has not joined, and any read of it —
+ * a character, a slice — joins the whole note. The lines are already separate
+ * strings, so answering from them costs the window and nothing more.
+ */
+export function sourceTextReader(
+  model: SourceDocumentModel,
+): {
+  charCodeAt: (offset: number) => number;
+  length: number;
+  slice: (start: number, end: number) => string;
+} {
+  const length = model.source.length;
+  const lineAt = (offset: number): number =>
+    sourceLineIndexAtOffset(model, offset);
+  return {
+    charCodeAt: (offset) => {
+      if (offset < 0 || offset >= length) {
+        return Number.NaN;
+      }
+      const index = lineAt(offset);
+      const start = model.lineStarts[index] ?? 0;
+      const line = model.lines[index];
+      const local = offset - start;
+      // Past the end of the line is the newline that separates it from the
+      // next one; it is not stored on the line itself.
+      return local < (line?.source.length ?? 0)
+        ? line!.source.charCodeAt(local)
+        : 0x0a;
+    },
+    length,
+    slice: (start, end) => {
+      const from = Math.max(0, Math.min(length, start));
+      const to = Math.max(from, Math.min(length, end));
+      if (from === to) {
+        return '';
+      }
+      const firstLine = lineAt(from);
+      const parts: string[] = [];
+      let index = firstLine;
+      let cursor = model.lineStarts[firstLine] ?? 0;
+      while (cursor < to && index < model.lines.length) {
+        const line = model.lines[index]!;
+        const lineStart = model.lineStarts[index] ?? cursor;
+        const lineEnd = lineStart + line.source.length;
+        if (from < lineEnd && to > lineStart) {
+          parts.push(
+            line.source.slice(
+              Math.max(0, from - lineStart),
+              Math.min(line.source.length, to - lineStart),
+            ),
+          );
+        }
+        if (lineEnd < length && to > lineEnd && from <= lineEnd) {
+          parts.push('\n');
+        }
+        cursor = lineEnd + 1;
+        index += 1;
+      }
+      return parts.join('');
+    },
   };
 }
 

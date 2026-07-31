@@ -5,6 +5,7 @@ import {
 import {
   createSourceDocumentModel,
   sourceLineIndexAtOffset,
+  sourceTextReader,
   updateSourceDocumentModel,
   type SourceDocumentUpdateHint,
   type SourceDocumentModel,
@@ -672,6 +673,14 @@ export class WindowedSourceView implements SourceViewAdapter {
         end,
         start,
       },
+      // Only when the text being edited is the one the model holds. A
+      // controlled update can land between `beforeinput` and `input`, and the
+      // caller then passes the content it captured earlier; reading a
+      // different document through the model's lines would silently splice the
+      // wrong text.
+      source === this.model.source
+        ? sourceTextReader(this.model)
+        : undefined,
     );
   }
 
@@ -1698,6 +1707,8 @@ export class WindowedSourceView implements SourceViewAdapter {
     this.inputMirror = createSourceInputMirror(
       this.model.source,
       this.selection,
+      undefined,
+      sourceTextReader(this.model),
     );
     if (this.input.value !== this.inputMirror.value) {
       this.input.value = this.inputMirror.value;

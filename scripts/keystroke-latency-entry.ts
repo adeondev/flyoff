@@ -1,4 +1,5 @@
 import { setLocalSourceChangePathEnabled } from '../src/renderer/projects/source-document-model';
+import { sourceDocumentTextDiagnostics } from '../src/renderer/projects/source-engine/source-document-text';
 import { SOURCE_INPUT_MIRROR_MAX_CODE_UNITS } from '../src/renderer/projects/source-engine/source-input-mirror';
 import { WindowedSourceView } from '../src/renderer/projects/source-engine/windowed-source-view';
 
@@ -23,6 +24,8 @@ interface KeystrokeProfile {
     growthMedianBytes: number;
     heapEndBytes: number;
     heapStartBytes: number;
+    textRebases?: number;
+    textSplices?: number;
     /** Indexes of keystrokes during which the heap shrank. */
     collectionIndexes: number[];
     /** Bytes charged to each phase, only when `heapPhases` is on. */
@@ -351,10 +354,13 @@ window.runKeystrokeLatencyProfile = async (lineCount, options = {}) => {
     const edit = view.readInputEdit(currentSource, mirror);
     const t2 = performance.now();
     const h2 = heapPhasesEnabled ? readHeap() : 0;
-    // Attribute the whole-document flatten explicitly: V8 keeps the new text as
-    // a rope until the first character read, and that read would otherwise land
-    // inside `setSource` and be charged to the model.
-    const flattenProbe = edit.content.charCodeAt(0);
+    // Reading a character of the new document materialises it. That read used
+    // to happen inside `readInputEdit` anyway, so doing it here only moved the
+    // cost somewhere it could be attributed. Now that nothing on the edit path
+    // reads the new document, this probe would be the only thing flattening it
+    // — the harness measuring itself — so it is opt-in and off by default.
+    const flattenProbe =
+      ablation === 'flatten-probe' ? edit.content.charCodeAt(0) : 0;
     const t3 = performance.now();
     const h3 = heapPhasesEnabled ? readHeap() : 0;
     view.setSource(edit.content, edit.selection, {
@@ -493,6 +499,8 @@ window.runKeystrokeLatencyProfile = async (lineCount, options = {}) => {
       growthMedianBytes: growth[growth.length >> 1] ?? 0,
       heapEndBytes: heap[sampleCount]!,
       heapStartBytes: heap[0]!,
+      textRebases: sourceDocumentTextDiagnostics.rebases,
+      textSplices: sourceDocumentTextDiagnostics.splices,
       // Median of the positive readings only: a keystroke that collected
       // reports a negative delta that says nothing about what it allocated.
       ...(heapPhases
