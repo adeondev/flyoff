@@ -113,7 +113,9 @@ test('restores normal bounds, maximized state and minimized state', async () => 
       .toBe(true);
 
     await electronApp.evaluate(({ BrowserWindow }) => {
-      BrowserWindow.getAllWindows()[0]?.minimize();
+      const window = BrowserWindow.getAllWindows()[0];
+      window?.focus();
+      window?.minimize();
     });
     await expect
       .poll(() =>
