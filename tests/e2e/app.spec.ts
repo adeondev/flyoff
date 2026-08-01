@@ -2200,7 +2200,8 @@ test.describe('Flyoff desktop shell', () => {
         if (!host) {
           return;
         }
-        requestAnimationFrame(() => {
+        observer.disconnect();
+        const captureExit = () => {
           const closingPane = host.querySelector<HTMLElement>(
             '.workspace-pane[data-pane-exiting="true"]',
           );
@@ -2210,34 +2211,31 @@ test.describe('Flyoff desktop shell', () => {
               (candidate) =>
                 (candidate as CSSTransition).transitionProperty === 'width',
             );
-          transition?.pause();
+          const pageHost =
+            closingPane?.querySelector<HTMLElement>('.page-host');
+          if (!closingPane || !transition || !pageHost) {
+            requestAnimationFrame(captureExit);
+            return;
+          }
+          transition.pause();
           const widthAt = (time: number) => {
-            if (!transition || !closingPane) {
-              return 0;
-            }
             transition.currentTime = time;
             return closingPane.getBoundingClientRect().width;
           };
           const widths = [0, 20, 60, 80].map(widthAt);
           document.documentElement.dataset.testPaneExit = JSON.stringify({
             closingTabMounted: Boolean(
-              closingPane?.querySelector('.page-tab--closing'),
+              closingPane.querySelector('.page-tab--closing'),
             ),
-            contentDisplay: closingPane
-              ? getComputedStyle(
-                  closingPane.querySelector('.page-host')!,
-                ).display
-              : '',
-            duration: transition?.effect?.getTiming().duration,
-            easing: closingPane
-              ? getComputedStyle(closingPane).transitionTimingFunction
-              : '',
+            contentDisplay: getComputedStyle(pageHost).display,
+            duration: transition.effect?.getTiming().duration,
+            easing: getComputedStyle(closingPane).transitionTimingFunction,
             motion: host.dataset.workspaceMotion,
             widths,
           });
-          transition?.play();
-        });
-        observer.disconnect();
+          transition.play();
+        };
+        requestAnimationFrame(captureExit);
       });
       observer.observe(document.body, {
         attributeFilter: ['data-workspace-motion'],
