@@ -628,7 +628,6 @@ export async function runPackagedPerformanceDiagnostic(
           window,
           '.markdown-source__editor[data-performance-static-editor="true"]',
           10_000,
-          2,
         );
       }
       await wait(1_200);
@@ -695,7 +694,6 @@ export async function runPackagedPerformanceDiagnostic(
           window,
           '.markdown-source__editor[data-performance-static-editor="true"]',
           10_000,
-          2,
         );
       }
       await wait(1_200);
