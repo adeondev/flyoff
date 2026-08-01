@@ -229,7 +229,14 @@ test('opening and closing a pane never blanks the note', async () => {
   try {
     await writeFile(
       path.join(userDataPath, 'preferences.json'),
-      JSON.stringify({ general: { focusEditorOnOpen: true } }),
+      JSON.stringify({
+        general: {
+          focusEditorOnOpen: true,
+          ...(process.platform === 'win32'
+            ? { graphicsBackend: 'opengl' }
+            : {}),
+        },
+      }),
       'utf8',
     );
     app = await electron.launch({

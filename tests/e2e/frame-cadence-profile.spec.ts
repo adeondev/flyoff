@@ -117,6 +117,17 @@ function cadenceReportPath(): string {
     : path.join(repositoryRoot, 'test-results', 'frame-cadence-report.json');
 }
 
+function cadenceGraphicsBackend(): 'automatic' | 'opengl' {
+  const value =
+    process.env.FLYOFF_CADENCE_GRAPHICS_BACKEND?.trim() ?? 'automatic';
+  if (value !== 'automatic' && value !== 'opengl') {
+    throw new Error(
+      'FLYOFF_CADENCE_GRAPHICS_BACKEND must be automatic or opengl.',
+    );
+  }
+  return value;
+}
+
 async function collectRuntimeReport(
   application: ElectronApplication,
 ): Promise<RuntimeReport> {
@@ -606,6 +617,7 @@ test('the packaged application presents frames at the display cadence', async ()
   profiler = undefined;
   const appPath = locatePackagedAsar(repositoryRoot);
   const outputPath = cadenceReportPath();
+  const graphicsBackend = cadenceGraphicsBackend();
   const startedAt = new Date().toISOString();
   const userDataPath = await mkdtemp(path.join(os.tmpdir(), 'flyoff-cadence-'));
   const projectParent = await mkdtemp(
@@ -623,7 +635,9 @@ test('the packaged application presents frames at the display cadence', async ()
   try {
     await writeFile(
       path.join(userDataPath, 'preferences.json'),
-      JSON.stringify({ general: { focusEditorOnOpen: true } }),
+      JSON.stringify({
+        general: { focusEditorOnOpen: true, graphicsBackend },
+      }),
       'utf8',
     );
     app = await electron.launch({
