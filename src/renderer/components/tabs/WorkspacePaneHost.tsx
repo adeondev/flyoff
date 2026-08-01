@@ -655,6 +655,8 @@ function PaneLeaf(props: PaneLeafProps) {
 
 function SplitDivider(props: {
   layout: WorkspaceDividerLayout;
+  onLiveResize: (splitId: string, ratio: number) => void;
+  onReleaseResize: (splitId: string) => void;
   onResizeSplit: (splitId: string, ratio: number) => void;
   translate: Translate;
 }) {
@@ -688,10 +690,12 @@ function SplitDivider(props: {
     );
   }
 
-  function updateFromPointer(event: PointerEvent<HTMLDivElement>): void {
+  function ratioFromPointer(
+    event: PointerEvent<HTMLDivElement>,
+  ): number | undefined {
     const host = event.currentTarget.parentElement;
     if (!host) {
-      return;
+      return undefined;
     }
     const bounds = host.getBoundingClientRect();
     const available = regionSize(host);
@@ -702,10 +706,7 @@ function SplitDivider(props: {
     const pointer = vertical
       ? event.clientX - bounds.left
       : event.clientY - bounds.top;
-    props.onResizeSplit(
-      node.splitId,
-      clampRatio(available, (pointer - start) / available),
-    );
+    return clampRatio(available, (pointer - start) / available);
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
@@ -742,6 +743,7 @@ function SplitDivider(props: {
       aria-valuenow={Math.round(node.ratio * 100)}
       className="workspace-split__divider"
       data-direction={node.direction}
+      data-split-id={node.splitId}
       onDoubleClick={(event) => {
         const host = event.currentTarget.parentElement;
         if (host) {
@@ -752,14 +754,35 @@ function SplitDivider(props: {
         }
       }}
       onKeyDown={handleKeyDown}
+      onLostPointerCapture={() => {
+        props.onReleaseResize(node.splitId);
+      }}
       onPointerDown={(event) => {
         event.currentTarget.setPointerCapture(event.pointerId);
-        updateFromPointer(event);
+        const ratio = ratioFromPointer(event);
+        if (ratio !== undefined) {
+          props.onLiveResize(node.splitId, ratio);
+        }
       }}
+      // Live, but not through React. A drag samples once per frame, and routing
+      // each sample through the workspace reducer re-rendered the application
+      // root — title bar, sidebar, every pane's tabs, every editor still
+      // mounted behind a hidden tab — to move two boxes. The geometry is
+      // written straight to the elements here and committed once on release.
       onPointerMove={(event) => {
         if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-          updateFromPointer(event);
+          const ratio = ratioFromPointer(event);
+          if (ratio !== undefined) {
+            props.onLiveResize(node.splitId, ratio);
+          }
         }
+      }}
+      onPointerUp={(event) => {
+        const ratio = ratioFromPointer(event);
+        if (ratio !== undefined) {
+          props.onLiveResize(node.splitId, ratio);
+        }
+        props.onReleaseResize(node.splitId);
       }}
       role="separator"
       style={workspaceBoxStyle(layout.box)}
@@ -807,6 +830,20 @@ export const WorkspacePaneHost = forwardRef<
   const paneEntryTimerRef = useRef<number | undefined>(undefined);
   const motionFrameRef = useRef<number | undefined>(undefined);
   const motionTimerRef = useRef<number | undefined>(undefined);
+  /**
+   * Ratios a divider is being dragged to, held outside React for the length of
+   * the gesture.
+   *
+   * A pointer drag samples once per animation frame, and every sample used to
+   * dispatch into the workspace reducer. That reducer lives in the application
+   * root, which memoises nothing, so moving a divider reconciled the whole
+   * application — title bar, menus, sidebar, both panes' tab bars, and every
+   * editor still mounted behind a hidden tab — sixty times a second, to change
+   * the geometry of two absolutely positioned boxes. The sidebar's own resizer
+   * never did this: `usePanelResize` writes a CSS variable during the drag and
+   * commits to state on release, and this is the same bargain for panes.
+   */
+  const dragRatiosRef = useRef(new Map<string, number>());
 
   const clearMotionTimers = useCallback((includePaneEntry = false): void => {
     if (motionFrameRef.current !== undefined) {
@@ -822,6 +859,79 @@ export const WorkspacePaneHost = forwardRef<
       paneEntryTimerRef.current = undefined;
     }
   }, []);
+
+  /**
+   * Push the dragged geometry onto the boxes the drag actually moves.
+   *
+   * `flattenWorkspaceLayout` already takes an override map — it is how a
+   * closing pane is animated to zero — so the same projection that renders the
+   * tree produces the dragged one, and there is no second geometry model to
+   * keep in step. Only panes and dividers are touched; nothing inside them is
+   * read or written, so this does not force a layout of its own.
+   */
+  const writeDragGeometry = useCallback((): void => {
+    const host = hostRef.current;
+    if (!host || dragRatiosRef.current.size === 0) {
+      return;
+    }
+    for (const entry of flattenWorkspaceLayout(
+      props.root,
+      dragRatiosRef.current,
+    )) {
+      const id =
+        entry.kind === 'pane' ? entry.node.paneId : entry.node.splitId;
+      const selector =
+        entry.kind === 'pane'
+          ? `.workspace-pane[data-pane-id="${CSS.escape(id)}"]`
+          : `.workspace-split__divider[data-split-id="${CSS.escape(id)}"]`;
+      const element = host.querySelector<HTMLElement>(selector);
+      if (!element) {
+        continue;
+      }
+      const box = workspaceBoxStyle(entry.box);
+      element.style.top = box.top;
+      element.style.left = box.left;
+      element.style.width = box.width;
+      element.style.height = box.height;
+      if (entry.kind === 'divider') {
+        element.setAttribute(
+          'aria-valuenow',
+          String(
+            Math.round(
+              (dragRatiosRef.current.get(entry.node.splitId) ??
+                entry.node.ratio) * 100,
+            ),
+          ),
+        );
+      }
+    }
+  }, [props.root]);
+
+  const handleLiveResize = useCallback(
+    (splitId: string, ratio: number): void => {
+      dragRatiosRef.current.set(splitId, ratio);
+      writeDragGeometry();
+    },
+    [writeDragGeometry],
+  );
+
+  const handleReleaseResize = useCallback(
+    (splitId: string): void => {
+      const ratio = dragRatiosRef.current.get(splitId);
+      dragRatiosRef.current.delete(splitId);
+      if (ratio !== undefined) {
+        props.onResizeSplit(splitId, ratio);
+      }
+    },
+    [props],
+  );
+
+  // A render triggered by anything else mid-drag — a save settling, a tab
+  // title arriving — would otherwise paint the boxes at the ratio the reducer
+  // still holds, and the divider would jump back to where the drag started.
+  useLayoutEffect(() => {
+    writeDragGeometry();
+  });
 
   const beginPaneExit = useCallback(
     (
@@ -1231,6 +1341,8 @@ export const WorkspacePaneHost = forwardRef<
           <SplitDivider
             key={entry.node.splitId}
             layout={entry}
+            onLiveResize={handleLiveResize}
+            onReleaseResize={handleReleaseResize}
             onResizeSplit={props.onResizeSplit}
             translate={props.translate}
           />
