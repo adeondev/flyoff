@@ -30,6 +30,9 @@ afterEach(() => {
 async function openLoupe(): Promise<void> {
   fireEvent.click(screen.getByRole('button', { name: 'Capturar cor' }));
   await screen.findByRole('button', { name: 'Esc para cancelar' });
+  await waitFor(() =>
+    expect(document.documentElement.dataset.colorPicking).toBe('true'),
+  );
 }
 
 /** Stands in for the window capture, which jsdom cannot produce. */
