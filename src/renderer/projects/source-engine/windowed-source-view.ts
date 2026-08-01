@@ -88,14 +88,79 @@ const WRAP_CALIBRATION_MINIMUM_LENGTH = 24;
 
 type LayoutResetMode = 'auto' | 'settled-resize';
 
+type DiagnosticResizeAblation =
+  | 'height-rebuild-final-only'
+  | 'height-rebuild-noop'
+  | 'height-rebuild-threshold'
+  | 'resize-coalesced'
+  | 'visible-editor-only';
+
+interface ResizeLayoutPolicy {
+  coalesce: boolean;
+  ignoreHidden: boolean;
+  settled: 'noop' | 'rebuild';
+  threshold: boolean;
+}
+
+function resizeLayoutPolicy(document: Document): ResizeLayoutPolicy {
+  const ablation = document.documentElement.dataset
+    .performanceDiagnosticAblation as DiagnosticResizeAblation | undefined;
+  switch (ablation) {
+    case 'height-rebuild-noop':
+      return {
+        coalesce: false,
+        ignoreHidden: false,
+        settled: 'noop',
+        threshold: false,
+      };
+    case 'height-rebuild-final-only':
+      return {
+        coalesce: false,
+        ignoreHidden: false,
+        settled: 'rebuild',
+        threshold: false,
+      };
+    case 'height-rebuild-threshold':
+      return {
+        coalesce: false,
+        ignoreHidden: false,
+        settled: 'rebuild',
+        threshold: true,
+      };
+    case 'resize-coalesced':
+      return {
+        coalesce: true,
+        ignoreHidden: false,
+        settled: 'rebuild',
+        threshold: true,
+      };
+    case 'visible-editor-only':
+      return {
+        coalesce: true,
+        ignoreHidden: true,
+        settled: 'rebuild',
+        threshold: true,
+      };
+    default:
+      return {
+        coalesce: true,
+        ignoreHidden: false,
+        settled: 'rebuild',
+        threshold: true,
+      };
+  }
+}
+
 export interface SourceLayoutWorkDiagnostics {
   coalescedResizeNotifications: number;
   fullLayoutResets: number;
   heightMapRebuilds: number;
+  hiddenResizeSkips: number;
   insignificantResizePasses: number;
   liveResizePasses: number;
   resizeNotifications: number;
   scheduledLayoutPasses: number;
+  settledResizeNoops: number;
   settledResizeRebuilds: number;
   skippedWidthRebuilds: number;
 }
@@ -297,6 +362,7 @@ export class WindowedSourceView implements SourceViewAdapter {
   private readonly resizeObserver?: ResizeObserver;
   private readonly rowResizeObserver?: ResizeObserver;
   private readonly layoutObserver?: MutationObserver;
+  private readonly resizeLayoutPolicy: ResizeLayoutPolicy;
   private readonly handleCompositionEnd: () => void;
   private readonly handleCompositionStart: () => void;
   private readonly handleInputFocusChange: () => void;
@@ -341,10 +407,12 @@ export class WindowedSourceView implements SourceViewAdapter {
     coalescedResizeNotifications: 0,
     fullLayoutResets: 0,
     heightMapRebuilds: 0,
+    hiddenResizeSkips: 0,
     insignificantResizePasses: 0,
     liveResizePasses: 0,
     resizeNotifications: 0,
     scheduledLayoutPasses: 0,
+    settledResizeNoops: 0,
     settledResizeRebuilds: 0,
     skippedWidthRebuilds: 0,
   };
@@ -405,6 +473,7 @@ export class WindowedSourceView implements SourceViewAdapter {
     private readonly root: HTMLDivElement,
     options: WindowedSourceViewOptions,
   ) {
+    this.resizeLayoutPolicy = resizeLayoutPolicy(root.ownerDocument);
     this.model = createSourceDocumentModel(options.source);
     this.selection = normalizedSelection(
       options.selection,
@@ -482,7 +551,7 @@ export class WindowedSourceView implements SourceViewAdapter {
     this.handleScrollEnd = () => {
       options.onScrollEnd?.(this.root.scrollTop, this.selfInducedScroll);
     };
-    this.handleWindowResize = () => this.requestLayoutReset();
+    this.handleWindowResize = () => this.requestResizeLayout();
     this.handleInputFocusChange = () => {
       this.selectionDirty = true;
       this.requestRender();
@@ -536,14 +605,12 @@ export class WindowedSourceView implements SourceViewAdapter {
     const ResizeObserverConstructor =
       root.ownerDocument.defaultView?.ResizeObserver;
     if (ResizeObserverConstructor) {
-      // ResizeObserver may report the same transition through more than one
-      // observation. One scheduled pass consumes the latest width.
+      // The production policy consumes duplicate observations in one
+      // pre-paint pass. Diagnostic policies can expose the earlier stages of
+      // that optimization without changing ordinary application behavior.
       this.resizeObserver = new ResizeObserverConstructor(() => {
         this.layoutWork.resizeNotifications += 1;
-        if (this.layoutResetScheduled) {
-          this.layoutWork.coalescedResizeNotifications += 1;
-        }
-        this.requestLayoutReset();
+        this.requestResizeLayout('auto', true);
       });
       this.resizeObserver.observe(root);
       this.rowResizeObserver = new ResizeObserverConstructor(() => {
@@ -1315,6 +1382,62 @@ export class WindowedSourceView implements SourceViewAdapter {
     ].join('\u0000');
   }
 
+  private hasVisibleResizeBox(): boolean {
+    if (
+      !this.root.isConnected ||
+      this.root.clientWidth <= 0 ||
+      this.root.clientHeight <= 0
+    ) {
+      return false;
+    }
+    const view = this.root.ownerDocument.defaultView;
+    if (!view) {
+      return true;
+    }
+    for (
+      let element: HTMLElement | null = this.root;
+      element;
+      element = element.parentElement
+    ) {
+      const styles = view.getComputedStyle(element);
+      if (
+        styles.display === 'none' ||
+        styles.visibility === 'hidden' ||
+        styles.visibility === 'collapse' ||
+        styles.getPropertyValue('content-visibility') === 'hidden'
+      ) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private requestResizeLayout(
+    mode: LayoutResetMode = 'auto',
+    trackCoalescing = false,
+  ): void {
+    if (this.disposed) {
+      return;
+    }
+    if (
+      this.resizeLayoutPolicy.ignoreHidden &&
+      !this.hasVisibleResizeBox()
+    ) {
+      this.layoutWork.hiddenResizeSkips += 1;
+      this.layoutResetDeferred = false;
+      this.cancelSettledResize();
+      return;
+    }
+    if (this.resizeLayoutPolicy.coalesce) {
+      if (trackCoalescing && this.layoutResetScheduled) {
+        this.layoutWork.coalescedResizeNotifications += 1;
+      }
+      this.requestLayoutReset(mode);
+      return;
+    }
+    this.resetLayout(mode);
+  }
+
   private requestLayoutReset(mode: LayoutResetMode = 'auto'): void {
     if (this.disposed) {
       return;
@@ -1346,6 +1469,15 @@ export class WindowedSourceView implements SourceViewAdapter {
 
   private resetLayout(mode: LayoutResetMode = 'auto'): void {
     if (this.disposed) {
+      return;
+    }
+    if (
+      this.resizeLayoutPolicy.ignoreHidden &&
+      !this.hasVisibleResizeBox()
+    ) {
+      this.layoutWork.hiddenResizeSkips += 1;
+      this.layoutResetDeferred = false;
+      this.cancelSettledResize();
       return;
     }
     if (
@@ -1397,6 +1529,7 @@ export class WindowedSourceView implements SourceViewAdapter {
         this.heightFontSize * this.wrapCharFactor,
       );
       if (
+        this.resizeLayoutPolicy.threshold &&
         this.liveResizeWidth >= 0 &&
         Math.abs(this.layoutWidth - this.liveResizeWidth) <
           visibleMeasurementThreshold
@@ -1417,6 +1550,16 @@ export class WindowedSourceView implements SourceViewAdapter {
       this.render();
       this.resettingLayout = false;
       this.scheduleSettledResize();
+      return;
+    }
+
+    if (
+      mode === 'settled-resize' &&
+      this.resizeLayoutPolicy.settled === 'noop'
+    ) {
+      this.layoutWork.settledResizeNoops += 1;
+      this.cancelSettledResize();
+      this.resettingLayout = false;
       return;
     }
 
@@ -1500,7 +1643,7 @@ export class WindowedSourceView implements SourceViewAdapter {
     this.settledResizePending = true;
     this.settledResizeWidth = this.root.clientWidth;
     if (!view) {
-      this.resetLayout('settled-resize');
+      this.requestResizeLayout('settled-resize');
       return;
     }
     if (this.resizeSettleTimer !== undefined) {
@@ -1508,7 +1651,7 @@ export class WindowedSourceView implements SourceViewAdapter {
     }
     this.resizeSettleTimer = view.setTimeout(() => {
       this.resizeSettleTimer = undefined;
-      this.requestLayoutReset('settled-resize');
+      this.requestResizeLayout('settled-resize');
     }, RESIZE_SETTLE_MS);
   }
 

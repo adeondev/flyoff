@@ -4,11 +4,28 @@ export type DiagnosticControlKind =
   | 'transform'
   | 'transform-js';
 
+export const PERFORMANCE_DIAGNOSTIC_ABLATIONS = [
+  'container-queries-off',
+  'current',
+  'editor-static',
+  'height-rebuild-final-only',
+  'height-rebuild-noop',
+  'height-rebuild-threshold',
+  'resize-coalesced',
+  'transitions-off',
+  'visible-editor-only',
+] as const;
+
 export type PerformanceDiagnosticAblation =
-  | 'container-queries-off'
-  | 'current'
-  | 'editor-static'
-  | 'transitions-off';
+  (typeof PERFORMANCE_DIAGNOSTIC_ABLATIONS)[number];
+
+export function isPerformanceDiagnosticAblation(
+  value: string,
+): value is PerformanceDiagnosticAblation {
+  return (PERFORMANCE_DIAGNOSTIC_ABLATIONS as readonly string[]).includes(
+    value,
+  );
+}
 
 export interface RendererPerformanceDiagnosticConfig {
   ablation: PerformanceDiagnosticAblation;
@@ -94,10 +111,12 @@ export interface DiagnosticSourceLayoutWork {
   coalescedResizeNotifications: number;
   fullLayoutResets: number;
   heightMapRebuilds: number;
+  hiddenResizeSkips: number;
   insignificantResizePasses: number;
   liveResizePasses: number;
   resizeNotifications: number;
   scheduledLayoutPasses: number;
+  settledResizeNoops: number;
   settledResizeRebuilds: number;
   skippedWidthRebuilds: number;
 }

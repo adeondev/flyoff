@@ -203,7 +203,17 @@ async function main() {
   const { reportPath, tracePath } = resolveOutputPaths(outputArguments[0]);
   const ablation = diagnosticSetting(
     'FLYOFF_PERFORMANCE_DIAGNOSTIC_ABLATION',
-    ['current', 'editor-static', 'transitions-off', 'container-queries-off'],
+    [
+      'current',
+      'editor-static',
+      'transitions-off',
+      'container-queries-off',
+      'height-rebuild-noop',
+      'height-rebuild-final-only',
+      'height-rebuild-threshold',
+      'resize-coalesced',
+      'visible-editor-only',
+    ],
     'current',
   );
   const suite = diagnosticSetting(

@@ -11,6 +11,7 @@ import type {
 } from 'electron';
 
 import {
+  isPerformanceDiagnosticAblation,
   rendererPerformanceDiagnosticSource,
   type DiagnosticCadenceReport,
   type DiagnosticRect,
@@ -103,7 +104,7 @@ export interface PackagedPerformanceDiagnosticReport {
   renderer: RendererDiagnosticEnvironment;
   runtime: RuntimeDiagnosticsReport;
   scenarios: Record<string, PackagedPerformanceScenarioReport>;
-  schemaVersion: 2;
+  schemaVersion: 3;
   trace: {
     analysis: ChromiumTraceAnalysis | null;
     categories: readonly string[];
@@ -190,14 +191,9 @@ export function parsePackagedPerformanceDiagnosticOptions(
       `--${PERFORMANCE_DIAGNOSTIC_TRACE_SWITCH} must be full or off.`,
     );
   }
-  if (
-    ablation !== 'container-queries-off' &&
-    ablation !== 'current' &&
-    ablation !== 'editor-static' &&
-    ablation !== 'transitions-off'
-  ) {
+  if (!isPerformanceDiagnosticAblation(ablation)) {
     throw new Error(
-      `--${PERFORMANCE_DIAGNOSTIC_ABLATION_SWITCH} must be current, editor-static, transitions-off, or container-queries-off.`,
+      `--${PERFORMANCE_DIAGNOSTIC_ABLATION_SWITCH} names an unsupported ablation.`,
     );
   }
   if (ablation === 'editor-static' && suite === 'full') {
@@ -303,6 +299,8 @@ function sourceLayoutWorkDelta(
       after.coalescedResizeNotifications - before.coalescedResizeNotifications,
     fullLayoutResets: after.fullLayoutResets - before.fullLayoutResets,
     heightMapRebuilds: after.heightMapRebuilds - before.heightMapRebuilds,
+    hiddenResizeSkips:
+      after.hiddenResizeSkips - before.hiddenResizeSkips,
     insignificantResizePasses:
       after.insignificantResizePasses - before.insignificantResizePasses,
     liveResizePasses: after.liveResizePasses - before.liveResizePasses,
@@ -310,6 +308,8 @@ function sourceLayoutWorkDelta(
       after.resizeNotifications - before.resizeNotifications,
     scheduledLayoutPasses:
       after.scheduledLayoutPasses - before.scheduledLayoutPasses,
+    settledResizeNoops:
+      after.settledResizeNoops - before.settledResizeNoops,
     settledResizeRebuilds:
       after.settledResizeRebuilds - before.settledResizeRebuilds,
     skippedWidthRebuilds:
@@ -754,7 +754,7 @@ export async function runPackagedPerformanceDiagnostic(
     renderer,
     runtime,
     scenarios,
-    schemaVersion: 2,
+    schemaVersion: 3,
     trace: {
       analysis: traceAnalysis,
       categories: traceRecorded ? TRACE_CATEGORIES : [],

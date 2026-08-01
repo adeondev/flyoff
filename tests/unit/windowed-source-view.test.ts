@@ -66,6 +66,7 @@ describe('windowed source view', () => {
       view.dispose();
     }
     document.body.replaceChildren();
+    delete document.documentElement.dataset.performanceDiagnosticAblation;
     vi.unstubAllGlobals();
     vi.useRealTimers();
   });
@@ -396,6 +397,201 @@ describe('windowed source view', () => {
     await flushLayoutWork();
     expect(rebuildHeightMap).toHaveBeenCalledOnce();
     expect(view.layoutWork.settledResizeRebuilds).toBe(1);
+  });
+
+  it('keeps settled width rebuilds as a diagnostic no-op without suppressing configuration rebuilds', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    document.documentElement.dataset.performanceDiagnosticAblation =
+      'height-rebuild-noop';
+    const view = createView(
+      Array.from({ length: 500 }, (_, index) => `line ${index}`).join('\n'),
+    );
+    const root = view.input.closest(
+      '.markdown-source__editor',
+    ) as HTMLDivElement;
+    const editor = root.closest('.markdown-editor') as HTMLElement;
+    const rebuildHeightMap = vi.spyOn(
+      view as unknown as { rebuildHeightMap(): void },
+      'rebuildHeightMap',
+    );
+
+    editor.dataset.wrap = 'false';
+    await flushLayoutWork();
+    expect(rebuildHeightMap).toHaveBeenCalledOnce();
+    expect(view.layoutWork.fullLayoutResets).toBe(1);
+    rebuildHeightMap.mockClear();
+
+    for (const width of [760, 720]) {
+      Object.defineProperty(root, 'clientWidth', {
+        configurable: true,
+        value: width,
+      });
+      ResizeObserverStub.instances[0]!.trigger();
+    }
+
+    expect(view.layoutWork.liveResizePasses).toBe(2);
+    expect(view.layoutWork.insignificantResizePasses).toBe(0);
+    expect(rebuildHeightMap).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(100);
+    await flushLayoutWork();
+
+    expect(rebuildHeightMap).not.toHaveBeenCalled();
+    expect(view.layoutWork.settledResizeNoops).toBe(1);
+    expect(view.layoutWork.settledResizeRebuilds).toBe(0);
+  });
+
+  it('rebuilds exactly once after final-only live resize passes settle', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    document.documentElement.dataset.performanceDiagnosticAblation =
+      'height-rebuild-final-only';
+    const view = createView(
+      Array.from({ length: 500 }, (_, index) => `line ${index}`).join('\n'),
+    );
+    const root = view.input.closest(
+      '.markdown-source__editor',
+    ) as HTMLDivElement;
+    const rebuildHeightMap = vi.spyOn(
+      view as unknown as { rebuildHeightMap(): void },
+      'rebuildHeightMap',
+    );
+
+    for (const width of [798, 795]) {
+      Object.defineProperty(root, 'clientWidth', {
+        configurable: true,
+        value: width,
+      });
+      ResizeObserverStub.instances[0]!.trigger();
+    }
+
+    expect(view.layoutWork.liveResizePasses).toBe(2);
+    expect(view.layoutWork.insignificantResizePasses).toBe(0);
+    expect(rebuildHeightMap).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(100);
+    await flushLayoutWork();
+
+    expect(rebuildHeightMap).toHaveBeenCalledOnce();
+    expect(view.layoutWork.settledResizeRebuilds).toBe(1);
+    expect(view.layoutWork.settledResizeNoops).toBe(0);
+  });
+
+  it('accumulates one-glyph width movement before a threshold live pass', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    document.documentElement.dataset.performanceDiagnosticAblation =
+      'height-rebuild-threshold';
+    const view = createView(
+      Array.from({ length: 500 }, (_, index) => `line ${index}`).join('\n'),
+    );
+    const root = view.input.closest(
+      '.markdown-source__editor',
+    ) as HTMLDivElement;
+    const rebuildHeightMap = vi.spyOn(
+      view as unknown as { rebuildHeightMap(): void },
+      'rebuildHeightMap',
+    );
+
+    for (const width of [798, 795]) {
+      Object.defineProperty(root, 'clientWidth', {
+        configurable: true,
+        value: width,
+      });
+      ResizeObserverStub.instances[0]!.trigger();
+    }
+    expect(view.layoutWork.insignificantResizePasses).toBe(2);
+    expect(view.layoutWork.liveResizePasses).toBe(0);
+
+    Object.defineProperty(root, 'clientWidth', {
+      configurable: true,
+      value: 790,
+    });
+    ResizeObserverStub.instances[0]!.trigger();
+
+    expect(view.layoutWork.liveResizePasses).toBe(1);
+    expect(rebuildHeightMap).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(100);
+    await flushLayoutWork();
+    expect(rebuildHeightMap).toHaveBeenCalledOnce();
+  });
+
+  it('coalesces resize observations into one pre-paint threshold pass', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    document.documentElement.dataset.performanceDiagnosticAblation =
+      'resize-coalesced';
+    const view = createView(
+      Array.from({ length: 500 }, (_, index) => `line ${index}`).join('\n'),
+    );
+    const root = view.input.closest(
+      '.markdown-source__editor',
+    ) as HTMLDivElement;
+
+    Object.defineProperty(root, 'clientWidth', {
+      configurable: true,
+      value: 780,
+    });
+    ResizeObserverStub.instances[0]!.trigger();
+    Object.defineProperty(root, 'clientWidth', {
+      configurable: true,
+      value: 760,
+    });
+    ResizeObserverStub.instances[0]!.trigger();
+
+    expect(view.layoutWork.liveResizePasses).toBe(0);
+    expect(view.layoutWork.scheduledLayoutPasses).toBe(1);
+    expect(view.layoutWork.coalescedResizeNotifications).toBe(1);
+
+    await flushLayoutWork();
+
+    expect(view.layoutWork.liveResizePasses).toBe(1);
+    expect(view.layoutWork.skippedWidthRebuilds).toBe(1);
+  });
+
+  it('skips hidden boxes but keeps every geometrically visible pane eligible', async () => {
+    document.documentElement.dataset.performanceDiagnosticAblation =
+      'visible-editor-only';
+    const activeView = createView('active');
+    const inactiveView = createView('inactive');
+    const activeRoot = activeView.input.closest(
+      '.markdown-source__editor',
+    ) as HTMLDivElement;
+    const inactiveRoot = inactiveView.input.closest(
+      '.markdown-source__editor',
+    ) as HTMLDivElement;
+    const activePane = document.createElement('section');
+    activePane.className = 'workspace-pane workspace-pane--active';
+    const inactivePane = document.createElement('section');
+    inactivePane.className = 'workspace-pane';
+    activeRoot.parentElement!.replaceWith(activePane);
+    activePane.append(activeRoot.parentElement!);
+    inactiveRoot.parentElement!.replaceWith(inactivePane);
+    inactivePane.append(inactiveRoot.parentElement!);
+
+    Object.defineProperty(activeRoot, 'clientWidth', {
+      configurable: true,
+      value: 0,
+    });
+    ResizeObserverStub.instances[0]!.trigger();
+    expect(activeView.layoutWork.hiddenResizeSkips).toBe(1);
+    expect(activeView.layoutWork.scheduledLayoutPasses).toBe(0);
+
+    Object.defineProperty(inactiveRoot, 'clientWidth', {
+      configurable: true,
+      value: 640,
+    });
+    ResizeObserverStub.instances[2]!.trigger();
+    await flushLayoutWork();
+    expect(inactiveView.layoutWork.liveResizePasses).toBe(1);
+    expect(inactiveView.layoutWork.hiddenResizeSkips).toBe(0);
+
+    inactivePane.style.display = 'none';
+    Object.defineProperty(inactiveRoot, 'clientWidth', {
+      configurable: true,
+      value: 620,
+    });
+    ResizeObserverStub.instances[2]!.trigger();
+    expect(inactiveView.layoutWork.hiddenResizeSkips).toBe(1);
+    expect(inactiveView.layoutWork.liveResizePasses).toBe(1);
   });
 
   it('does not let its own scroll correction count as the reader scrolling', async () => {

@@ -9,7 +9,10 @@ import {
   PERFORMANCE_DIAGNOSTIC_TRACE_SWITCH,
   parsePackagedPerformanceDiagnosticOptions,
 } from '../../src/main/performance/packaged-performance-diagnostic';
-import { rendererPerformanceDiagnosticSource } from '../../src/main/performance/renderer-performance-diagnostic';
+import {
+  PERFORMANCE_DIAGNOSTIC_ABLATIONS,
+  rendererPerformanceDiagnosticSource,
+} from '../../src/main/performance/renderer-performance-diagnostic';
 
 describe('packaged performance diagnostic options', () => {
   it('serializes the isolated renderer bootstrap as executable JavaScript', () => {
@@ -86,6 +89,29 @@ describe('packaged performance diagnostic options', () => {
     },
   );
 
+  it.each([
+    'height-rebuild-noop',
+    'height-rebuild-final-only',
+    'height-rebuild-threshold',
+    'resize-coalesced',
+    'visible-editor-only',
+  ] as const)('parses the %s resize ablation', (ablation) => {
+    const reportPath = path.resolve('performance.json');
+
+    expect(
+      parsePackagedPerformanceDiagnosticOptions([
+        'Flyoff.exe',
+        `--${PERFORMANCE_DIAGNOSTIC_SWITCH}=${reportPath}`,
+        `--${PERFORMANCE_DIAGNOSTIC_ABLATION_SWITCH}=${ablation}`,
+        `--${PERFORMANCE_DIAGNOSTIC_SUITE_SWITCH}=resize`,
+      ]),
+    ).toMatchObject({ ablation, suite: 'resize' });
+  });
+
+  it('keeps the parser and renderer ablation catalog synchronized', () => {
+    expect(PERFORMANCE_DIAGNOSTIC_ABLATIONS).toHaveLength(9);
+  });
+
   it('rejects a full editor suite with the static rectangle', () => {
     const reportPath = path.resolve('performance.json');
 
@@ -108,7 +134,7 @@ describe('packaged performance diagnostic options', () => {
         `--${PERFORMANCE_DIAGNOSTIC_SWITCH}=${reportPath}`,
         `--${PERFORMANCE_DIAGNOSTIC_ABLATION_SWITCH}=paint-off`,
       ]),
-    ).toThrow(/must be current/);
+    ).toThrow(/unsupported ablation/);
     expect(() =>
       parsePackagedPerformanceDiagnosticOptions([
         'Flyoff.exe',
