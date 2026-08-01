@@ -669,6 +669,20 @@ export class WindowedSourceView implements SourceViewAdapter {
     return this.model;
   }
 
+  synchronizeLayout(): void {
+    if (
+      !this.layoutResetDeferred &&
+      this.layoutWidth === this.root.clientWidth &&
+      this.layoutSignature === this.readLayoutSignature()
+    ) {
+      return;
+    }
+    this.cancelSettledResize();
+    this.settledResizePending = true;
+    this.settledResizeWidth = this.root.clientWidth;
+    this.resetLayout('settled-resize');
+  }
+
   getChangeRange() {
     return this.model.change;
   }

@@ -346,6 +346,182 @@ test('keeps the reading position when a note is split into an adjacent pane', as
       Math.abs(closeDrift),
       `closing the pane moved the note by ${closeDrift} lines`,
     ).toBeLessThanOrEqual(1);
+
+    const rightNoteName = 'Right pane note';
+    await page.getByRole('button', { name: labels.add }).click();
+    await page
+      .getByRole('dialog', { name: labels.add })
+      .getByRole('option', { name: new RegExp(`^${labels.note}`) })
+      .click();
+    await nameInput.fill(rightNoteName);
+    await nameInput.press('Enter');
+    const rightNoteTab = page.getByRole('tab', {
+      exact: true,
+      name: rightNoteName,
+    });
+    await expect(rightNoteTab).toHaveAttribute('aria-selected', 'true');
+    const rightNotePane = page
+      .locator('.workspace-pane')
+      .filter({ has: rightNoteTab });
+    const rightEditor = rightNotePane.locator(
+      '.markdown-source__editor:visible',
+    );
+    await expect(rightEditor).toBeVisible();
+    await rightEditor.locator('.md-line').first().click();
+    await page.keyboard.insertText('Right pane content');
+    await expect(rightEditor).toContainText('Right pane content');
+    await settle(page, 800);
+    await expect(
+      page.locator(
+        '.markdown-editor__status--dirty, .markdown-editor__status--saving',
+      ),
+    ).toHaveCount(0, { timeout: 15_000 });
+    await rightNotePane
+      .locator('.page-tab')
+      .filter({ has: rightNoteTab })
+      .locator('.page-tab__close')
+      .click();
+    await expect(page.getByRole('tab', { name: rightNoteName })).toHaveCount(0);
+    await expect(editor).toBeVisible();
+    await settle(page);
+
+    const beforeDraggedSplit = await readAnchor(page);
+    const tree = page.getByRole('tree');
+    const rightTreeNote = tree.locator('.project-tree__item').filter({
+      has: page.getByRole('button', {
+        exact: true,
+        name: rightNoteName,
+      }),
+    });
+    await expect(rightTreeNote).toBeVisible();
+    const survivingPane = page.locator('.workspace-pane').first();
+    const survivingPaneBounds = await survivingPane.boundingBox();
+    expect(survivingPaneBounds).not.toBeNull();
+    const drag = await page.evaluateHandle(() => new DataTransfer());
+    await rightTreeNote.dispatchEvent('dragstart', { dataTransfer: drag });
+    const dropPoint = {
+      x: survivingPaneBounds!.x + survivingPaneBounds!.width - 18,
+      y: survivingPaneBounds!.y + survivingPaneBounds!.height / 2,
+    };
+    await survivingPane.dispatchEvent('dragover', {
+      clientX: dropPoint.x,
+      clientY: dropPoint.y,
+      dataTransfer: drag,
+    });
+    await survivingPane.dispatchEvent('drop', {
+      clientX: dropPoint.x,
+      clientY: dropPoint.y,
+      dataTransfer: drag,
+    });
+    await rightTreeNote.dispatchEvent('dragend', { dataTransfer: drag });
+    await drag.dispose();
+
+    await expect(page.locator('.workspace-pane')).toHaveCount(2);
+    await expect(rightNoteTab).toHaveAttribute('aria-selected', 'true');
+    await expect(
+      rightNotePane.locator('.markdown-source__editor:visible'),
+    ).toContainText('Right pane content');
+    await settle(page, 1_500);
+    const afterDraggedSplit = await readAnchor(page);
+    expect(
+      Math.abs(afterDraggedSplit.line - beforeDraggedSplit.line),
+      `dragging a note right moved the surviving note: ${JSON.stringify({
+        afterDraggedSplit,
+        beforeDraggedSplit,
+      })}`,
+    ).toBeLessThanOrEqual(1);
+
+    const survivingPaneId = await survivingPane.getAttribute('data-pane-id');
+    expect(survivingPaneId).toBeTruthy();
+    await page.evaluate((paneId) => {
+      const watchWindow = window as typeof window & {
+        __flyoffCloseAnchorWatch?: { done: boolean; lines: number[] };
+      };
+      const report = { done: false, lines: [] as number[] };
+      watchWindow.__flyoffCloseAnchorWatch = report;
+      const deadline = performance.now() + 2_000;
+      const schedule = () => {
+        requestAnimationFrame(() => window.setTimeout(sample, 0));
+      };
+      const sample = () => {
+        const pane = document.querySelector<HTMLElement>(
+          `.workspace-pane[data-pane-id="${CSS.escape(paneId!)}"]`,
+        );
+        const root = pane?.querySelector<HTMLElement>(
+          '.markdown-source__editor',
+        );
+        if (root) {
+          const rootRect = root.getBoundingClientRect();
+          let line = Number.POSITIVE_INFINITY;
+          for (const element of root.querySelectorAll<HTMLElement>('.md-line')) {
+            const candidate = Number.parseInt(element.dataset.line ?? '', 10);
+            const rect = element.getBoundingClientRect();
+            if (
+              Number.isFinite(candidate) &&
+              rect.bottom > rootRect.top + 0.5 &&
+              rect.top < rootRect.bottom - 0.5
+            ) {
+              line = Math.min(line, candidate);
+            }
+          }
+          if (Number.isFinite(line)) {
+            report.lines.push(line);
+          }
+        }
+        if (performance.now() < deadline) {
+          schedule();
+        } else {
+          report.done = true;
+        }
+      };
+      schedule();
+    }, survivingPaneId);
+
+    await rightNotePane
+      .locator('.page-tab')
+      .filter({ has: rightNoteTab })
+      .locator('.page-tab__close')
+      .click();
+    await expect(page.locator('.workspace-pane')).toHaveCount(1);
+    await expect
+      .poll(
+        () =>
+          page.evaluate(
+            () =>
+              Boolean(
+                (
+                  window as typeof window & {
+                    __flyoffCloseAnchorWatch?: { done: boolean };
+                  }
+                ).__flyoffCloseAnchorWatch?.done,
+              ),
+          ),
+        { timeout: 5_000 },
+      )
+      .toBe(true);
+    await settle(page, 1_500);
+    const restoredAfterDrag = await readAnchor(page);
+    const closeAfterDragDrift =
+      restoredAfterDrag.line - afterDraggedSplit.line;
+    expect(
+      Math.abs(closeAfterDragDrift),
+      `closing the dragged note moved the survivor by ${closeAfterDragDrift} lines`,
+    ).toBeLessThanOrEqual(1);
+    const transientLines = await page.evaluate(
+      () =>
+        (
+          window as typeof window & {
+            __flyoffCloseAnchorWatch?: { lines: number[] };
+          }
+        ).__flyoffCloseAnchorWatch?.lines ?? [],
+    );
+    expect(transientLines.length).toBeGreaterThan(0);
+    expect(
+      Math.max(...transientLines) - Math.min(...transientLines),
+      `closing the dragged note produced a transient anchor jump: ${JSON.stringify(
+        transientLines,
+      )}`,
+    ).toBeLessThanOrEqual(1);
   } finally {
     await stopApplication(app);
     await rm(userDataPath, { force: true, recursive: true });

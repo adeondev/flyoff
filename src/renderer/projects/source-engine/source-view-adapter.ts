@@ -18,6 +18,7 @@ export interface SourceViewAdapter {
   focus(): void;
   sourceOffsetAtPoint(x: number, y: number): number | undefined;
   sourceCaretRect(offset: number): DOMRect | undefined;
+  synchronizeLayout?(): void;
   getVisibleLineElements?(): readonly HTMLElement[];
   getChangeRange?(): SourceChangeRange | undefined;
 }

@@ -46,6 +46,7 @@ import {
   type MarkdownTypingColor,
 } from './source-typing-color';
 import { MarkdownReadingView } from './MarkdownReadingView';
+import { getSourceViewAdapter } from './source-engine/source-view-adapter';
 import { windowedMarkdownViewFor } from './source-engine/windowed-markdown-view';
 import { MarkdownFocusShelf } from './MarkdownFocusShelf';
 import { MarkdownSourceContextMenu } from './MarkdownSourceContextMenu';
@@ -194,6 +195,9 @@ export const MarkdownEditor = forwardRef<
   const restoredScrollRef = useRef<
     { element: HTMLElement; key: string } | undefined
   >(undefined);
+  const visibleInactiveSourceRef = useRef<
+    { element: HTMLElement; key: string } | undefined
+  >(undefined);
   const publishLiveSelection = useCallback(
     (selection: SourceSelection): void => {
       pendingLiveSelectionRef.current = selection;
@@ -288,23 +292,27 @@ export const MarkdownEditor = forwardRef<
     }
     const editor = editorRef.current;
     if (!active) {
-      // React applies `hidden` to the panel in the same commit that flips
-      // `active`, and it does so in the mutation phase — before this layout
-      // effect runs. By now the editor sits inside `display: none`, where
-      // `scrollTop` reads 0 no matter where the reader actually was. Reporting
-      // that zero persisted it and lost the position on every tab switch, so
-      // geometry is only trusted while the element still has a box. When it has
-      // none there is nothing new to report anyway: the scroll listener already
-      // persisted the real position while the note was on screen.
-      if (editor && editor.clientHeight > 0) {
-        sourceViewportRef.current.left = editor.scrollLeft;
-        sourceViewportRef.current.recorded = true;
-        if (editor.scrollTop !== scrollTop) {
-          onScrollChange?.(editor.scrollTop, false);
-        }
+      // `active` also becomes false when this page remains visible inside a
+      // pane that merely lost workspace focus. Its current pixel offset then
+      // belongs to that pane width and must stay under the source view's
+      // line-anchored resize control. Only a page with no box needs its saved
+      // offset restored when it becomes visible again.
+      if (!editor || editor.clientHeight <= 0) {
+        restoredScrollRef.current = undefined;
+        visibleInactiveSourceRef.current = undefined;
+      } else {
+        visibleInactiveSourceRef.current = { element: editor, key };
       }
-      restoredScrollRef.current = undefined;
       return;
+    }
+    const visibleInactive = visibleInactiveSourceRef.current;
+    visibleInactiveSourceRef.current = undefined;
+    if (
+      editor &&
+      visibleInactive?.element === editor &&
+      visibleInactive.key === key
+    ) {
+      getSourceViewAdapter(editor)?.synchronizeLayout?.();
     }
     // Restore the saved offset when the note comes back on screen, never while
     // it is already on screen. A stored pixel offset belongs to the layout it

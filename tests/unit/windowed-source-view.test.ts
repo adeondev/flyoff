@@ -182,6 +182,49 @@ describe('windowed source view', () => {
     expect(view.layoutWork.settledResizeRebuilds).toBe(1);
   });
 
+  it('commits a known final width once when pane exit synchronizes layout', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const view = createView(
+      Array.from(
+        { length: 2_000 },
+        (_, index) => `line ${index} with enough text to wrap at pane widths`,
+      ).join('\n'),
+    );
+    const root = view.input.closest(
+      '.markdown-source__editor',
+    ) as HTMLDivElement;
+    root.scrollTop = 24 * 300;
+    root.dispatchEvent(new Event('scroll'));
+    flushFrames();
+    const heightMap = (
+      view as unknown as {
+        heightMap: { indexAtOffset(offset: number): number };
+      }
+    ).heightMap;
+    const anchor = heightMap.indexAtOffset(root.scrollTop);
+    const rebuildHeightMap = vi.spyOn(
+      view as unknown as { rebuildHeightMap(): void },
+      'rebuildHeightMap',
+    );
+
+    Object.defineProperty(root, 'clientWidth', {
+      configurable: true,
+      value: 640,
+    });
+    view.synchronizeLayout();
+
+    expect(rebuildHeightMap).toHaveBeenCalledOnce();
+    expect(view.layoutWork.settledResizeRebuilds).toBe(1);
+    expect(heightMap.indexAtOffset(root.scrollTop)).toBe(anchor);
+
+    view.synchronizeLayout();
+    vi.advanceTimersByTime(100);
+    await flushLayoutWork();
+
+    expect(rebuildHeightMap).toHaveBeenCalledOnce();
+    expect(view.layoutWork.settledResizeRebuilds).toBe(1);
+  });
+
   it('mounts a full physical viewport while width expands', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const view = createView(

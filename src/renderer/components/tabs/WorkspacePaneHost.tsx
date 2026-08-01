@@ -12,6 +12,7 @@ import {
   type ReactNode,
   type CSSProperties,
 } from 'react';
+import { flushSync } from 'react-dom';
 
 import ellipsisIcon from '../../../../public/images/icons/actions/ellipsis.svg';
 import splitRightIcon from '../../../../public/images/icons/actions/split-right.svg';
@@ -32,6 +33,7 @@ import type {
   TabPresentation,
   Translate,
 } from '../../pages/page-types';
+import { getSourceViewAdapter } from '../../projects/source-engine/source-view-adapter';
 import { MaskedIcon } from '../MaskedIcon';
 import { ContextMenu, DropdownMenu, type MenuItem } from '../menu';
 import { getTooltipTargetProps } from '../tooltip';
@@ -954,9 +956,31 @@ export const WorkspacePaneHost = forwardRef<
       return new Promise((resolve) => {
         motionFrameRef.current = window.requestAnimationFrame(() => {
           motionFrameRef.current = undefined;
-          setMotion((current) =>
-            current?.kind === 'exit' ? { ...current, ratios } : current,
-          );
+          const exitingPaneIds = new Set(paneIds);
+          const synchronizeSurvivingSourceLayouts = (): void => {
+            for (const root of
+              hostRef.current?.querySelectorAll<HTMLElement>(
+                '.markdown-source__editor',
+              ) ?? []) {
+              const paneId = root.closest<HTMLElement>('.workspace-pane')
+                ?.dataset.paneId;
+              if (
+                !paneId ||
+                exitingPaneIds.has(paneId) ||
+                root.clientWidth <= 0 ||
+                root.clientHeight <= 0
+              ) {
+                continue;
+              }
+              getSourceViewAdapter(root)?.synchronizeLayout?.();
+            }
+          };
+          flushSync(() => {
+            setMotion((current) =>
+              current?.kind === 'exit' ? { ...current, ratios } : current,
+            );
+          });
+          synchronizeSurvivingSourceLayouts();
           // Release the collapsed geometry even if the close never lands, so a
           // rejected close cannot leave the workspace stuck mid-animation.
           motionTimerRef.current = window.setTimeout(() => {
@@ -965,7 +989,10 @@ export const WorkspacePaneHost = forwardRef<
               current?.kind === 'exit' ? undefined : current,
             );
           }, durationMs + PANE_MOTION_RELEASE_MS);
-          window.setTimeout(resolve, durationMs + PANE_MOTION_TAIL_MS);
+          window.setTimeout(() => {
+            synchronizeSurvivingSourceLayouts();
+            resolve();
+          }, durationMs + PANE_MOTION_TAIL_MS);
         });
       });
     },

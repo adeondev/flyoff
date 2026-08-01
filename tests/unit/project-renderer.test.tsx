@@ -1863,6 +1863,131 @@ describe('Markdown editor', () => {
     expect(onScrollChange).toHaveBeenLastCalledWith(144, true);
   });
 
+  it('does not persist or restore a width-specific offset when a visible pane loses focus', () => {
+    const original: MarkdownDocument = {
+      nodeId: note.nodeId,
+      content: Array.from({ length: 100 }, (_, index) => `Line ${index}`).join(
+        '\n',
+      ),
+      readOnly: false,
+      revision: '1'.repeat(64),
+    };
+    const controller = new MarkdownDocumentController({
+      reload: vi.fn(async () => ({ ok: true as const, value: original })),
+      save: vi.fn(async () => ({ ok: true as const, value: original })),
+    });
+    const onScrollChange = vi.fn();
+    const view = render(
+      <MarkdownEditor
+        active
+        controller={controller}
+        document={original}
+        onScrollChange={onScrollChange}
+        scrollTop={72}
+        translate={translate}
+      />,
+    );
+    const editor = screen.getByRole('textbox', {
+      name: 'projects.editorLabel',
+    });
+    Object.defineProperty(editor, 'clientHeight', {
+      configurable: true,
+      value: 600,
+    });
+
+    view.rerender(
+      <MarkdownEditor
+        active={false}
+        controller={controller}
+        document={original}
+        onScrollChange={onScrollChange}
+        scrollTop={72}
+        translate={translate}
+      />,
+    );
+    editor.scrollTop = 500;
+    const afterDocumentLoad = vi.fn();
+    view.rerender(
+      <MarkdownEditor
+        active={false}
+        controller={controller}
+        document={original}
+        onScrollChange={afterDocumentLoad}
+        scrollTop={72}
+        translate={translate}
+      />,
+    );
+
+    expect(afterDocumentLoad).not.toHaveBeenCalled();
+
+    editor.scrollTop = 72;
+    view.rerender(
+      <MarkdownEditor
+        active
+        controller={controller}
+        document={original}
+        onScrollChange={afterDocumentLoad}
+        scrollTop={500}
+        translate={translate}
+      />,
+    );
+
+    expect(editor.scrollTop).toBe(72);
+  });
+
+  it('restores the saved offset after the editor was actually hidden', () => {
+    const original: MarkdownDocument = {
+      nodeId: note.nodeId,
+      content: Array.from({ length: 100 }, (_, index) => `Line ${index}`).join(
+        '\n',
+      ),
+      readOnly: false,
+      revision: '1'.repeat(64),
+    };
+    const controller = new MarkdownDocumentController({
+      reload: vi.fn(async () => ({ ok: true as const, value: original })),
+      save: vi.fn(async () => ({ ok: true as const, value: original })),
+    });
+    const view = render(
+      <MarkdownEditor
+        active
+        controller={controller}
+        document={original}
+        scrollTop={72}
+        translate={translate}
+      />,
+    );
+    const editor = screen.getByRole('textbox', {
+      name: 'projects.editorLabel',
+    });
+    Object.defineProperty(editor, 'clientHeight', {
+      configurable: true,
+      value: 0,
+    });
+
+    view.rerender(
+      <MarkdownEditor
+        active={false}
+        controller={controller}
+        document={original}
+        scrollTop={72}
+        translate={translate}
+      />,
+    );
+    editor.scrollTop = 0;
+    view.rerender(
+      <MarkdownEditor
+        active
+        controller={controller}
+        document={original}
+        scrollTop={144}
+        translate={translate}
+      />,
+    );
+
+    expect(editor.scrollTop).toBe(144);
+  });
+
   it('preserves both source scroll axes across an immediate mode switch', () => {
     const original: MarkdownDocument = {
       nodeId: note.nodeId,
