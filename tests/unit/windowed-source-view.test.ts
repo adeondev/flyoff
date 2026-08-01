@@ -97,19 +97,14 @@ describe('windowed source view', () => {
     }
   }
 
-  /**
-   * One pass of the frames queued so far, without draining the frames those
-   * callbacks queue in turn. `flushFrames` runs to quiescence, which hides
-   * whether work happened in this frame or the next one — and that difference
-   * is the whole question here.
-   */
-  function runOneFramePass(): void {
-    for (const callback of frames.splice(0)) {
-      callback(performance.now());
-    }
+  async function flushLayoutWork(): Promise<void> {
+    await Promise.resolve();
+    await Promise.resolve();
+    flushFrames();
   }
 
-  it('repositions the lines in the same frame that re-anchors the scroll', () => {
+  it('keeps a rewrapped viewport covered before the next frame', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const source = Array.from(
       { length: 2_000 },
       (_, index) =>
@@ -117,15 +112,38 @@ describe('windowed source view', () => {
     ).join('\n');
     const view = createView(source);
     const root = view.input.closest<HTMLElement>('.markdown-source__editor')!;
-    const layer = root.querySelector<HTMLElement>('.source-window__lines')!;
+    const canvas = root.querySelector<HTMLElement>('.source-window__canvas')!;
     flushFrames();
 
     root.scrollTop = 6_000;
     root.dispatchEvent(new Event('scroll'));
     flushFrames();
+    vi.advanceTimersByTime(100);
+    flushFrames();
+
+    const visibleLines = view.getVisibleLineElements();
+    const lineRects = visibleLines.map((line) =>
+      vi.spyOn(line, 'getBoundingClientRect').mockReturnValue(
+        new DOMRect(0, 0, 400, 24),
+      ),
+    );
+    ResizeObserverStub.instances[1]!.trigger();
+    flushFrames();
 
     const scrollBefore = root.scrollTop;
-    const transformBefore = layer.style.transform;
+    const heightMap = (
+      view as unknown as {
+        heightMap: { indexAtOffset(offset: number): number };
+      }
+    ).heightMap;
+    const anchorBefore = heightMap.indexAtOffset(scrollBefore);
+    lineRects.forEach((rect) =>
+      rect.mockReturnValue(new DOMRect(0, 0, 400, 48)),
+    );
+    const rebuildHeightMap = vi.spyOn(
+      view as unknown as { rebuildHeightMap(): void },
+      'rebuildHeightMap',
+    );
 
     // Halving the width is what opening a pane beside the note does: every
     // line re-wraps, the height map is rebuilt, and the scroller is re-anchored
@@ -136,21 +154,31 @@ describe('windowed source view', () => {
     });
     ResizeObserverStub.instances[0]!.trigger();
 
-    // Exactly the frame the layout reset runs in, and nothing after it.
-    runOneFramePass();
+    expect(rebuildHeightMap).not.toHaveBeenCalled();
+    // Resize layout runs in a microtask, before Blink crosses the paint
+    // boundary that follows ResizeObserver delivery.
+    await Promise.resolve();
 
     expect(
       root.scrollTop,
       'the layout reset should have re-anchored the scroll position',
     ).not.toBe(scrollBefore);
-    // The lines are placed by this transform. Leaving it at the old value
-    // while the scroller has already moved into the new coordinate space is a
-    // frame where the viewport looks at a region no line was placed in — the
-    // note visibly blanks and comes back when a pane opens beside it.
-    expect(
-      layer.style.transform,
-      'the line layer still holds the offset from the previous layout',
-    ).not.toBe(transformBefore);
+    expect(heightMap.indexAtOffset(root.scrollTop)).toBe(anchorBefore);
+    const mounted = view
+      .getVisibleLineElements()
+      .map((line) => Number(line.dataset.line) - 1);
+    expect(Math.min(...mounted)).toBeLessThanOrEqual(anchorBefore);
+    expect(Math.max(...mounted)).toBeGreaterThan(anchorBefore);
+    expect(Number.parseFloat(canvas.style.height)).toBeGreaterThanOrEqual(
+      root.scrollTop + root.clientHeight,
+    );
+
+    expect(view.layoutWork.liveResizePasses).toBe(1);
+    expect(view.layoutWork.skippedWidthRebuilds).toBe(1);
+    vi.advanceTimersByTime(100);
+    await flushLayoutWork();
+    expect(rebuildHeightMap).toHaveBeenCalledOnce();
+    expect(view.layoutWork.settledResizeRebuilds).toBe(1);
   });
 
   it('removes every listener and observer it installed when disposed', () => {
@@ -189,7 +217,8 @@ describe('windowed source view', () => {
     removeSpy.mockRestore();
   });
 
-  it('remeasures resized rows and invalidates measurements on layout reset', () => {
+  it('remeasures resized rows and invalidates measurements on layout reset', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const view = createView();
     const first = view.getVisibleLineElements()[0]!;
     vi.spyOn(first, 'getBoundingClientRect').mockReturnValue(
@@ -215,13 +244,20 @@ describe('windowed source view', () => {
       { configurable: true, value: 640 },
     );
     ResizeObserverStub.instances[0]!.trigger();
-    flushFrames();
+    await flushLayoutWork();
+
+    expect(rebuildHeightMap).not.toHaveBeenCalled();
+    expect(canvas.style.height).toBe('48px');
+
+    vi.advanceTimersByTime(100);
+    await flushLayoutWork();
 
     expect(rebuildHeightMap).toHaveBeenCalledOnce();
-    expect(canvas.style.height).toBe('48px');
+    expect(view.layoutWork.settledResizeRebuilds).toBe(1);
   });
 
-  it('does not re-derive the scroll anchor during a burst of layout resets', () => {
+  it('does not re-derive the scroll anchor during a burst of layout resets', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const source = Array.from(
       { length: 900 },
       (_, index) => `line ${index} com texto suficiente para ocupar espaco`,
@@ -246,19 +282,24 @@ describe('windowed source view', () => {
       'rebuildHeightMap',
     );
 
-    // A pane animation resizes the editor on every frame, and every frame is a
-    // full layout reset. Re-deriving the anchor from the already-corrected
-    // scroll position is what let the error compound upward.
+    // A pane animation resizes the editor on every frame. The bounded live
+    // passes keep one anchor, then one settled reset rebuilds the full map.
     for (const width of [780, 760, 740, 720, 700, 690, 680]) {
       Object.defineProperty(root, 'clientWidth', {
         configurable: true,
         value: width,
       });
       ResizeObserverStub.instances[0]!.trigger();
-      flushFrames();
+      await flushLayoutWork();
     }
 
-    expect(rebuildHeightMap.mock.calls.length).toBeGreaterThan(1);
+    expect(rebuildHeightMap).not.toHaveBeenCalled();
+    expect(view.layoutWork.liveResizePasses).toBe(7);
+    expect(view.layoutWork.skippedWidthRebuilds).toBe(7);
+    vi.advanceTimersByTime(100);
+    await flushLayoutWork();
+    expect(rebuildHeightMap).toHaveBeenCalledOnce();
+    expect(view.layoutWork.settledResizeRebuilds).toBe(1);
     // Not derived during the burst at all. A resize is only observed after the
     // browser has re-wrapped the mounted lines, so anything read once the burst
     // has started already describes a position the text has moved to. The
@@ -266,6 +307,95 @@ describe('windowed source view', () => {
     // which the height map and the text on screen still agreed, which is why
     // this is now zero rather than one.
     expect(captureScrollAnchor).not.toHaveBeenCalled();
+  });
+
+  it('defers sub-glyph resize work until width movement accumulates', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const view = createView(
+      Array.from(
+        { length: 2_000 },
+        (_, index) => `line ${index} with enough text to wrap`,
+      ).join('\n'),
+    );
+    const root = view.input.closest(
+      '.markdown-source__editor',
+    ) as HTMLDivElement;
+    const measureLines = vi.spyOn(
+      view as unknown as { measureLines(scrollTop: number): void },
+      'measureLines',
+    );
+    const rebuildHeightMap = vi.spyOn(
+      view as unknown as { rebuildHeightMap(): void },
+      'rebuildHeightMap',
+    );
+
+    for (const width of [798, 795]) {
+      Object.defineProperty(root, 'clientWidth', {
+        configurable: true,
+        value: width,
+      });
+      ResizeObserverStub.instances[0]!.trigger();
+      await flushLayoutWork();
+    }
+
+    expect(view.layoutWork.insignificantResizePasses).toBe(2);
+    expect(view.layoutWork.liveResizePasses).toBe(0);
+    expect(measureLines).not.toHaveBeenCalled();
+    expect(rebuildHeightMap).not.toHaveBeenCalled();
+
+    Object.defineProperty(root, 'clientWidth', {
+      configurable: true,
+      value: 790,
+    });
+    ResizeObserverStub.instances[0]!.trigger();
+    await flushLayoutWork();
+
+    expect(view.layoutWork.liveResizePasses).toBe(1);
+    expect(view.layoutWork.skippedWidthRebuilds).toBe(3);
+    expect(measureLines).toHaveBeenCalledOnce();
+    expect(rebuildHeightMap).not.toHaveBeenCalled();
+
+    vi.advanceTimersByTime(100);
+    await flushLayoutWork();
+    expect(rebuildHeightMap).toHaveBeenCalledOnce();
+  });
+
+  it('does not settle a stale width when geometry changes before delivery', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const view = createView(
+      Array.from({ length: 500 }, (_, index) => `line ${index}`).join('\n'),
+    );
+    const root = view.input.closest(
+      '.markdown-source__editor',
+    ) as HTMLDivElement;
+    const rebuildHeightMap = vi.spyOn(
+      view as unknown as { rebuildHeightMap(): void },
+      'rebuildHeightMap',
+    );
+
+    Object.defineProperty(root, 'clientWidth', {
+      configurable: true,
+      value: 640,
+    });
+    ResizeObserverStub.instances[0]!.trigger();
+    await flushLayoutWork();
+    expect(view.layoutWork.liveResizePasses).toBe(1);
+
+    vi.advanceTimersByTime(100);
+    Object.defineProperty(root, 'clientWidth', {
+      configurable: true,
+      value: 620,
+    });
+    await flushLayoutWork();
+
+    expect(rebuildHeightMap).not.toHaveBeenCalled();
+    expect(view.layoutWork.liveResizePasses).toBe(2);
+    expect(view.layoutWork.settledResizeRebuilds).toBe(0);
+
+    vi.advanceTimersByTime(100);
+    await flushLayoutWork();
+    expect(rebuildHeightMap).toHaveBeenCalledOnce();
+    expect(view.layoutWork.settledResizeRebuilds).toBe(1);
   });
 
   it('does not let its own scroll correction count as the reader scrolling', async () => {
@@ -299,7 +429,7 @@ describe('windowed source view', () => {
       value: 640,
     });
     ResizeObserverStub.instances[0]!.trigger();
-    flushFrames();
+    await flushLayoutWork();
 
     expect(measureLines).toHaveBeenCalled();
   });
@@ -510,7 +640,8 @@ describe('windowed source view', () => {
     expect(root.scrollTop).toBeLessThan(24 * 800);
   });
 
-  it('coalesces duplicate layout notifications and ignores hidden geometry', () => {
+  it('coalesces duplicate layout notifications and ignores hidden geometry', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     const view = createView(
       Array.from({ length: 500 }, (_, index) => `line ${index}`).join('\n'),
     );
@@ -528,7 +659,7 @@ describe('windowed source view', () => {
     });
     ResizeObserverStub.instances[0]!.trigger();
     window.dispatchEvent(new Event('resize'));
-    flushFrames();
+    await flushLayoutWork();
     expect(rebuildHeightMap).not.toHaveBeenCalled();
 
     Object.defineProperty(root, 'clientWidth', {
@@ -536,9 +667,18 @@ describe('windowed source view', () => {
       value: 640,
     });
     ResizeObserverStub.instances[0]!.trigger();
+    ResizeObserverStub.instances[0]!.trigger();
     window.dispatchEvent(new Event('resize'));
-    flushFrames();
+    await flushLayoutWork();
+    expect(rebuildHeightMap).not.toHaveBeenCalled();
+    expect(view.layoutWork.liveResizePasses).toBe(1);
+    expect(view.layoutWork.coalescedResizeNotifications).toBe(1);
+
+    vi.advanceTimersByTime(100);
+    await flushLayoutWork();
+
     expect(rebuildHeightMap).toHaveBeenCalledOnce();
+    expect(view.layoutWork.settledResizeRebuilds).toBe(1);
   });
 
   it('invalidates height estimates when wrapping preferences change', async () => {
@@ -552,8 +692,7 @@ describe('windowed source view', () => {
     );
 
     editor.dataset.wrap = 'false';
-    await Promise.resolve();
-    flushFrames();
+    await flushLayoutWork();
 
     expect(rebuildHeightMap).toHaveBeenCalledOnce();
   });

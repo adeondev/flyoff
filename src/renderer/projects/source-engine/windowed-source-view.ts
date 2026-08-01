@@ -60,6 +60,7 @@ const DEFAULT_LINE_HEIGHT = 24;
 const MIN_OVERSCAN_LINES = 12;
 const MAX_RENDERED_LINES = 300;
 const SCROLL_MEASUREMENT_IDLE_MS = 80;
+const RESIZE_SETTLE_MS = 80;
 /**
  * How long after the last layout reset the resize anchor is kept.
  *
@@ -84,6 +85,24 @@ const ANCHOR_STABLE_TOLERANCE_PX = 1;
 const DEFAULT_WRAP_CHAR_FACTOR = 0.54;
 /** Ignore very short lines when learning: they bound the factor too loosely. */
 const WRAP_CALIBRATION_MINIMUM_LENGTH = 24;
+
+type LayoutResetMode = 'auto' | 'settled-resize';
+
+export interface SourceLayoutWorkDiagnostics {
+  coalescedResizeNotifications: number;
+  fullLayoutResets: number;
+  heightMapRebuilds: number;
+  insignificantResizePasses: number;
+  liveResizePasses: number;
+  resizeNotifications: number;
+  scheduledLayoutPasses: number;
+  settledResizeRebuilds: number;
+  skippedWidthRebuilds: number;
+}
+
+type InstrumentedSourceRoot = HTMLDivElement & {
+  __flyoffSourceLayoutWork?: SourceLayoutWorkDiagnostics;
+};
 
 function normalizedSelection(
   selection: SourceSelection,
@@ -288,7 +307,8 @@ export class WindowedSourceView implements SourceViewAdapter {
   private activeLine = -1;
   private animationFrame?: number;
   private compositionTimer?: number;
-  private layoutResetFrame?: number;
+  private layoutResetScheduled = false;
+  private pendingLayoutResetMode: LayoutResetMode = 'auto';
   private resizeAnchor?: { fraction: number; line: number };
   /**
    * The reading position as of the last frame in which the height map and the
@@ -317,7 +337,22 @@ export class WindowedSourceView implements SourceViewAdapter {
     resets: 0,
     unconverged: 0,
   };
+  readonly layoutWork: SourceLayoutWorkDiagnostics = {
+    coalescedResizeNotifications: 0,
+    fullLayoutResets: 0,
+    heightMapRebuilds: 0,
+    insignificantResizePasses: 0,
+    liveResizePasses: 0,
+    resizeNotifications: 0,
+    scheduledLayoutPasses: 0,
+    settledResizeRebuilds: 0,
+    skippedWidthRebuilds: 0,
+  };
   private resizeAnchorTimer?: number;
+  private liveResizeWidth = -1;
+  private resizeSettleTimer?: number;
+  private settledResizePending = false;
+  private settledResizeWidth = -1;
   private layoutResetDeferred = false;
   private pendingRevealOffset?: number;
   private programmaticScrollTop?: number;
@@ -343,6 +378,7 @@ export class WindowedSourceView implements SourceViewAdapter {
   private heightWraps = true;
   private lineHeight = DEFAULT_LINE_HEIGHT;
   private layoutSignature = '';
+  private layoutConfigurationSignature = '';
   private measurementDirty = true;
   private inputMirror: SourceInputMirror;
   private model: SourceDocumentModel;
@@ -407,6 +443,10 @@ export class WindowedSourceView implements SourceViewAdapter {
       this.input,
     );
     root.replaceChildren(this.canvas);
+    Object.defineProperty(root, '__flyoffSourceLayoutWork', {
+      configurable: true,
+      value: this.layoutWork,
+    });
 
     this.handleScroll = () => {
       const view = this.root.ownerDocument.defaultView;
@@ -496,22 +536,15 @@ export class WindowedSourceView implements SourceViewAdapter {
     const ResizeObserverConstructor =
       root.ownerDocument.defaultView?.ResizeObserver;
     if (ResizeObserverConstructor) {
-      // Synchronously, not on the next frame.
-      //
-      // The browser re-wraps the mounted lines the instant the width changes,
-      // so by the time this callback runs the text on screen is already taller
-      // or shorter than the height map says — while the scroll offset still
-      // describes the old wrap. Deferring the correction to an animation frame
-      // paints that disagreement first: during a pane animation, which changes
-      // the width on every frame, the reader watches the note step up and down
-      // by several lines before it settles.
-      //
-      // A resize observation is delivered after layout and before paint, which
-      // is the only place a correction can be made that the reader never sees.
-      // Nothing here resizes an observed element, so this cannot loop.
-      this.resizeObserver = new ResizeObserverConstructor(() =>
-        this.resetLayout(),
-      );
+      // ResizeObserver may report the same transition through more than one
+      // observation. One scheduled pass consumes the latest width.
+      this.resizeObserver = new ResizeObserverConstructor(() => {
+        this.layoutWork.resizeNotifications += 1;
+        if (this.layoutResetScheduled) {
+          this.layoutWork.coalescedResizeNotifications += 1;
+        }
+        this.requestLayoutReset();
+      });
       this.resizeObserver.observe(root);
       this.rowResizeObserver = new ResizeObserverConstructor(() => {
         this.measurementDirty = true;
@@ -557,6 +590,10 @@ export class WindowedSourceView implements SourceViewAdapter {
     this.unregisterAdapter = registerSourceViewAdapter(root, this);
     this.render();
     this.layoutSignature = this.readLayoutSignature();
+    this.layoutConfigurationSignature =
+      this.readLayoutConfigurationSignature();
+    this.layoutWidth = this.root.clientWidth;
+    this.liveResizeWidth = this.layoutWidth;
     this.syncInputMirror();
   }
 
@@ -923,14 +960,14 @@ export class WindowedSourceView implements SourceViewAdapter {
         this.scrollMeasurementTimer,
       );
     }
-    if (this.layoutResetFrame !== undefined) {
-      this.root.ownerDocument.defaultView?.cancelAnimationFrame(
-        this.layoutResetFrame,
-      );
-    }
     if (this.resizeAnchorTimer !== undefined) {
       this.root.ownerDocument.defaultView?.clearTimeout(
         this.resizeAnchorTimer,
+      );
+    }
+    if (this.resizeSettleTimer !== undefined) {
+      this.root.ownerDocument.defaultView?.clearTimeout(
+        this.resizeSettleTimer,
       );
     }
     this.resizeObserver?.disconnect();
@@ -955,6 +992,7 @@ export class WindowedSourceView implements SourceViewAdapter {
       this.handleWindowResize,
     );
     this.rendered.clear();
+    delete (this.root as InstrumentedSourceRoot).__flyoffSourceLayoutWork;
     this.root.replaceChildren();
   }
 
@@ -985,6 +1023,7 @@ export class WindowedSourceView implements SourceViewAdapter {
   private rebuildHeightMap(
     styles = getComputedStyle(this.root),
   ): void {
+    this.layoutWork.heightMapRebuilds += 1;
     this.floatClearanceLines.clear();
     const heights = new Array<number>(this.model.lines.length);
     this.floatAnchorLines = new Int32Array(this.model.lines.length);
@@ -1250,11 +1289,18 @@ export class WindowedSourceView implements SourceViewAdapter {
 
   private readLayoutSignature(): string {
     const editor = this.root.closest<HTMLElement>('.markdown-editor');
-    const workspace = this.root.closest<HTMLElement>('.workspace');
-    const documentRoot = this.root.ownerDocument.documentElement;
     return [
       this.root.clientWidth,
       editor?.clientWidth,
+      this.readLayoutConfigurationSignature(),
+    ].join('\u0000');
+  }
+
+  private readLayoutConfigurationSignature(): string {
+    const editor = this.root.closest<HTMLElement>('.markdown-editor');
+    const workspace = this.root.closest<HTMLElement>('.workspace');
+    const documentRoot = this.root.ownerDocument.documentElement;
+    return [
       editor?.dataset.contentPadding,
       editor?.dataset.contentWidth,
       editor?.dataset.lineNumbers,
@@ -1269,24 +1315,44 @@ export class WindowedSourceView implements SourceViewAdapter {
     ].join('\u0000');
   }
 
-  private requestLayoutReset(): void {
-    if (this.disposed || this.layoutResetFrame !== undefined) {
+  private requestLayoutReset(mode: LayoutResetMode = 'auto'): void {
+    if (this.disposed) {
+      return;
+    }
+    if (mode === 'settled-resize') {
+      this.pendingLayoutResetMode = mode;
+    }
+    if (this.layoutResetScheduled) {
       return;
     }
     const view = this.root.ownerDocument.defaultView;
-    if (!view) {
-      this.resetLayout();
-      return;
+    this.layoutWork.scheduledLayoutPasses += 1;
+    this.layoutResetScheduled = true;
+    // ResizeObserver runs after layout and before paint. A microtask coalesces
+    // duplicate notifications without crossing that paint boundary; an rAF
+    // here would show re-wrapped rows against the previous height map once.
+    const run = () => {
+      this.layoutResetScheduled = false;
+      const pendingMode = this.pendingLayoutResetMode;
+      this.pendingLayoutResetMode = 'auto';
+      this.resetLayout(pendingMode);
+    };
+    if (view) {
+      view.queueMicrotask(run);
+    } else {
+      queueMicrotask(run);
     }
-    this.layoutResetFrame = view.requestAnimationFrame(() => {
-      this.layoutResetFrame = undefined;
-      this.resetLayout();
-    });
   }
 
-  private resetLayout(): void {
+  private resetLayout(mode: LayoutResetMode = 'auto'): void {
     if (this.disposed) {
       return;
+    }
+    if (
+      mode === 'settled-resize' &&
+      this.root.clientWidth !== this.settledResizeWidth
+    ) {
+      mode = 'auto';
     }
     if (
       !this.root.isConnected ||
@@ -1298,48 +1364,83 @@ export class WindowedSourceView implements SourceViewAdapter {
       // width it had before and the reader somewhere else entirely, so it is
       // remembered and retried as soon as there is geometry again.
       this.layoutResetDeferred = true;
+      this.settledResizePending ||= mode === 'settled-resize';
       return;
     }
     this.layoutResetDeferred = false;
     this.resettingLayout = true;
-    this.layoutWidth = this.root.clientWidth;
     const signature = this.readLayoutSignature();
-    if (signature === this.layoutSignature) {
+    const configurationSignature =
+      this.readLayoutConfigurationSignature();
+    if (
+      mode === 'auto' &&
+      signature === this.layoutSignature
+    ) {
       this.forceRender = true;
       this.selectionDirty = true;
       this.resettingLayout = false;
       this.requestRender();
       return;
     }
+    const widthOnly =
+      configurationSignature === this.layoutConfigurationSignature;
+    this.layoutWidth = this.root.clientWidth;
     this.layoutSignature = signature;
+    this.layoutConfigurationSignature = configurationSignature;
+
+    const { anchor, hadAnchor } = this.holdResizeAnchor();
+    this.layoutGeneration += 1;
+    if (mode === 'auto' && widthOnly) {
+      this.layoutWork.skippedWidthRebuilds += 1;
+      const visibleMeasurementThreshold = Math.max(
+        4,
+        this.heightFontSize * this.wrapCharFactor,
+      );
+      if (
+        this.liveResizeWidth >= 0 &&
+        Math.abs(this.layoutWidth - this.liveResizeWidth) <
+          visibleMeasurementThreshold
+      ) {
+        this.layoutWork.insignificantResizePasses += 1;
+        this.resettingLayout = false;
+        this.scheduleSettledResize();
+        return;
+      }
+      // Mounted rows have already re-wrapped. Measuring just that bounded
+      // window keeps it and its anchor coherent while the pane is moving; the
+      // O(document) estimate rebuild waits until the final width is known.
+      this.liveResizeWidth = this.layoutWidth;
+      this.layoutWork.liveResizePasses += 1;
+      this.forceRender = true;
+      this.measurementDirty = true;
+      this.selectionDirty = true;
+      this.render();
+      this.resettingLayout = false;
+      this.scheduleSettledResize();
+      return;
+    }
+
+    if (mode === 'settled-resize') {
+      this.layoutWork.settledResizeRebuilds += 1;
+    } else {
+      this.cancelSettledResize();
+    }
+    this.settledResizePending = false;
+    this.settledResizeWidth = -1;
+    this.layoutWork.fullLayoutResets += 1;
     // Every measured height is about to be replaced by an estimate, so the
     // document's total height changes and a raw `scrollTop` would land on a
     // different line. The anchor is taken ONCE per resize burst: a pane
     // animation triggers a reset every frame, and re-deriving the anchor from
     // the already-corrected scroll position each time let rounding compound
     // into a drift of tens of lines, always upward.
-    const hadAnchor = this.resizeAnchor !== undefined;
-    const anchor =
-      this.resizeAnchor ?? this.stableAnchor ?? this.captureScrollAnchor();
-    this.resizeAnchor = anchor;
-    const view = this.root.ownerDocument.defaultView;
-    if (view) {
-      if (this.resizeAnchorTimer !== undefined) {
-        view.clearTimeout(this.resizeAnchorTimer);
-      }
-      this.resizeAnchorTimer = view.setTimeout(() => {
-        this.resizeAnchorTimer = undefined;
-        this.resizeAnchor = undefined;
-      }, RESIZE_ANCHOR_RELEASE_MS);
-    }
-
-    this.layoutGeneration += 1;
     this.measuredHeights = new WeakMap();
     for (const rendered of this.rendered.values()) {
       rendered.measuredHeight = undefined;
     }
     const styles = this.updateLineHeight();
     this.rebuildHeightMap(styles);
+    this.liveResizeWidth = this.layoutWidth;
 
     if (hadAnchor || anchor.line > 0 || anchor.fraction > 0) {
       // Proportional, so a line that changed height keeps the same relative
@@ -1371,6 +1472,55 @@ export class WindowedSourceView implements SourceViewAdapter {
       this.stabilizeAnchor(anchor);
     }
     this.resettingLayout = false;
+  }
+
+  private holdResizeAnchor(): {
+    anchor: { fraction: number; line: number };
+    hadAnchor: boolean;
+  } {
+    const hadAnchor = this.resizeAnchor !== undefined;
+    const anchor =
+      this.resizeAnchor ?? this.stableAnchor ?? this.captureScrollAnchor();
+    this.resizeAnchor = anchor;
+    const view = this.root.ownerDocument.defaultView;
+    if (view) {
+      if (this.resizeAnchorTimer !== undefined) {
+        view.clearTimeout(this.resizeAnchorTimer);
+      }
+      this.resizeAnchorTimer = view.setTimeout(() => {
+        this.resizeAnchorTimer = undefined;
+        this.resizeAnchor = undefined;
+      }, RESIZE_ANCHOR_RELEASE_MS);
+    }
+    return { anchor, hadAnchor };
+  }
+
+  private scheduleSettledResize(): void {
+    const view = this.root.ownerDocument.defaultView;
+    this.settledResizePending = true;
+    this.settledResizeWidth = this.root.clientWidth;
+    if (!view) {
+      this.resetLayout('settled-resize');
+      return;
+    }
+    if (this.resizeSettleTimer !== undefined) {
+      view.clearTimeout(this.resizeSettleTimer);
+    }
+    this.resizeSettleTimer = view.setTimeout(() => {
+      this.resizeSettleTimer = undefined;
+      this.requestLayoutReset('settled-resize');
+    }, RESIZE_SETTLE_MS);
+  }
+
+  private cancelSettledResize(): void {
+    if (this.resizeSettleTimer !== undefined) {
+      this.root.ownerDocument.defaultView?.clearTimeout(
+        this.resizeSettleTimer,
+      );
+      this.resizeSettleTimer = undefined;
+    }
+    this.settledResizePending = false;
+    this.settledResizeWidth = -1;
   }
 
   /**
@@ -1591,10 +1741,16 @@ export class WindowedSourceView implements SourceViewAdapter {
         (this.layoutWidth >= 0 && this.layoutWidth !== this.root.clientWidth)) &&
       !writeOnly &&
       !this.resettingLayout &&
+      !this.layoutResetScheduled &&
       this.root.clientWidth > 0 &&
       this.root.clientHeight > 0
     ) {
-      this.resetLayout();
+      this.resetLayout(
+        this.settledResizePending &&
+          this.root.clientWidth === this.settledResizeWidth
+          ? 'settled-resize'
+          : 'auto',
+      );
     }
     const paddingTop = this.paddingTop();
     const scrollTop =
