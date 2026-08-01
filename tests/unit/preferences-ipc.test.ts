@@ -79,7 +79,11 @@ describe('preferences IPC', () => {
       onThemeChanged,
       spellcheck,
       store,
-      runtimeHardwareAccelerationEnabled: false,
+      runtime: {
+        hardwareAccelerationEnabled: false,
+        graphicsBackend: 'opengl',
+        graphicsBackendSelectionAvailable: true,
+      },
     });
 
     const preferences = createDefaultFlyoffPreferences();
@@ -89,6 +93,8 @@ describe('preferences IPC', () => {
 
     expect(saved.preferences).toEqual(preferences);
     expect(saved.runtime.hardwareAccelerationEnabled).toBe(false);
+    expect(saved.runtime.graphicsBackend).toBe('opengl');
+    expect(saved.runtime.graphicsBackendSelectionAvailable).toBe(true);
     expect(saved.spellcheck.activeLanguages).toEqual(['pt-BR']);
     expect(spellcheck.setActiveLanguages).toHaveBeenCalledWith(['pt-BR']);
     expect(onThemeChanged).toHaveBeenCalledWith('basalt', expect.anything());

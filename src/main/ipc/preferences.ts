@@ -29,7 +29,7 @@ interface PreferencesHandlerOptions {
   ) => void;
   spellcheck: SpellcheckService;
   store: PreferencesStore;
-  runtimeHardwareAccelerationEnabled: boolean;
+  runtime: PreferencesSnapshot['runtime'];
 }
 
 function automaticLanguages(
@@ -63,13 +63,11 @@ export function applySpellcheckPreferences(
 function createSnapshot(
   store: PreferencesStore,
   spellcheck: SpellcheckService,
-  runtimeHardwareAccelerationEnabled: boolean,
+  runtime: PreferencesSnapshot['runtime'],
 ): PreferencesSnapshot {
   return {
     preferences: store.get(),
-    runtime: {
-      hardwareAccelerationEnabled: runtimeHardwareAccelerationEnabled,
-    },
+    runtime: { ...runtime },
     spellcheck: {
       ...spellcheck.getCapabilities(),
       availableLanguages: [...spellcheck.getAvailableLanguages()].sort(
@@ -106,14 +104,14 @@ export function registerPreferencesHandlers({
   onThemeChanged,
   spellcheck,
   store,
-  runtimeHardwareAccelerationEnabled,
+  runtime,
 }: PreferencesHandlerOptions): () => void {
   ipcMain.handle(GET_PREFERENCES_CHANNEL, (event) => {
     validateTrustedMainFrame(event, isAllowedUrl, 'Preferences');
     return createSnapshot(
       store,
       spellcheck,
-      runtimeHardwareAccelerationEnabled,
+      runtime,
     );
   });
 
@@ -133,7 +131,7 @@ export function registerPreferencesHandlers({
     return createSnapshot(
       store,
       spellcheck,
-      runtimeHardwareAccelerationEnabled,
+      runtime,
     );
   });
 
@@ -150,7 +148,7 @@ export function registerPreferencesHandlers({
     return createSnapshot(
       store,
       spellcheck,
-      runtimeHardwareAccelerationEnabled,
+      runtime,
     );
   });
 

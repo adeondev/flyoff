@@ -7,7 +7,7 @@ import {
 import { isProjectIdentifier } from './projects';
 import type { MediaGalleryViewState } from './media';
 
-export const PREFERENCES_VERSION = 8 as const;
+export const PREFERENCES_VERSION = 9 as const;
 export const PREFERENCES_MAX_BYTES = 64 * 1_024;
 
 export const GET_PREFERENCES_CHANNEL = 'flyoff:preferences:get' as const;
@@ -17,6 +17,7 @@ export const APPLY_WINDOW_THEME_CHANNEL =
   'flyoff:preferences:apply-window-theme' as const;
 
 export const STARTUP_BEHAVIORS = ['ask', 'restore', 'fresh'] as const;
+export const GRAPHICS_BACKENDS = ['automatic', 'opengl'] as const;
 export const FLYOFF_THEMES = ['flyoff', 'basalt'] as const;
 export const ACCENT_STRENGTHS = ['subtle', 'standard', 'strong'] as const;
 export const ACCENT_COLOR_PRESETS = [
@@ -83,6 +84,7 @@ export const MEDIA_GALLERY_PROJECT_STATE_LIMIT = 24;
 export const MEDIA_GALLERY_HISTORY_LIMIT = 12;
 
 export type StartupBehavior = (typeof STARTUP_BEHAVIORS)[number];
+export type GraphicsBackend = (typeof GRAPHICS_BACKENDS)[number];
 export type FlyoffTheme = (typeof FLYOFF_THEMES)[number];
 export type AccentStrength = (typeof ACCENT_STRENGTHS)[number];
 export type InterfaceFont = (typeof INTERFACE_FONTS)[number];
@@ -124,6 +126,7 @@ export interface FlyoffPreferences {
     saveOnWindowBlur: boolean;
     autosaveDelayMs: AutosaveDelay;
     hardwareAcceleration: boolean;
+    graphicsBackend: GraphicsBackend;
   };
   appearance: {
     theme: FlyoffTheme;
@@ -203,6 +206,8 @@ export interface PreferencesSnapshot {
   spellcheck: PreferencesSpellcheckState;
   runtime: {
     hardwareAccelerationEnabled: boolean;
+    graphicsBackend: GraphicsBackend;
+    graphicsBackendSelectionAvailable: boolean;
   };
 }
 
@@ -343,6 +348,7 @@ export function createDefaultFlyoffPreferences(): FlyoffPreferences {
       saveOnWindowBlur: true,
       autosaveDelayMs: 500,
       hardwareAcceleration: true,
+      graphicsBackend: 'automatic',
     },
     appearance: {
       theme: 'flyoff',
@@ -479,6 +485,12 @@ export function normalizeFlyoffPreferences(value: unknown): FlyoffPreferences {
         typeof general.hardwareAcceleration === 'boolean'
           ? general.hardwareAcceleration
           : defaults.general.hardwareAcceleration,
+      graphicsBackend: includes(
+        GRAPHICS_BACKENDS,
+        general.graphicsBackend,
+      )
+        ? general.graphicsBackend
+        : defaults.general.graphicsBackend,
     },
     appearance: {
       theme: includes(FLYOFF_THEMES, appearance.theme)
@@ -774,11 +786,13 @@ export function isPreferencesSnapshot(
   return (
     Object.keys(value).length === 3 &&
     Object.keys(value.spellcheck).length === 5 &&
-    Object.keys(value.runtime).length === 1 &&
+    Object.keys(value.runtime).length === 3 &&
     isFlyoffPreferences(value.preferences) &&
     isSpellcheckCapabilities(value.spellcheck) &&
     isLanguageList(value.spellcheck.availableLanguages) &&
     isLanguageList(value.spellcheck.activeLanguages) &&
-    typeof value.runtime.hardwareAccelerationEnabled === 'boolean'
+    typeof value.runtime.hardwareAccelerationEnabled === 'boolean' &&
+    includes(GRAPHICS_BACKENDS, value.runtime.graphicsBackend) &&
+    typeof value.runtime.graphicsBackendSelectionAvailable === 'boolean'
   );
 }

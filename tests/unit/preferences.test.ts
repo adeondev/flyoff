@@ -56,13 +56,14 @@ describe('Flyoff preferences', () => {
     expect(normalized.editor.fontSize).toBe(24);
     expect(normalized.editor.lineHeight).toBe(1.3);
     expect(normalized.spellcheck.languages).toEqual(['pt-BR']);
-    expect(normalized.version).toBe(8);
+    expect(normalized.version).toBe(9);
     expect(normalized.editor.emojiRecent).toEqual([]);
     expect(normalized.editor.emojiSkinTone).toBe(0);
     expect(normalized.appearance.accentColor).toBeNull();
     expect(normalized.editor.chromeLayout).toBe('focus');
     expect(normalized.editor.toolbarCollapsed).toBe(false);
     expect(normalized.general.hardwareAcceleration).toBe(true);
+    expect(normalized.general.graphicsBackend).toBe('automatic');
     expect(normalized.accessibility.focusIndicator).toBe('standard');
     expect(isFlyoffPreferences(normalized)).toBe(true);
     expect(isFlyoffPreferences({ ...normalized, extra: true })).toBe(false);
@@ -75,6 +76,7 @@ describe('Flyoff preferences', () => {
       general: {
         ...createDefaultFlyoffPreferences().general,
         hardwareAcceleration: undefined,
+        graphicsBackend: undefined,
       },
       accessibility: undefined,
       appearance: {
@@ -91,11 +93,12 @@ describe('Flyoff preferences', () => {
 
     const migrated = normalizeFlyoffPreferences(previous);
 
-    expect(migrated.version).toBe(8);
+    expect(migrated.version).toBe(9);
     expect(migrated.editor.emojiRecent).toEqual([]);
     expect(migrated.editor.emojiSkinTone).toBe(0);
     expect(migrated.appearance.accentColor).toBeNull();
     expect(migrated.general.hardwareAcceleration).toBe(true);
+    expect(migrated.general.graphicsBackend).toBe('automatic');
     expect(migrated.appearance.activePaneIndicator).toBe('subtle');
     expect(migrated.editor.highlightActiveLine).toBe(true);
     expect(migrated.editor.fontLigatures).toBe(true);
@@ -105,6 +108,19 @@ describe('Flyoff preferences', () => {
       focusIndicator: 'standard',
       reduceTransparency: false,
     });
+  });
+
+  it('preserves supported graphics backends and rejects unknown values', () => {
+    expect(
+      normalizeFlyoffPreferences({
+        general: { graphicsBackend: 'opengl' },
+      }).general.graphicsBackend,
+    ).toBe('opengl');
+    expect(
+      normalizeFlyoffPreferences({
+        general: { graphicsBackend: 'vulkan' },
+      }).general.graphicsBackend,
+    ).toBe('automatic');
   });
 
   it('normalizes bounded per-project media gallery view state', () => {

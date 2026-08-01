@@ -8,6 +8,7 @@ import {
   readdir,
   rm,
   stat,
+  writeFile,
 } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -210,6 +211,11 @@ async function main() {
     ['full', 'off'],
     'full',
   );
+  const graphicsBackend = diagnosticSetting(
+    'FLYOFF_PERFORMANCE_GRAPHICS_BACKEND',
+    ['automatic', 'opengl'],
+    'automatic',
+  );
   await mkdir(path.dirname(reportPath), { recursive: true });
   await Promise.all([
     assertOutputDoesNotExist(reportPath),
@@ -226,9 +232,15 @@ async function main() {
     mkdir(userDataPath, { recursive: true }),
     mkdir(projectParent, { recursive: true }),
   ]);
+  await writeFile(
+    path.join(userDataPath, 'preferences.json'),
+    `${JSON.stringify({ general: { graphicsBackend } }, null, 2)}\n`,
+    'utf8',
+  );
 
   process.stdout.write(`Performance report: ${reportPath}\n`);
   process.stdout.write(`Chromium trace: ${tracePath}\n`);
+  process.stdout.write(`Graphics backend preference: ${graphicsBackend}\n`);
 
   try {
     const args = [

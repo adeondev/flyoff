@@ -48,7 +48,11 @@ const defaultSpellcheck: PreferencesSpellcheckState = {
 
 const fallbackValue: FlyoffPreferencesContextValue = {
   preferences: createDefaultFlyoffPreferences(),
-  runtime: { hardwareAccelerationEnabled: true },
+  runtime: {
+    hardwareAccelerationEnabled: true,
+    graphicsBackend: 'automatic',
+    graphicsBackendSelectionAvailable: false,
+  },
   spellcheck: defaultSpellcheck,
   ready: true,
   saveStatus: 'idle',
@@ -126,6 +130,8 @@ export function useFlyoffPreferencesController():
     useState<PreferencesSpellcheckState>(defaultSpellcheck);
   const [runtime, setRuntime] = useState<PreferencesSnapshot['runtime']>({
     hardwareAccelerationEnabled: true,
+    graphicsBackend: 'automatic',
+    graphicsBackendSelectionAvailable: false,
   });
   const [ready, setReady] = useState(() => !api().getPreferences);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>('idle');

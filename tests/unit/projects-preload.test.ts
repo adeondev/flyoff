@@ -154,7 +154,11 @@ describe('project preload bridge', () => {
     const preferences = createDefaultFlyoffPreferences();
     const snapshot = {
       preferences,
-      runtime: { hardwareAccelerationEnabled: true },
+      runtime: {
+        hardwareAccelerationEnabled: true,
+        graphicsBackend: 'automatic',
+        graphicsBackendSelectionAvailable: false,
+      },
       spellcheck: {
         provider: 'chromium-hunspell' as const,
         canSelectLanguages: true,

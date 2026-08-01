@@ -121,7 +121,11 @@ function preferenceContext(
     resetAll: vi.fn(),
     resetSection: vi.fn(),
     restartApplication: vi.fn(async () => undefined),
-    runtime: { hardwareAccelerationEnabled: true },
+    runtime: {
+      hardwareAccelerationEnabled: true,
+      graphicsBackend: 'automatic',
+      graphicsBackendSelectionAvailable: false,
+    },
     saveStatus: 'idle',
     spellcheck: {
       activeLanguages: [],

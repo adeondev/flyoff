@@ -38,7 +38,11 @@ function snapshot(
 ): PreferencesSnapshot {
   return {
     preferences,
-    runtime: { hardwareAccelerationEnabled: true },
+    runtime: {
+      hardwareAccelerationEnabled: true,
+      graphicsBackend: 'automatic',
+      graphicsBackendSelectionAvailable: true,
+    },
     spellcheck: {
       provider: 'chromium-hunspell',
       canSelectLanguages: true,
@@ -78,7 +82,11 @@ describe('settings page', () => {
     const update = vi.fn();
     const value: FlyoffPreferencesContextValue = {
       preferences,
-      runtime: { hardwareAccelerationEnabled: true },
+      runtime: {
+        hardwareAccelerationEnabled: true,
+        graphicsBackend: 'automatic',
+        graphicsBackendSelectionAvailable: true,
+      },
       spellcheck: snapshot(preferences).spellcheck,
       ready: true,
       saveStatus: 'idle',
@@ -201,6 +209,109 @@ describe('settings page', () => {
       },
       { timeout: 1_000 },
     );
+  });
+
+  it('offers the restart-bound OpenGL compatibility backend on Windows', () => {
+    const preferences = createDefaultFlyoffPreferences();
+    preferences.general.graphicsBackend = 'opengl';
+    const update = vi.fn();
+    const value: FlyoffPreferencesContextValue = {
+      preferences,
+      runtime: {
+        hardwareAccelerationEnabled: true,
+        graphicsBackend: 'automatic',
+        graphicsBackendSelectionAvailable: true,
+      },
+      spellcheck: snapshot(preferences).spellcheck,
+      ready: true,
+      saveStatus: 'idle',
+      update,
+      resetAll: vi.fn(),
+      resetSection: vi.fn(),
+      restartApplication: vi.fn(() => Promise.resolve()),
+    };
+    const descriptor = createDescriptor({
+      type: 'internal',
+      pageId: INTERNAL_PAGE_IDS.settings,
+    });
+
+    render(
+      <FlyoffPreferencesProvider value={value}>
+        <SettingsPage
+          active
+          descriptor={descriptor}
+          onScrollChange={vi.fn()}
+          onStateChange={vi.fn()}
+          title={translate('settings.title')}
+          translate={translate}
+        />
+      </FlyoffPreferencesProvider>,
+    );
+
+    expect(
+      screen.getByRole('button', {
+        name: translate('settings.graphicsBackend'),
+      }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole('button', {
+        name: translate('settings.restartNow'),
+      }),
+    ).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: translate('settings.graphicsBackend'),
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole('menuitemcheckbox', {
+        name: translate('settings.automatic'),
+      }),
+    );
+    const updater = update.mock.calls.at(-1)?.[0] as
+      | ((current: typeof preferences) => typeof preferences)
+      | undefined;
+    expect(updater?.(preferences).general.graphicsBackend).toBe('automatic');
+  });
+
+  it('omits graphics backend selection when the platform does not support it', () => {
+    const preferences = createDefaultFlyoffPreferences();
+    const value: FlyoffPreferencesContextValue = {
+      preferences,
+      runtime: {
+        hardwareAccelerationEnabled: true,
+        graphicsBackend: 'automatic',
+        graphicsBackendSelectionAvailable: false,
+      },
+      spellcheck: snapshot(preferences).spellcheck,
+      ready: true,
+      saveStatus: 'idle',
+      update: vi.fn(),
+      resetAll: vi.fn(),
+      resetSection: vi.fn(),
+      restartApplication: vi.fn(() => Promise.resolve()),
+    };
+    const descriptor = createDescriptor({
+      type: 'internal',
+      pageId: INTERNAL_PAGE_IDS.settings,
+    });
+
+    render(
+      <FlyoffPreferencesProvider value={value}>
+        <SettingsPage
+          active
+          descriptor={descriptor}
+          onScrollChange={vi.fn()}
+          onStateChange={vi.fn()}
+          title={translate('settings.title')}
+          translate={translate}
+        />
+      </FlyoffPreferencesProvider>,
+    );
+
+    expect(
+      screen.queryByText(translate('settings.graphicsBackend')),
+    ).toBeNull();
   });
 
   it('persists a GPU preference before requesting a protected restart', async () => {

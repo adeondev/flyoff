@@ -146,7 +146,10 @@ if (e2eUserDataPath) {
 }
 
 const preferencesStore = new PreferencesStore(app.getPath('userData'));
-applyHardwareAccelerationPreference(app, preferencesStore.get());
+const graphicsBackend = applyHardwareAccelerationPreference(
+  app,
+  preferencesStore.get(),
+);
 
 function createE2eProjectDirectorySelector():
   | SelectProjectDirectory
@@ -515,8 +518,11 @@ async function startApplication(): Promise<void> {
     },
     spellcheck,
     store: preferencesStore,
-    runtimeHardwareAccelerationEnabled:
-      app.isHardwareAccelerationEnabled(),
+    runtime: {
+      hardwareAccelerationEnabled: app.isHardwareAccelerationEnabled(),
+      graphicsBackend,
+      graphicsBackendSelectionAvailable: platform === 'win32',
+    },
   });
   const projectDirectorySelector = createE2eProjectDirectorySelector();
   removeProjectHandlers = registerProjectHandlers({

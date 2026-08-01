@@ -300,6 +300,9 @@ export interface TranslationCatalog {
     autosaveDelayDescription: string;
     hardwareAcceleration: string;
     hardwareAccelerationDescription: string;
+    graphicsBackend: string;
+    graphicsBackendDescription: string;
+    graphicsBackendOpenGL: string;
     restartRequired: string;
     restartNow: string;
     theme: string;
@@ -1225,6 +1228,10 @@ export const ptBR = {
     hardwareAcceleration: 'Acelera\u00e7\u00e3o por hardware',
     hardwareAccelerationDescription:
       'Usa a GPU para desenhar a interface e manter movimentos mais fluidos.',
+    graphicsBackend: 'Renderiza\u00e7\u00e3o gr\u00e1fica',
+    graphicsBackendDescription:
+      'Use OpenGL apenas se o modo autom\u00e1tico apresentar baixa fluidez. A altera\u00e7\u00e3o exige reiniciar o Flyoff.',
+    graphicsBackendOpenGL: 'OpenGL (compatibilidade)',
     restartRequired: 'Rein\u00edcio necess\u00e1rio',
     restartNow: 'Reiniciar agora',
     theme: 'Tema',
@@ -2191,6 +2198,10 @@ export const enUS = {
     hardwareAcceleration: 'Hardware acceleration',
     hardwareAccelerationDescription:
       'Uses the GPU to draw the interface and keep motion smooth.',
+    graphicsBackend: 'Graphics renderer',
+    graphicsBackendDescription:
+      'Use OpenGL only if Automatic is not smooth. Changes require restarting Flyoff.',
+    graphicsBackendOpenGL: 'OpenGL (compatibility)',
     restartRequired: 'Restart required',
     restartNow: 'Restart now',
     theme: 'Theme',

@@ -27,6 +27,11 @@ export function GeneralSettings({
     runtime,
   } = useFlyoffPreferences();
   const [restarting, setRestarting] = useState(false);
+  const hardwareAccelerationRestartRequired =
+    general.hardwareAcceleration !== runtime.hardwareAccelerationEnabled;
+  const graphicsBackendRestartRequired =
+    runtime.graphicsBackendSelectionAvailable &&
+    general.graphicsBackend !== runtime.graphicsBackend;
   const startupOptions = [
     { value: 'ask', label: translate('settings.optionAsk') },
     { value: 'restore', label: translate('settings.optionRestore') },
@@ -39,6 +44,24 @@ export function GeneralSettings({
     { value: '1000', label: `1 ${translate('settings.seconds')}` },
     { value: '2000', label: `2 ${translate('settings.seconds')}` },
   ];
+
+  const restartPrompt = (
+    <div className="settings-runtime-restart">
+      <span>{translate('settings.restartRequired')}</span>
+      <button
+        disabled={restarting}
+        onClick={() => {
+          setRestarting(true);
+          void restartApplication().catch(() => {
+            setRestarting(false);
+          });
+        }}
+        type="button"
+      >
+        {translate('settings.restartNow')}
+      </button>
+    </div>
+  );
 
   return (
     <SettingsSection
@@ -80,26 +103,45 @@ export function GeneralSettings({
               update({ hardwareAcceleration })
             }
           />
-          {general.hardwareAcceleration !==
-          runtime.hardwareAccelerationEnabled ? (
-            <div className="settings-runtime-restart">
-              <span>{translate('settings.restartRequired')}</span>
-              <button
-                disabled={restarting}
-                onClick={() => {
-                  setRestarting(true);
-                  void restartApplication().catch(() => {
-                    setRestarting(false);
-                  });
-                }}
-                type="button"
-              >
-                {translate('settings.restartNow')}
-              </button>
-            </div>
-          ) : null}
+          {hardwareAccelerationRestartRequired &&
+          !graphicsBackendRestartRequired
+            ? restartPrompt
+            : null}
         </div>
       </SettingRow>
+      {runtime.graphicsBackendSelectionAvailable ? (
+        <SettingRow
+          description={translate('settings.graphicsBackendDescription')}
+          keywords={['OpenGL']}
+          query={query}
+          title={translate('settings.graphicsBackend')}
+        >
+          <div className="settings-runtime-control">
+            <SettingsSelect
+              label={translate('settings.graphicsBackend')}
+              onChange={(event) =>
+                update({
+                  graphicsBackend: event.currentTarget.value as
+                    | 'automatic'
+                    | 'opengl',
+                })
+              }
+              options={[
+                {
+                  value: 'automatic',
+                  label: translate('settings.automatic'),
+                },
+                {
+                  value: 'opengl',
+                  label: translate('settings.graphicsBackendOpenGL'),
+                },
+              ]}
+              value={general.graphicsBackend}
+            />
+            {graphicsBackendRestartRequired ? restartPrompt : null}
+          </div>
+        </SettingRow>
+      ) : null}
       <SettingRow
         description={translate('settings.focusEditorOnOpenDescription')}
         query={query}
