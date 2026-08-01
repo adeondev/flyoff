@@ -503,6 +503,36 @@ describe('windowed source view', () => {
     ).toBe(true);
   });
 
+  it('derives the ordinary-scroll anchor from the offset read before DOM writes', () => {
+    const source = Array.from(
+      { length: 500 },
+      (_, index) => `line ${index}`,
+    ).join('\n');
+    const view = createView(source);
+    const root = view.input.closest(
+      '.markdown-source__editor',
+    ) as HTMLDivElement;
+    const captureScrollAnchor = vi.spyOn(
+      view as unknown as {
+        captureScrollAnchor(): { fraction: number; line: number };
+      },
+      'captureScrollAnchor',
+    );
+
+    root.scrollTop = 24 * 200;
+    root.dispatchEvent(new Event('scroll'));
+    flushFrames();
+
+    expect(captureScrollAnchor).not.toHaveBeenCalled();
+    expect(
+      (
+        view as unknown as {
+          stableAnchor?: { fraction: number; line: number };
+        }
+      ).stableAnchor?.line,
+    ).toBe(200);
+  });
+
   it('defers row measurement until scrolling settles', async () => {
     const source = Array.from(
       { length: 500 },

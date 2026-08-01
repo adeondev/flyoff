@@ -1668,6 +1668,13 @@ export class WindowedSourceView implements SourceViewAdapter {
   /** Position of a line as a share of its own height, immune to it resizing. */
   private captureScrollAnchor(): { fraction: number; line: number } {
     const scrollTop = Math.max(0, this.root.scrollTop - this.paddingTop());
+    return this.scrollAnchorAt(scrollTop);
+  }
+
+  private scrollAnchorAt(scrollTop: number): {
+    fraction: number;
+    line: number;
+  } {
     const line = this.heightMap.indexAtOffset(scrollTop);
     const height = this.heightMap.heightAt(line);
     const within = scrollTop - this.heightMap.offsetAtIndex(line);
@@ -1820,21 +1827,25 @@ export class WindowedSourceView implements SourceViewAdapter {
       )}px)`;
       this.setCanvasHeight(nextViewport.totalHeight);
     }
+    let effectiveScrollTop = scrollTop;
     if (shouldMeasure) {
       this.measurementDirty = false;
-      this.measureLines(scrollTop);
+      effectiveScrollTop = this.measureLines(scrollTop);
       // Measuring replaces estimated heights with real ones, which can leave
       // the mounted range too short to cover the viewport. Re-projecting here
       // closes that strip in the same frame — but it has to be a projection,
       // not another full render: calling `render` again read the scroll
       // position and repainted the selection a second time per frame, and the
       // forced layout that costs starved the frame budget outright.
-      this.coverViewportAfterMeasurement(scrollTop);
+      this.coverViewportAfterMeasurement(effectiveScrollTop);
     }
     // Recorded only while no resize is in flight, so it always describes a
     // frame in which the map and the text on screen agreed.
     if (this.resizeAnchor === undefined && !writeOnly) {
-      this.stableAnchor = this.captureScrollAnchor();
+      // `scrollTop` was read before reconcileLines wrote to the DOM. Reading
+      // the property back here flushes those writes synchronously during every
+      // ordinary scroll frame, even though the offset is already in hand.
+      this.stableAnchor = this.scrollAnchorAt(effectiveScrollTop);
     }
     this.updateActiveLine();
     if (viewportDirty || this.selectionDirty) {
@@ -2011,7 +2022,7 @@ export class WindowedSourceView implements SourceViewAdapter {
     }
   }
 
-  private measureLines(scrollTop: number): void {
+  private measureLines(scrollTop: number): number {
     const anchor = this.heightMap.indexAtOffset(scrollTop);
     let anchorAdjustment = 0;
     let changed = false;
@@ -2041,17 +2052,20 @@ export class WindowedSourceView implements SourceViewAdapter {
       }
     }
     if (!changed) {
-      return;
+      return scrollTop;
     }
     // Height first: a scroll written while the canvas still holds the old
     // height is clamped against it, and clamping only ever moves upward.
     this.setCanvasHeight(this.heightMap.totalHeight);
+    let effectiveScrollTop = scrollTop;
     if (Math.abs(anchorAdjustment) > 0.5) {
-      this.writeScrollTop(this.root.scrollTop + anchorAdjustment);
+      effectiveScrollTop = Math.max(0, scrollTop + anchorAdjustment);
+      this.writeScrollTop(effectiveScrollTop + this.paddingTop());
     }
     this.forceRender = true;
     this.selectionDirty = true;
     this.requestRender();
+    return effectiveScrollTop;
   }
 
   private updateActiveLine(): void {
