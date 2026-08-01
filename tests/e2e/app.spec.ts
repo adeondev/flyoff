@@ -1288,10 +1288,17 @@ test.describe('Flyoff desktop shell', () => {
       .locator('.flyoff-menu__item[id$="-item-split-right"]')
       .click();
     await expect(page.locator('.workspace-pane')).toHaveCount(2);
+    const destinationPane = page.locator('.workspace-pane--active');
+    await expect
+      .poll(() =>
+        destinationPane.evaluate(
+          (pane) => pane.getBoundingClientRect().width,
+        ),
+      )
+      .toBeGreaterThan(100);
     await expect(
       page.locator('.workspace-pane-host[data-workspace-motion]'),
     ).toHaveCount(0);
-    const destinationPane = page.locator('.workspace-pane--active');
     const destinationPaneBounds = await destinationPane.boundingBox();
     expect(destinationPaneBounds).not.toBeNull();
     const previewDrag = await page.evaluateHandle(() => new DataTransfer());
