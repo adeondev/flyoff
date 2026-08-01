@@ -3,10 +3,12 @@ import path from 'node:path';
 import {
   app,
   BrowserWindow,
+  contentTracing,
   dialog,
   Menu,
   nativeTheme,
   safeStorage,
+  screen,
   session,
 } from 'electron';
 
@@ -84,6 +86,10 @@ import {
 } from './window';
 import { handleSquirrelFileAssociationEvent } from './file-associations';
 import { queuePendingDiagramOpen } from './diagrams/pending-diagram-open';
+import {
+  parsePackagedPerformanceDiagnosticOptions,
+  runPackagedPerformanceDiagnostic,
+} from './performance/packaged-performance-diagnostic';
 
 const handledSquirrelEvent = handleSquirrelFileAssociationEvent();
 const hasSingleInstanceLock =
@@ -122,6 +128,9 @@ registerFlyoffScheme();
 app.enableSandbox();
 
 const smokeTest = process.argv.includes('--smoke-test');
+const performanceDiagnosticOptions =
+  parsePackagedPerformanceDiagnosticOptions(process.argv);
+const nonPersistentRun = smokeTest || performanceDiagnosticOptions !== null;
 const usePackagedRenderer = app.isPackaged || process.env.FLYOFF_E2E === '1';
 const e2eUserDataPath =
   process.env.FLYOFF_E2E === '1'
@@ -241,7 +250,7 @@ function cleanupApplication(): void {
   cleanupStarted = true;
   markShutdownExpected();
 
-  if (!smokeTest) {
+  if (!nonPersistentRun) {
     try {
       tabSessionStore?.flush();
     } catch {
@@ -293,9 +302,19 @@ function reportFatalError(
 ): void {
   const title = translator?.(titleKey) ?? 'Flyoff could not start';
   const message = translator?.(messageKey) ?? 'The application core failed.';
-  const detail = error instanceof Error ? `\n\n${error.message}` : '';
+  const detail =
+    error === undefined
+      ? ''
+      : `\n\n${error instanceof Error ? error.message : String(error)}`;
 
-  if (smokeTest) {
+  if (performanceDiagnosticOptions) {
+    process.stdout.write(
+      `FLYOFF_PERFORMANCE ${JSON.stringify({
+        ok: false,
+        error: `${message}${detail}`,
+      })}\n`,
+    );
+  } else if (smokeTest) {
     process.stdout.write(
       `FLYOFF_SMOKE ${JSON.stringify({ ok: false, error: `${message}${detail}` })}\n`,
     );
@@ -319,11 +338,15 @@ function handleUnexpectedNativeExit(code: number): void {
 }
 
 function getRendererLocation() {
-  const rendererUrl = usePackagedRenderer
+  const rendererUrl = new URL(usePackagedRenderer
     ? FLYOFF_RENDERER_URL
-    : MAIN_WINDOW_WEBPACK_ENTRY;
+    : MAIN_WINDOW_WEBPACK_ENTRY);
 
-  return createRendererLocation(rendererUrl, usePackagedRenderer);
+  if (performanceDiagnosticOptions) {
+    rendererUrl.searchParams.set('performance-diagnostic', '1');
+  }
+
+  return createRendererLocation(rendererUrl.toString(), usePackagedRenderer);
 }
 
 async function openMainWindow(
@@ -367,7 +390,7 @@ async function startApplication(): Promise<void> {
   }
 
   nativeTheme.themeSource = 'dark';
-  windowStateStore = smokeTest
+  windowStateStore = nonPersistentRun
     ? undefined
     : new WindowStateStore(app.getPath('userData'));
   tabSessionStore = new TabSessionStore(app.getPath('userData'));
@@ -449,7 +472,7 @@ async function startApplication(): Promise<void> {
   closeCoordinator = new CloseCoordinator({
     isAllowedUrl,
     onShutdownApproved: markShutdownExpected,
-    smokeTest,
+    smokeTest: nonPersistentRun,
     tabSessionStore,
   });
   removeBootstrapHandler = registerBootstrapHandler(
@@ -545,7 +568,30 @@ async function startApplication(): Promise<void> {
   removeUiStateHandlers = registerUiStateHandlers(uiStateStore, isAllowedUrl);
   removeWindowControlHandlers = registerWindowControlHandlers(isAllowedUrl);
 
-  await openMainWindow(platform);
+  const window = await openMainWindow(platform);
+
+  if (performanceDiagnosticOptions) {
+    const report = await runPackagedPerformanceDiagnostic(
+      {
+        application: app,
+        contentTracing,
+        screen,
+        window,
+      },
+      performanceDiagnosticOptions,
+    );
+    process.stdout.write(
+      `FLYOFF_PERFORMANCE ${JSON.stringify({
+        ok: true,
+        reportPath: performanceDiagnosticOptions.reportPath,
+        scenarios: Object.keys(report.scenarios).length,
+        tracePath: performanceDiagnosticOptions.tracePath,
+      })}\n`,
+    );
+    markShutdownExpected();
+    app.quit();
+    return;
+  }
 
   if (smokeTest) {
     process.stdout.write(

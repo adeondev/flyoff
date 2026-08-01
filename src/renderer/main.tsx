@@ -1,4 +1,8 @@
-import { StrictMode } from 'react';
+import {
+  Profiler,
+  StrictMode,
+  type ProfilerOnRenderCallback,
+} from 'react';
 import { createRoot } from 'react-dom/client';
 import '@fontsource/inter/400.css';
 import '@fontsource/inter/500.css';
@@ -26,8 +30,36 @@ if (!root) {
   throw new Error('Renderer root element was not found.');
 }
 
+const performanceDiagnostic = new URL(window.location.href).searchParams.has(
+  'performance-diagnostic',
+);
+const onProfilerRender: ProfilerOnRenderCallback = (
+  _id,
+  phase,
+  actualDuration,
+  baseDuration,
+  startTime,
+  commitTime,
+) => {
+  (window.__flyoffPerformanceReactCommits ??= []).push({
+    actualDuration,
+    baseDuration,
+    commitTime,
+    phase,
+    scenario:
+      document.documentElement.dataset.performanceDiagnosticScenario ?? null,
+    startTime,
+  });
+};
+
 createRoot(root).render(
   <StrictMode>
-    <App />
+    {performanceDiagnostic ? (
+      <Profiler id="Flyoff" onRender={onProfilerRender}>
+        <App />
+      </Profiler>
+    ) : (
+      <App />
+    )}
   </StrictMode>,
 );

@@ -13,15 +13,16 @@
  *
  * Two controls make the numbers readable rather than suggestive:
  *
- *  - a transform animation and a `left` animation on a detached element, run in
- *    the same window in the same session. The first is what this machine can do
- *    when the main thread is idle, the second is what an animated layout
- *    property costs here. Every application scenario is read against those two.
+ *  - transform, opacity, and `left` animations on a detached element, run in
+ *    the same window in the same session. The first two show what this machine
+ *    can do with compositor-friendly properties; the last shows what an
+ *    animated layout property costs here. Every application scenario is read
+ *    against those controls.
  *  - long tasks, recorded per scenario. A frame interval says a deadline was
  *    missed; a long task says how much main-thread work missed it, which is
  *    what separates a paint or compositor problem from a scripting one.
  */
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -31,6 +32,7 @@ import {
   test,
   type CDPSession,
   type ElectronApplication,
+  type Locator,
   type Page,
 } from '@playwright/test';
 
@@ -55,6 +57,205 @@ interface CadenceReport {
   /** Main-thread tasks over 50 ms, which are what push a frame past its deadline. */
   longTasks: number;
   longTaskMs: number;
+}
+
+interface AnchorDiagnostics {
+  error?: string;
+  generation?: string;
+  line?: string;
+  passes?: string;
+}
+
+interface RuntimeReport {
+  app: {
+    appPath: string;
+    executablePath: string;
+    isPackaged: boolean;
+    name: string;
+    version: string;
+  };
+  commandLine: string[];
+  displays: unknown;
+  gpu: {
+    featureStatus: unknown;
+    hardwareAccelerationEnabled: boolean;
+    info: unknown;
+    infoError?: string;
+  };
+  platform: {
+    arch: string;
+    locale: string;
+    name: NodeJS.Platform;
+  };
+  processMetrics: unknown;
+  versions: {
+    chrome?: string;
+    electron?: string;
+    node: string;
+    v8: string;
+  };
+  window: {
+    alwaysOnTop: boolean;
+    backgroundThrottling: boolean;
+    bounds: { height: number; width: number; x: number; y: number };
+    contentBounds: { height: number; width: number; x: number; y: number };
+    focused: boolean;
+    fullScreen: boolean;
+    id: number;
+    maximized: boolean;
+    minimized: boolean;
+    renderer: unknown;
+    rendererProcessId: number;
+    visible: boolean;
+  };
+}
+
+function cadenceReportPath(): string {
+  const configured = process.env.FLYOFF_CADENCE_REPORT?.trim();
+  return configured
+    ? path.resolve(repositoryRoot, configured)
+    : path.join(repositoryRoot, 'test-results', 'frame-cadence-report.json');
+}
+
+async function collectRuntimeReport(
+  application: ElectronApplication,
+): Promise<RuntimeReport> {
+  return application.evaluate(async ({ app, BrowserWindow, screen }) => {
+    const mainWindow = BrowserWindow.getAllWindows()[0];
+    if (!mainWindow) {
+      throw new Error('The cadence profiler could not find the main window.');
+    }
+
+    const serializeDisplay = (
+      display: ReturnType<typeof screen.getPrimaryDisplay>,
+    ) => ({
+      accelerometerSupport: display.accelerometerSupport,
+      bounds: display.bounds,
+      colorDepth: display.colorDepth,
+      colorSpace: display.colorSpace,
+      depthPerComponent: display.depthPerComponent,
+      detected: display.detected,
+      displayFrequency: display.displayFrequency,
+      id: display.id,
+      internal: display.internal,
+      label: display.label,
+      maximumCursorSize: display.maximumCursorSize,
+      monochrome: display.monochrome,
+      nativeOrigin: display.nativeOrigin,
+      rotation: display.rotation,
+      scaleFactor: display.scaleFactor,
+      size: display.size,
+      touchSupport: display.touchSupport,
+      workArea: display.workArea,
+      workAreaSize: display.workAreaSize,
+    });
+    const currentDisplay = screen.getDisplayMatching(mainWindow.getBounds());
+    let gpuInfo: unknown = null;
+    let gpuInfoError: string | undefined;
+    try {
+      gpuInfo = await app.getGPUInfo('complete');
+    } catch (error) {
+      gpuInfoError = error instanceof Error ? error.message : String(error);
+    }
+    const renderer = (await mainWindow.webContents.executeJavaScript(
+      `({
+        devicePixelRatio: window.devicePixelRatio,
+        documentHidden: document.hidden,
+        screen: {
+          availHeight: window.screen.availHeight,
+          availWidth: window.screen.availWidth,
+          colorDepth: window.screen.colorDepth,
+          height: window.screen.height,
+          pixelDepth: window.screen.pixelDepth,
+          width: window.screen.width
+        },
+        userAgent: navigator.userAgent,
+        visibilityState: document.visibilityState
+      })`,
+      true,
+    )) as unknown;
+
+    return {
+      app: {
+        appPath: app.getAppPath(),
+        executablePath: app.getPath('exe'),
+        isPackaged: app.isPackaged,
+        name: app.getName(),
+        version: app.getVersion(),
+      },
+      commandLine: [...process.argv],
+      displays: {
+        all: screen.getAllDisplays().map(serializeDisplay),
+        current: serializeDisplay(currentDisplay),
+        primaryId: screen.getPrimaryDisplay().id,
+      },
+      gpu: {
+        featureStatus: app.getGPUFeatureStatus(),
+        hardwareAccelerationEnabled: app.isHardwareAccelerationEnabled(),
+        info: gpuInfo,
+        ...(gpuInfoError ? { infoError: gpuInfoError } : {}),
+      },
+      platform: {
+        arch: process.arch,
+        locale: app.getLocale(),
+        name: process.platform,
+      },
+      processMetrics: app.getAppMetrics(),
+      versions: {
+        chrome: process.versions.chrome,
+        electron: process.versions.electron,
+        node: process.versions.node,
+        v8: process.versions.v8,
+      },
+      window: {
+        alwaysOnTop: mainWindow.isAlwaysOnTop(),
+        backgroundThrottling:
+          mainWindow.webContents.getBackgroundThrottling(),
+        bounds: mainWindow.getBounds(),
+        contentBounds: mainWindow.getContentBounds(),
+        focused: mainWindow.isFocused(),
+        fullScreen: mainWindow.isFullScreen(),
+        id: mainWindow.id,
+        maximized: mainWindow.isMaximized(),
+        minimized: mainWindow.isMinimized(),
+        renderer,
+        rendererProcessId: mainWindow.webContents.getOSProcessId(),
+        visible: mainWindow.isVisible(),
+      },
+    };
+  });
+}
+
+async function saveCadenceReport(options: {
+  anchorDiagnostics: Readonly<Record<string, AnchorDiagnostics>>;
+  completed: boolean;
+  completedAt: string;
+  outputPath: string;
+  reports: ReadonlyMap<string, CadenceReport>;
+  runtime?: RuntimeReport;
+  startedAt: string;
+}): Promise<void> {
+  await mkdir(path.dirname(options.outputPath), { recursive: true });
+  await writeFile(
+    options.outputPath,
+    `${JSON.stringify(
+      {
+        anchorDiagnostics: options.anchorDiagnostics,
+        capturedAt: options.completedAt,
+        completed: options.completed,
+        fixture: { lines: LINE_COUNT },
+        profileScenario: profileScenario ?? null,
+        runtime: options.runtime ?? null,
+        scenarios: Object.fromEntries(options.reports),
+        schemaVersion: 1,
+        startedAt: options.startedAt,
+      },
+      null,
+      2,
+    )}\n`,
+    'utf8',
+  );
+  console.log(`[cadence] report ${options.outputPath}`);
 }
 
 async function stopApplication(app: ElectronApplication | undefined) {
@@ -245,7 +446,12 @@ async function record(
     await profiler.send('Profiler.start');
   }
   await page.evaluate(startCadence);
-  await action();
+  let actionFailure: { error: unknown } | undefined;
+  try {
+    await action();
+  } catch (error) {
+    actionFailure = { error };
+  }
   const report = await page.evaluate(collectCadence);
   reports.set(label, report);
   console.log(describe(label, report));
@@ -257,23 +463,35 @@ async function record(
       )}`,
     );
   }
+  if (actionFailure) {
+    throw actionFailure.error;
+  }
   return report;
 }
 
-/** A compositor-only animation and a layout-property animation, side by side. */
-const runControlAnimation = (kind: 'transform' | 'left') => {
+/** Compositor-friendly and layout-property animations in the same window. */
+const runControlAnimation = (kind: 'transform' | 'opacity' | 'left') => {
   return new Promise<void>((resolve) => {
     const probe = document.createElement('div');
     probe.style.cssText =
       'position:fixed;top:4px;left:4px;width:40px;height:40px;' +
-      'background:#4488ff;z-index:2147483647;pointer-events:none;';
+      'background:#4488ff;contain:strict;z-index:2147483647;' +
+      'pointer-events:none;';
+    if (kind === 'opacity') {
+      probe.style.willChange = 'opacity';
+    } else if (kind === 'transform') {
+      probe.style.willChange = 'transform';
+    }
     document.body.appendChild(probe);
     const started = performance.now();
     const step = () => {
       const elapsed = performance.now() - started;
-      const offset = Math.round(Math.sin(elapsed / 120) * 120 + 130);
+      const wave = Math.sin(elapsed / 120);
+      const offset = Math.round(wave * 120 + 130);
       if (kind === 'transform') {
         probe.style.transform = `translate3d(${offset}px,0,0)`;
+      } else if (kind === 'opacity') {
+        probe.style.opacity = String(0.625 + wave * 0.375);
       } else {
         probe.style.left = `${offset}px`;
       }
@@ -288,16 +506,119 @@ const runControlAnimation = (kind: 'transform' | 'left') => {
   });
 };
 
+async function prepareScrollbarThumb(
+  page: Page,
+  editor: Locator,
+): Promise<void> {
+  await editor.evaluate((root) => {
+    const maximum = Math.max(0, root.scrollHeight - root.clientHeight);
+    root.scrollTop = Math.round(maximum * 0.12);
+    root.dispatchEvent(new Event('scroll', { bubbles: true }));
+  });
+  await page.waitForTimeout(300);
+  const box = await editor.boundingBox();
+  if (!box) {
+    throw new Error('The source editor has no box for scrollbar preparation.');
+  }
+  await page.mouse.move(box.x + box.width - 2, box.y + box.height / 2);
+  await page.mouse.wheel(0, 1);
+  await page.waitForTimeout(50);
+}
+
+async function dragScrollbarThumb(page: Page, editor: Locator): Promise<void> {
+  const geometry = await editor.evaluate((root) => {
+    const scrollRoot = root as HTMLElement;
+    const bounds = scrollRoot.getBoundingClientRect();
+    const styles = getComputedStyle(scrollRoot);
+    const borderRight = Number.parseFloat(styles.borderRightWidth) || 0;
+    const borderTop = Number.parseFloat(styles.borderTopWidth) || 0;
+    const borderLeft = Number.parseFloat(styles.borderLeftWidth) || 0;
+    const scrollbarWidth = Math.max(
+      0,
+      scrollRoot.offsetWidth -
+        scrollRoot.clientWidth -
+        borderLeft -
+        borderRight,
+    );
+    const maximum = Math.max(
+      0,
+      scrollRoot.scrollHeight - scrollRoot.clientHeight,
+    );
+    const trackHeight = scrollRoot.clientHeight;
+    const thumbHeight = Math.min(
+      trackHeight,
+      Math.max(
+        32,
+        trackHeight * (scrollRoot.clientHeight / scrollRoot.scrollHeight),
+      ),
+    );
+    const travel = Math.max(0, trackHeight - thumbHeight);
+    const ratio = maximum > 0 ? scrollRoot.scrollTop / maximum : 0;
+    return {
+      before: scrollRoot.scrollTop,
+      endY: bounds.top + borderTop + thumbHeight / 2 + travel * 0.82,
+      maximum,
+      startY:
+        bounds.top + borderTop + thumbHeight / 2 + travel * ratio,
+      viewportHeight: scrollRoot.clientHeight,
+      x:
+        bounds.right -
+        borderRight -
+        (scrollbarWidth > 0 ? scrollbarWidth / 2 : 2),
+    };
+  });
+  if (geometry.maximum <= 0 || geometry.viewportHeight <= 0) {
+    throw new Error('The source editor does not have a draggable scrollbar.');
+  }
+
+  await page.mouse.move(geometry.x, geometry.startY);
+  await page.mouse.down();
+  try {
+    for (let step = 1; step <= 48; step += 1) {
+      const progress = step / 48;
+      await page.mouse.move(
+        geometry.x,
+        geometry.startY + (geometry.endY - geometry.startY) * progress,
+      );
+      await page.waitForTimeout(8);
+    }
+  } finally {
+    await page.mouse.up();
+  }
+
+  const after = await editor.evaluate((root) => root.scrollTop);
+  if (after - geometry.before < geometry.maximum * 0.25) {
+    throw new Error(
+      `The scrollbar thumb did not move the document: ${JSON.stringify({
+        after,
+        before: geometry.before,
+        maximum: geometry.maximum,
+        x: geometry.x,
+      })}`,
+    );
+  }
+  await page.waitForTimeout(500);
+}
+
 test('the packaged application presents frames at the display cadence', async () => {
   test.setTimeout(420_000);
+  reports.clear();
+  profiler = undefined;
   const appPath = locatePackagedAsar(repositoryRoot);
+  const outputPath = cadenceReportPath();
+  const startedAt = new Date().toISOString();
   const userDataPath = await mkdtemp(path.join(os.tmpdir(), 'flyoff-cadence-'));
   const projectParent = await mkdtemp(
     path.join(os.tmpdir(), 'flyoff-cadence-project-'),
   );
   const projectName = 'Cadence';
+  const longNoteName = 'Long note';
+  const switchNoteName = 'Switch note';
   const source = longNoteFixture();
+  const anchorDiagnostics: Record<string, AnchorDiagnostics> = {};
   let app: ElectronApplication | undefined;
+  let completed = false;
+  let runtime: RuntimeReport | undefined;
 
   try {
     await writeFile(
@@ -368,7 +689,7 @@ test('the packaged application presents frames at the display cadence', async ()
       .getByRole('option', { name: new RegExp(`^${labels.note}`) })
       .click();
     const nameInput = page.getByRole('textbox', { name: labels.name });
-    await nameInput.fill('Long note');
+    await nameInput.fill(longNoteName);
     await nameInput.press('Enter');
 
     const editor = page.locator('.markdown-source__editor:visible');
@@ -390,11 +711,33 @@ test('the packaged application presents frames at the display cadence', async ()
       })
       .toBe(String(LINE_COUNT));
     await page.waitForTimeout(1_500);
+
+    await page.getByRole('button', { name: labels.add }).click();
+    await page
+      .getByRole('dialog', { name: labels.add })
+      .getByRole('option', { name: new RegExp(`^${labels.note}`) })
+      .click();
+    await nameInput.fill(switchNoteName);
+    await nameInput.press('Enter');
+    const longTab = page.getByRole('tab', {
+      exact: true,
+      name: longNoteName,
+    });
+    const switchTab = page.getByRole('tab', {
+      exact: true,
+      name: switchNoteName,
+    });
+    await expect(longTab).toBeVisible();
+    await expect(switchTab).toHaveAttribute('aria-selected', 'true');
+    await longTab.click();
+    await expect(longTab).toHaveAttribute('aria-selected', 'true');
+    await expect(editor).toHaveAttribute('data-windowed', 'true');
     await editor.evaluate((root) => {
       root.scrollTop = Math.round(root.scrollHeight * 0.35);
     });
     await page.waitForTimeout(900);
 
+    runtime = await collectRuntimeReport(app);
     await page.evaluate(installCadenceProbe);
 
     const cdp = await page.context().newCDPSession(page);
@@ -405,9 +748,17 @@ test('the packaged application presents frames at the display cadence', async ()
     }
 
     async function runScenarios(tag: string): Promise<void> {
+      await longTab.click();
+      await expect(longTab).toHaveAttribute('aria-selected', 'true');
+      await expect(editor).toHaveAttribute('data-windowed', 'true');
+      await page.waitForTimeout(300);
+
       await record(page, `${tag} idle`, () => page.waitForTimeout(2_500));
       await record(page, `${tag} control: transform`, () =>
         page.evaluate(runControlAnimation, 'transform' as const),
+      );
+      await record(page, `${tag} control: opacity`, () =>
+        page.evaluate(runControlAnimation, 'opacity' as const),
       );
       await record(page, `${tag} control: left (layout)`, () =>
         page.evaluate(runControlAnimation, 'left' as const),
@@ -425,6 +776,17 @@ test('the packaged application presents frames at the display cadence', async ()
           await page.waitForTimeout(60);
         }
       });
+
+      await record(page, `${tag} tab switching`, async () => {
+        for (let index = 0; index < 8; index += 1) {
+          await switchTab.click();
+          await page.waitForTimeout(80);
+          await longTab.click();
+          await page.waitForTimeout(80);
+        }
+        await page.waitForTimeout(200);
+      });
+      await expect(longTab).toHaveAttribute('aria-selected', 'true');
 
       await record(page, `${tag} sidebar toggle`, async () => {
         const toggle = page
@@ -453,6 +815,40 @@ test('the packaged application presents frames at the display cadence', async ()
         }
         await page.waitForTimeout(400);
       });
+
+      await editor.evaluate((root) => {
+        const maximum = Math.max(0, root.scrollHeight - root.clientHeight);
+        root.scrollTop = Math.round(maximum * 0.18);
+        root.dispatchEvent(new Event('scroll', { bubbles: true }));
+      });
+      await page.waitForTimeout(300);
+      await record(page, `${tag} scroll: wheel burst`, async () => {
+        const box = await editor.boundingBox();
+        if (!box) {
+          throw new Error('The source editor has no box for fast wheel input.');
+        }
+        await page.mouse.move(
+          box.x + box.width / 2,
+          box.y + box.height / 2,
+        );
+        for (let burst = 0; burst < 6; burst += 1) {
+          for (let sample = 0; sample < 10; sample += 1) {
+            await page.mouse.wheel(0, 720);
+          }
+          await page.waitForTimeout(30);
+        }
+        await page.waitForTimeout(500);
+      });
+
+      await prepareScrollbarThumb(page, editor);
+      await record(page, `${tag} scroll: scrollbar thumb`, () =>
+        dragScrollbarThumb(page, editor),
+      );
+      await editor.evaluate((root) => {
+        root.scrollTop = Math.round(root.scrollHeight * 0.35);
+        root.dispatchEvent(new Event('scroll', { bubbles: true }));
+      });
+      await page.waitForTimeout(400);
 
       await record(page, `${tag} pane open`, async () => {
         await page
@@ -495,13 +891,15 @@ test('the packaged application presents frames at the display cadence', async ()
         await page.waitForTimeout(1_200);
       });
 
+      const diagnostics = await editor.evaluate((root) => ({
+        error: root.dataset.anchorError,
+        generation: root.dataset.anchorGeneration,
+        line: root.dataset.anchorLine,
+        passes: root.dataset.anchorPasses,
+      }));
+      anchorDiagnostics[tag] = diagnostics;
       console.log(
-        `[cadence] ${tag} anchor diagnostics ${JSON.stringify(
-          await editor.evaluate((root) => ({
-            generation: root.dataset.anchorGeneration,
-            passes: root.dataset.anchorPasses,
-          })),
-        )}`,
+        `[cadence] ${tag} anchor diagnostics ${JSON.stringify(diagnostics)}`,
       );
     }
 
@@ -513,8 +911,12 @@ test('the packaged application presents frames at the display cadence', async ()
     // that spend visible: a scenario that stays at the display cadence here is
     // not main-thread bound, and one that collapses is.
     await cdp.send('Emulation.setCPUThrottlingRate', { rate: 6 });
-    await runScenarios('6x');
-    await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 });
+    try {
+      await runScenarios('6x');
+    } finally {
+      await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 });
+    }
+    completed = true;
 
     const idle = reports.get('1x idle');
     const transform = reports.get('1x control: transform');
@@ -530,8 +932,20 @@ test('the packaged application presents frames at the display cadence', async ()
       `a compositor-only animation ran at ${transform?.medianMs}ms`,
     ).toBeLessThan(20);
   } finally {
-    await stopApplication(app);
-    await rm(userDataPath, { force: true, recursive: true });
-    await rm(projectParent, { force: true, recursive: true });
+    try {
+      await saveCadenceReport({
+        anchorDiagnostics,
+        completed,
+        completedAt: new Date().toISOString(),
+        outputPath,
+        reports,
+        runtime,
+        startedAt,
+      });
+    } finally {
+      await stopApplication(app);
+      await rm(userDataPath, { force: true, recursive: true });
+      await rm(projectParent, { force: true, recursive: true });
+    }
   }
 });
