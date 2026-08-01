@@ -210,6 +210,29 @@ describe('reusable dropdown menu', () => {
     await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
     expect(trigger.getAttribute('aria-expanded')).toBe('false');
   });
+
+  it('handles Escape on its trigger without dismissing a parent surface', async () => {
+    const onParentKeyDown = vi.fn();
+    render(
+      <div onKeyDown={onParentKeyDown}>
+        <DropdownMenu
+          items={menuItems}
+          onAction={() => undefined}
+          trigger={(props) => <button {...props}>Open menu</button>}
+        />
+      </div>,
+    );
+
+    const trigger = screen.getByRole('button', { name: 'Open menu' });
+    fireEvent.click(trigger);
+    await screen.findByRole('menu');
+    trigger.focus();
+    fireEvent.keyDown(trigger, { key: 'Escape' });
+
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+    expect(onParentKeyDown).not.toHaveBeenCalled();
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
+  });
 });
 
 describe('Flyoff tooltips', () => {

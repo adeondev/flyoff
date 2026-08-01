@@ -85,7 +85,9 @@ export function DropdownMenu({
             event.preventDefault();
             openFromKeyboard(event.key === 'ArrowUp' ? 'last' : 'first');
           }
-          if (event.key === 'Escape') {
+          if (event.key === 'Escape' && open) {
+            event.preventDefault();
+            event.stopPropagation();
             close(true);
           }
         },
