@@ -189,7 +189,8 @@ function profileReportPath(ablation: LifecycleAblation): string {
     ? path.resolve(repositoryRoot, configured)
     : path.join(
         repositoryRoot,
-        'test-results',
+        'artifacts',
+        'performance-diagnostics',
         `hidden-editor-lifecycle-profile-${ablation}.json`,
       );
 }

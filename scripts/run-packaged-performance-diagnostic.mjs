@@ -125,7 +125,7 @@ function resolveOutputPaths(argument) {
     ? path.resolve(process.cwd(), argument)
     : path.join(
         repositoryRoot,
-        'test-results',
+        'artifacts',
         'performance-diagnostics',
         `performance-${new Date().toISOString().replace(/[:.]/g, '-')}-${process.pid}-${randomUUID().slice(0, 8)}.json`,
       );
