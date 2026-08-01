@@ -603,6 +603,8 @@ test.describe('Flyoff desktop shell', () => {
           typeof window.flyoff.respondToCloseRequest,
         restartApplicationType:
           typeof window.flyoff.restartApplication,
+        captureWindowPixelsType:
+          typeof window.flyoff.captureWindowPixels,
         openExternalLinkType: typeof window.flyoff.openExternalLink,
         onRendererMenuCommandType:
           typeof window.flyoff.onRendererMenuCommand,
@@ -721,6 +723,7 @@ test.describe('Flyoff desktop shell', () => {
         'onCloseRequested',
         'respondToCloseRequest',
         'restartApplication',
+        'captureWindowPixels',
         'openExternalLink',
         'onRendererMenuCommand',
         'selectProjectCreateLocation',
@@ -812,6 +815,7 @@ test.describe('Flyoff desktop shell', () => {
       onCloseRequestedType: 'function',
       respondToCloseRequestType: 'function',
       restartApplicationType: 'function',
+      captureWindowPixelsType: 'function',
       openExternalLinkType: 'function',
       onRendererMenuCommandType: 'function',
       selectProjectCreateLocationType: 'function',
