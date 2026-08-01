@@ -15,6 +15,8 @@ import {
   type DiagnosticCadenceReport,
   type DiagnosticRect,
   type DiagnosticScrollbarGeometry,
+  type DiagnosticSourceLayoutWork,
+  type PerformanceDiagnosticAblation,
   type RendererDiagnosticEnvironment,
 } from './renderer-performance-diagnostic';
 import {
@@ -32,8 +34,13 @@ export const PERFORMANCE_DIAGNOSTIC_SUITE_SWITCH =
   'flyoff-performance-diagnostic-suite';
 export const PERFORMANCE_DIAGNOSTIC_TRACE_SWITCH =
   'flyoff-performance-diagnostic-trace';
+export const PERFORMANCE_DIAGNOSTIC_ABLATION_SWITCH =
+  'flyoff-performance-diagnostic-ablation';
 
-export type PackagedPerformanceDiagnosticSuite = 'controls' | 'full';
+export type PackagedPerformanceDiagnosticSuite =
+  | 'controls'
+  | 'full'
+  | 'resize';
 export type PackagedPerformanceDiagnosticTraceMode = 'full' | 'off';
 
 const TRACE_CATEGORIES = [
@@ -63,6 +70,7 @@ const CPU_PROFILE_SCENARIOS = new Set([
 ]);
 
 export interface PackagedPerformanceDiagnosticOptions {
+  ablation: PerformanceDiagnosticAblation;
   lineCount: number;
   reportPath: string;
   suite: PackagedPerformanceDiagnosticSuite;
@@ -81,15 +89,21 @@ export interface CpuProfileAttribution {
 export interface PackagedPerformanceScenarioReport {
   cadence: DiagnosticCadenceReport;
   cpuProfile?: CpuProfileAttribution;
+  sourceLayoutWork: {
+    after: DiagnosticSourceLayoutWork;
+    before: DiagnosticSourceLayoutWork;
+    delta: DiagnosticSourceLayoutWork;
+  } | null;
 }
 
 export interface PackagedPerformanceDiagnosticReport {
+  ablation: PerformanceDiagnosticAblation;
   appMetrics: unknown;
   createdAt: string;
   renderer: RendererDiagnosticEnvironment;
   runtime: RuntimeDiagnosticsReport;
   scenarios: Record<string, PackagedPerformanceScenarioReport>;
-  schemaVersion: 1;
+  schemaVersion: 2;
   trace: {
     analysis: ChromiumTraceAnalysis | null;
     categories: readonly string[];
@@ -154,17 +168,21 @@ export function parsePackagedPerformanceDiagnosticOptions(
   }
   const reportPath = path.normalize(value);
   const extension = path.extname(reportPath);
+  const ablation = optionalSwitchValue(
+    argv,
+    PERFORMANCE_DIAGNOSTIC_ABLATION_SWITCH,
+  ) ?? 'current';
   const suite = optionalSwitchValue(
     argv,
     PERFORMANCE_DIAGNOSTIC_SUITE_SWITCH,
-  ) ?? 'full';
+  ) ?? (ablation === 'editor-static' ? 'resize' : 'full');
   const traceMode = optionalSwitchValue(
     argv,
     PERFORMANCE_DIAGNOSTIC_TRACE_SWITCH,
   ) ?? 'full';
-  if (suite !== 'controls' && suite !== 'full') {
+  if (suite !== 'controls' && suite !== 'full' && suite !== 'resize') {
     throw new Error(
-      `--${PERFORMANCE_DIAGNOSTIC_SUITE_SWITCH} must be controls or full.`,
+      `--${PERFORMANCE_DIAGNOSTIC_SUITE_SWITCH} must be controls, resize, or full.`,
     );
   }
   if (traceMode !== 'full' && traceMode !== 'off') {
@@ -172,7 +190,23 @@ export function parsePackagedPerformanceDiagnosticOptions(
       `--${PERFORMANCE_DIAGNOSTIC_TRACE_SWITCH} must be full or off.`,
     );
   }
+  if (
+    ablation !== 'container-queries-off' &&
+    ablation !== 'current' &&
+    ablation !== 'editor-static' &&
+    ablation !== 'transitions-off'
+  ) {
+    throw new Error(
+      `--${PERFORMANCE_DIAGNOSTIC_ABLATION_SWITCH} must be current, editor-static, transitions-off, or container-queries-off.`,
+    );
+  }
+  if (ablation === 'editor-static' && suite === 'full') {
+    throw new Error(
+      `--${PERFORMANCE_DIAGNOSTIC_ABLATION_SWITCH}=editor-static cannot run the full editor suite. Use --${PERFORMANCE_DIAGNOSTIC_SUITE_SWITCH}=resize or controls.`,
+    );
+  }
   return {
+    ablation,
     lineCount: 11_000,
     reportPath,
     suite,
@@ -257,6 +291,29 @@ function summariseCpuProfile(profile: CpuProfile): CpuProfileAttribution {
         location,
         milliseconds: Number((microseconds / 1_000).toFixed(2)),
       })),
+  };
+}
+
+function sourceLayoutWorkDelta(
+  after: DiagnosticSourceLayoutWork,
+  before: DiagnosticSourceLayoutWork,
+): DiagnosticSourceLayoutWork {
+  return {
+    coalescedResizeNotifications:
+      after.coalescedResizeNotifications - before.coalescedResizeNotifications,
+    fullLayoutResets: after.fullLayoutResets - before.fullLayoutResets,
+    heightMapRebuilds: after.heightMapRebuilds - before.heightMapRebuilds,
+    insignificantResizePasses:
+      after.insignificantResizePasses - before.insignificantResizePasses,
+    liveResizePasses: after.liveResizePasses - before.liveResizePasses,
+    resizeNotifications:
+      after.resizeNotifications - before.resizeNotifications,
+    scheduledLayoutPasses:
+      after.scheduledLayoutPasses - before.scheduledLayoutPasses,
+    settledResizeRebuilds:
+      after.settledResizeRebuilds - before.settledResizeRebuilds,
+    skippedWidthRebuilds:
+      after.skippedWidthRebuilds - before.skippedWidthRebuilds,
   };
 }
 
@@ -384,11 +441,22 @@ export async function runPackagedPerformanceDiagnostic(
     : 60;
   const renderer = (await window.webContents.executeJavaScript(
     rendererPerformanceDiagnosticSource({
+      ablation: options.ablation,
       lineCount: options.lineCount,
       refreshRate,
     }),
     true,
   )) as RendererDiagnosticEnvironment;
+  if (
+    options.ablation === 'editor-static' &&
+    (!renderer.editor.static ||
+      renderer.editor.descendantNodes !== 0 ||
+      renderer.editor.mountedLines !== 0)
+  ) {
+    throw new Error(
+      'The editor-static ablation did not produce an empty static editor rectangle.',
+    );
+  }
 
   const debuggerSession = window.webContents.debugger;
   debuggerSession.attach('1.3');
@@ -416,6 +484,9 @@ export async function runPackagedPerformanceDiagnostic(
       action: () => Promise<void>,
     ): Promise<void> => {
       const profile = CPU_PROFILE_SCENARIOS.has(label);
+      const sourceLayoutBefore = await controllerCall<
+        DiagnosticSourceLayoutWork | null
+      >(window, 'sourceLayoutWork()');
       if (profile) {
         await beginCpuProfile(window);
       }
@@ -429,9 +500,22 @@ export async function runPackagedPerformanceDiagnostic(
           `finish(${JSON.stringify(label)})`,
         );
       }
+      const sourceLayoutAfter = await controllerCall<
+        DiagnosticSourceLayoutWork | null
+      >(window, 'sourceLayoutWork()');
       scenarios[label] = {
         cadence,
         ...(profile ? { cpuProfile: await endCpuProfile(window) } : {}),
+        sourceLayoutWork: sourceLayoutBefore && sourceLayoutAfter
+          ? {
+              after: sourceLayoutAfter,
+              before: sourceLayoutBefore,
+              delta: sourceLayoutWorkDelta(
+                sourceLayoutAfter,
+                sourceLayoutBefore,
+              ),
+            }
+          : null,
       };
       process.stdout.write(
         `[performance] ${label}: median=${cadence.medianMs}ms p95=${cadence.p95Ms}ms p99=${cadence.p99Ms}ms max=${cadence.longestMs}ms longTasks=${cadence.longTasks}\n`,
@@ -532,11 +616,21 @@ export async function runPackagedPerformanceDiagnostic(
       await dragPointer(window, geometry.start, geometry.end, 120);
       await wait(400);
     });
+    }
+    if (options.suite !== 'controls') {
     await record('1x pane open', async () => {
       await click(window, '.workspace-pane--active .workspace-pane__action');
       await waitForSelector(window, '.flyoff-menu__item[id$="-item-split-right"]');
       await click(window, '.flyoff-menu__item[id$="-item-split-right"]');
       await waitForSelector(window, '.workspace-pane', 10_000, 2);
+      if (options.ablation === 'editor-static') {
+        await waitForSelector(
+          window,
+          '.markdown-source__editor[data-performance-static-editor="true"]',
+          10_000,
+          2,
+        );
+      }
       await wait(1_200);
     });
     await record('1x divider drag', async () => {
@@ -568,6 +662,7 @@ export async function runPackagedPerformanceDiagnostic(
       rate: 6,
     });
     await record('6x idle', () => wait(5_000));
+    if (options.suite === 'full') {
     await record('6x typing', async () => {
       await controllerCall<void>(window, 'focusEditor()');
       for (const character of 'throttled typing probe') {
@@ -589,11 +684,20 @@ export async function runPackagedPerformanceDiagnostic(
       }
       await wait(400);
     });
+    }
     await record('6x pane open', async () => {
       await click(window, '.workspace-pane--active .workspace-pane__action');
       await waitForSelector(window, '.flyoff-menu__item[id$="-item-split-right"]');
       await click(window, '.flyoff-menu__item[id$="-item-split-right"]');
       await waitForSelector(window, '.workspace-pane', 10_000, 2);
+      if (options.ablation === 'editor-static') {
+        await waitForSelector(
+          window,
+          '.markdown-source__editor[data-performance-static-editor="true"]',
+          10_000,
+          2,
+        );
+      }
       await wait(1_200);
     });
     await record('6x divider drag', async () => {
@@ -644,12 +748,13 @@ export async function runPackagedPerformanceDiagnostic(
       })
     : null;
   const report: PackagedPerformanceDiagnosticReport = {
+    ablation: options.ablation,
     appMetrics: application.getAppMetrics(),
     createdAt: new Date().toISOString(),
     renderer,
     runtime,
     scenarios,
-    schemaVersion: 1,
+    schemaVersion: 2,
     trace: {
       analysis: traceAnalysis,
       categories: traceRecorded ? TRACE_CATEGORIES : [],

@@ -4,7 +4,14 @@ export type DiagnosticControlKind =
   | 'transform'
   | 'transform-js';
 
+export type PerformanceDiagnosticAblation =
+  | 'container-queries-off'
+  | 'current'
+  | 'editor-static'
+  | 'transitions-off';
+
 export interface RendererPerformanceDiagnosticConfig {
+  ablation: PerformanceDiagnosticAblation;
   lineCount: number;
   refreshRate: number;
 }
@@ -59,6 +66,7 @@ export interface DiagnosticCadenceReport {
 }
 
 export interface RendererDiagnosticEnvironment {
+  ablation: PerformanceDiagnosticAblation;
   devicePixelRatio: number;
   documentVisibility: DocumentVisibilityState;
   editor: {
@@ -67,6 +75,8 @@ export interface RendererDiagnosticEnvironment {
     descendantNodes: number;
     mountedLines: number;
     scrollHeight: number;
+    sourceLineCount: number | null;
+    static: boolean;
   };
   prefersReducedMotion: boolean;
   screen: {
@@ -80,6 +90,18 @@ export interface RendererDiagnosticEnvironment {
   userAgent: string;
 }
 
+export interface DiagnosticSourceLayoutWork {
+  coalescedResizeNotifications: number;
+  fullLayoutResets: number;
+  heightMapRebuilds: number;
+  insignificantResizePasses: number;
+  liveResizePasses: number;
+  resizeNotifications: number;
+  scheduledLayoutPasses: number;
+  settledResizeRebuilds: number;
+  skippedWidthRebuilds: number;
+}
+
 export interface RendererPerformanceDiagnosticController {
   click(selector: string, index?: number): void;
   environment(): RendererDiagnosticEnvironment;
@@ -88,6 +110,7 @@ export interface RendererPerformanceDiagnosticController {
   rect(selector: string, index?: number): DiagnosticRect;
   runControl(kind: DiagnosticControlKind, durationMs: number): Promise<void>;
   scrollbarGeometry(): DiagnosticScrollbarGeometry;
+  sourceLayoutWork(): DiagnosticSourceLayoutWork | null;
   start(label: string): void;
   tabRects(): DiagnosticRect[];
   wait(milliseconds: number): Promise<void>;
@@ -141,6 +164,32 @@ function rendererPerformanceDiagnosticBootstrap(
       setter?.call(input, value);
       input.dispatchEvent(new Event('input', { bubbles: true }));
     };
+
+    document.documentElement.dataset.performanceDiagnosticAblation =
+      config.ablation;
+    if (config.ablation === 'transitions-off') {
+      const style = document.createElement('style');
+      style.dataset.performanceDiagnosticStyle = config.ablation;
+      style.textContent = `
+        *, *::before, *::after {
+          animation-delay: 0s !important;
+          animation-duration: 0s !important;
+          scroll-behavior: auto !important;
+          transition: none !important;
+        }
+      `;
+      document.head.appendChild(style);
+    } else if (config.ablation === 'container-queries-off') {
+      const style = document.createElement('style');
+      style.dataset.performanceDiagnosticStyle = config.ablation;
+      style.textContent = `
+        * {
+          container-name: none !important;
+          container-type: normal !important;
+        }
+      `;
+      document.head.appendChild(style);
+    }
 
     await waitFor(
       () => ['en-US', 'pt-BR'].includes(document.documentElement.lang),
@@ -215,30 +264,36 @@ function rendererPerformanceDiagnosticBootstrap(
       'the Markdown source editor',
       60_000,
     );
-    const source = Array.from({ length: config.lineCount }, (_, index) => {
-      if (index % 47 === 0) {
-        return `## Section ${index}`;
-      }
-      if (index % 4 === 0) {
-        return `- Item ${index}: **Markdown** with enough text on the line that a narrower pane forces it to wrap onto a second row.`;
-      }
-      return `Line ${index}: political, religious and everyday record with enough text to react to the pane width.`;
-    }).join('\n');
-    editor.focus();
-    editor.dispatchEvent(
-      new InputEvent('beforeinput', {
-        bubbles: true,
-        cancelable: true,
-        data: source,
-        inputType: 'insertFromPaste',
-      }),
-    );
+    if (config.ablation !== 'editor-static') {
+      const source = Array.from({ length: config.lineCount }, (_, index) => {
+        if (index % 47 === 0) {
+          return `## Section ${index}`;
+        }
+        if (index % 4 === 0) {
+          return `- Item ${index}: **Markdown** with enough text on the line that a narrower pane forces it to wrap onto a second row.`;
+        }
+        return `Line ${index}: political, religious and everyday record with enough text to react to the pane width.`;
+      }).join('\n');
+      editor.focus();
+      editor.dispatchEvent(
+        new InputEvent('beforeinput', {
+          bubbles: true,
+          cancelable: true,
+          data: source,
+          inputType: 'insertFromPaste',
+        }),
+      );
+    }
 
     const windowedEditor = await waitFor(
       () => {
-        const candidate = queryVisible(
-          '.markdown-source__editor[data-windowed="true"]',
-        );
+        const candidate = queryVisible('.markdown-source__editor');
+        if (
+          config.ablation === 'editor-static' &&
+          candidate?.dataset.performanceStaticEditor === 'true'
+        ) {
+          return candidate;
+        }
         return candidate?.dataset.sourceLineCount === String(config.lineCount)
           ? candidate
           : undefined;
@@ -246,6 +301,7 @@ function rendererPerformanceDiagnosticBootstrap(
       'the windowed editor fixture',
       60_000,
     );
+    windowedEditor.dataset.performanceDiagnosticPrimary = 'true';
     windowedEditor.scrollTop = Math.round(windowedEditor.scrollHeight * 0.35);
     await delay(900);
 
@@ -328,6 +384,7 @@ function rendererPerformanceDiagnosticBootstrap(
       environment() {
         const activeEditor = currentEditor();
         return {
+          ablation: config.ablation,
           devicePixelRatio: window.devicePixelRatio,
           documentVisibility: document.visibilityState,
           editor: {
@@ -336,6 +393,10 @@ function rendererPerformanceDiagnosticBootstrap(
             descendantNodes: activeEditor.querySelectorAll('*').length,
             mountedLines: activeEditor.querySelectorAll('[data-line]').length,
             scrollHeight: activeEditor.scrollHeight,
+            sourceLineCount: activeEditor.dataset.sourceLineCount
+              ? Number(activeEditor.dataset.sourceLineCount)
+              : null,
+            static: activeEditor.dataset.performanceStaticEditor === 'true',
           },
           prefersReducedMotion: window.matchMedia(
             '(prefers-reduced-motion: reduce)',
@@ -490,6 +551,16 @@ function rendererPerformanceDiagnosticBootstrap(
           maximumScrollTop,
           start: { x: bounds.right - 4, y: startY },
         };
+      },
+      sourceLayoutWork() {
+        const primaryEditor =
+          document.querySelector<HTMLElement>(
+            '[data-performance-diagnostic-primary="true"]',
+          ) ?? currentEditor();
+        const diagnostics = (primaryEditor as HTMLElement & {
+          __flyoffSourceLayoutWork?: DiagnosticSourceLayoutWork;
+        }).__flyoffSourceLayoutWork;
+        return diagnostics ? { ...diagnostics } : null;
       },
       start(label) {
         if (state.recording) {

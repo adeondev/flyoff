@@ -201,11 +201,21 @@ async function main() {
 
   const { buildDirectory, executable } = await locatePackagedExecutable();
   const { reportPath, tracePath } = resolveOutputPaths(outputArguments[0]);
+  const ablation = diagnosticSetting(
+    'FLYOFF_PERFORMANCE_DIAGNOSTIC_ABLATION',
+    ['current', 'editor-static', 'transitions-off', 'container-queries-off'],
+    'current',
+  );
   const suite = diagnosticSetting(
     'FLYOFF_PERFORMANCE_DIAGNOSTIC_SUITE',
-    ['controls', 'full'],
-    'full',
+    ['controls', 'resize', 'full'],
+    ablation === 'editor-static' ? 'resize' : 'full',
   );
+  if (ablation === 'editor-static' && suite === 'full') {
+    throw new Error(
+      'FLYOFF_PERFORMANCE_DIAGNOSTIC_SUITE must be resize or controls for editor-static.',
+    );
+  }
   const traceMode = diagnosticSetting(
     'FLYOFF_PERFORMANCE_DIAGNOSTIC_TRACE',
     ['full', 'off'],
@@ -241,11 +251,13 @@ async function main() {
   process.stdout.write(`Performance report: ${reportPath}\n`);
   process.stdout.write(`Chromium trace: ${tracePath}\n`);
   process.stdout.write(`Graphics backend preference: ${graphicsBackend}\n`);
+  process.stdout.write(`Diagnostic ablation: ${ablation}\n`);
 
   try {
     const args = [
       `--user-data-dir=${userDataPath}`,
       `--flyoff-performance-diagnostic=${reportPath}`,
+      `--flyoff-performance-diagnostic-ablation=${ablation}`,
       `--flyoff-performance-diagnostic-suite=${suite}`,
       `--flyoff-performance-diagnostic-trace=${traceMode}`,
       ...chromiumSwitches(),

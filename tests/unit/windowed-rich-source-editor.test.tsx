@@ -43,9 +43,42 @@ function deferred<T>() {
 describe('windowed rich source editor', () => {
   afterEach(() => {
     cleanup();
+    delete document.documentElement.dataset.performanceDiagnosticAblation;
     Reflect.deleteProperty(window, 'flyoff');
     vi.restoreAllMocks();
     vi.useRealTimers();
+  });
+
+  it('uses an empty static rectangle for the diagnostic editor ablation', () => {
+    document.documentElement.dataset.performanceDiagnosticAblation =
+      'editor-static';
+    const editorRef = createRef<HTMLDivElement>();
+    const value = largeSource();
+
+    render(
+      <RichSourceEditor
+        ariaLabel="Editor"
+        editorRef={editorRef}
+        nodeId="large-note"
+        onRedo={vi.fn()}
+        onSelectionChange={vi.fn()}
+        onTransaction={vi.fn()}
+        onUndo={vi.fn()}
+        selection={{ direction: 'none', end: 0, start: 0 }}
+        translate={translate}
+        value={value}
+      />,
+    );
+
+    const editor = editorRef.current!;
+    expect(editor.dataset.performanceStaticEditor).toBe('true');
+    expect(editor.childElementCount).toBe(0);
+    expect(editor.querySelector('.source-window')).toBeNull();
+    expect(
+      (editor as HTMLDivElement & {
+        __flyoffSourceLayoutWork?: unknown;
+      }).__flyoffSourceLayoutWork,
+    ).toBeUndefined();
   });
 
   it('keeps the complete model while mounting only a bounded viewport', () => {

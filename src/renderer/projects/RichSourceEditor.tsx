@@ -1292,5 +1292,34 @@ class RichSourceEditorLifecycle extends Component<
 export function RichSourceEditor(
   props: RichSourceEditorProps,
 ) {
+  if (
+    document.documentElement.dataset.performanceDiagnosticAblation ===
+    'editor-static'
+  ) {
+    const {
+      ariaLabel,
+      editorRef,
+      inlineColorLabel,
+      nodeId,
+      readOnly = false,
+      viewId,
+    } = props;
+    return (
+      <div className="markdown-source">
+        <div
+          aria-label={ariaLabel}
+          className="markdown-source__editor"
+          data-inline-color-label={inlineColorLabel}
+          data-markdown-node-id={nodeId}
+          data-markdown-view-id={viewId}
+          data-performance-static-editor="true"
+          data-read-only={String(readOnly)}
+          ref={editorRef}
+          tabIndex={0}
+        />
+      </div>
+    );
+  }
+
   return <RichSourceEditorLifecycle {...props} />;
 }
