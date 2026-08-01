@@ -182,6 +182,63 @@ describe('windowed source view', () => {
     expect(view.layoutWork.settledResizeRebuilds).toBe(1);
   });
 
+  it('mounts a full physical viewport while width expands', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    const view = createView(
+      Array.from(
+        { length: 2_000 },
+        (_, index) =>
+          `line ${index} with enough text on it that a narrow editor wraps it`,
+      ).join('\n'),
+    );
+    const root = view.input.closest(
+      '.markdown-source__editor',
+    ) as HTMLDivElement;
+    flushFrames();
+
+    root.scrollTop = 6_000;
+    root.dispatchEvent(new Event('scroll'));
+    flushFrames();
+
+    let renderedHeight = 48;
+    const rect = vi
+      .spyOn(HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function (this: HTMLElement) {
+        return new DOMRect(
+          0,
+          0,
+          400,
+          this.classList.contains('md-line') ? renderedHeight : 0,
+        );
+      });
+    Object.defineProperty(root, 'clientWidth', {
+      configurable: true,
+      value: 400,
+    });
+    ResizeObserverStub.instances[0]!.trigger();
+    await flushLayoutWork();
+    vi.advanceTimersByTime(100);
+    await flushLayoutWork();
+
+    renderedHeight = 24;
+    Object.defineProperty(root, 'clientWidth', {
+      configurable: true,
+      value: 800,
+    });
+    ResizeObserverStub.instances[0]!.trigger();
+    await flushLayoutWork();
+
+    const overscan = Math.max(root.clientHeight * 0.5, 24 * 12);
+    const minimumLines = Math.ceil(
+      (root.clientHeight + overscan * 2) / 24,
+    );
+    expect(view.getVisibleLineElements().length).toBeGreaterThanOrEqual(
+      minimumLines,
+    );
+    expect(view.getVisibleLineElements().length).toBeLessThanOrEqual(300);
+    rect.mockRestore();
+  });
+
   it('removes every listener and observer it installed when disposed', () => {
     const root = editorRoot();
     const added: [string, EventListenerOrEventListenerObject][] = [];

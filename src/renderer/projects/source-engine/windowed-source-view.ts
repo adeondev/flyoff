@@ -417,6 +417,7 @@ export class WindowedSourceView implements SourceViewAdapter {
     skippedWidthRebuilds: 0,
   };
   private resizeAnchorTimer?: number;
+  private liveResizeExpanded = false;
   private liveResizeWidth = -1;
   private resizeSettleTimer?: number;
   private settledResizePending = false;
@@ -1542,6 +1543,8 @@ export class WindowedSourceView implements SourceViewAdapter {
       // Mounted rows have already re-wrapped. Measuring just that bounded
       // window keeps it and its anchor coherent while the pane is moving; the
       // O(document) estimate rebuild waits until the final width is known.
+      this.liveResizeExpanded =
+        this.liveResizeWidth >= 0 && this.layoutWidth > this.liveResizeWidth;
       this.liveResizeWidth = this.layoutWidth;
       this.layoutWork.liveResizePasses += 1;
       this.forceRender = true;
@@ -1583,6 +1586,7 @@ export class WindowedSourceView implements SourceViewAdapter {
     }
     const styles = this.updateLineHeight();
     this.rebuildHeightMap(styles);
+    this.liveResizeExpanded = false;
     this.liveResizeWidth = this.layoutWidth;
 
     if (hadAnchor || anchor.line > 0 || anchor.fraction > 0) {
@@ -1842,6 +1846,44 @@ export class WindowedSourceView implements SourceViewAdapter {
   }
 
   /**
+   * A map estimated at the previous narrow width can undercount the rows that
+   * fit after unwrapping. Append a physical viewport's minimum line count so
+   * newly mounted, still-estimated rows cannot leave a painted gap.
+   */
+  private coverExpandingResize(
+    viewport: SourceViewport,
+    scrollTop: number,
+    viewportHeight: number,
+    overscan: number,
+  ): SourceViewport {
+    if (!this.liveResizeExpanded) {
+      return viewport;
+    }
+    const requiredLines = Math.max(
+      1,
+      Math.min(
+        MAX_RENDERED_LINES,
+        this.model.lines.length,
+        Math.ceil(
+          (scrollTop + viewportHeight + overscan - viewport.top) /
+            Math.max(1, this.lineHeight),
+        ),
+      ),
+    );
+    if (viewport.endLine - viewport.startLine >= requiredLines) {
+      return viewport;
+    }
+    const endLine = Math.min(
+      this.model.lines.length,
+      viewport.startLine + requiredLines,
+    );
+    return {
+      ...viewport,
+      endLine,
+    };
+  }
+
+  /**
    * Viewport height without touching layout on the edit path. The resize
    * observer refreshes it, and its callback runs after layout, where reading
    * the box back is free.
@@ -1943,6 +1985,12 @@ export class WindowedSourceView implements SourceViewAdapter {
         };
       }
     }
+    nextViewport = this.coverExpandingResize(
+      nextViewport,
+      scrollTop,
+      viewportHeight,
+      overscan,
+    );
     const rangeChanged =
       nextViewport.startLine !== this.viewport.startLine ||
       nextViewport.endLine !== this.viewport.endLine;
@@ -2009,9 +2057,9 @@ export class WindowedSourceView implements SourceViewAdapter {
    * Re-mount the window against heights that were just measured.
    *
    * Only the projection and the mount: no scroll read, no selection paint, no
-   * measurement. One extra pass is enough because the heights it projects from
-   * are measured rather than estimated, and it stops as soon as the range it
-   * wants is the range already mounted.
+   * measurement. During width expansion the newly appended rows still carry
+   * narrow-width estimates, so the conservative line floor above keeps their
+   * physical minimum height covering the viewport without another layout pass.
    */
   private coverViewportAfterMeasurement(scrollTop: number): void {
     const viewportHeight = Math.max(
@@ -2022,12 +2070,17 @@ export class WindowedSourceView implements SourceViewAdapter {
       viewportHeight * 0.5,
       this.lineHeight * MIN_OVERSCAN_LINES,
     );
-    const next = sourceViewport(this.heightMap, {
-      maximumLines: MAX_RENDERED_LINES,
-      overscan,
+    const next = this.coverExpandingResize(
+      sourceViewport(this.heightMap, {
+        maximumLines: MAX_RENDERED_LINES,
+        overscan,
+        scrollTop,
+        viewportHeight,
+      }),
       scrollTop,
       viewportHeight,
-    });
+      overscan,
+    );
     if (
       next.startLine === this.viewport.startLine &&
       next.endLine === this.viewport.endLine
